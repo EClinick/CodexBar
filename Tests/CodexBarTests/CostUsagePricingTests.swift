@@ -906,6 +906,86 @@ extension CostUsagePricingTests {
     }
 
     @Test
+    func `claude cost reuses bundled openai pricing for proxy models`() throws {
+        let emptyCacheRoot = try Self.cacheRoot()
+        let cost = CostUsagePricing.claudeCostUSD(
+            model: "gpt-5.6-sol",
+            inputTokens: 100,
+            cacheReadInputTokens: 20,
+            cacheCreationInputTokens: 10,
+            outputTokens: 5,
+            modelsDevCacheRoot: emptyCacheRoot)
+        let expected = (100.0 * 5e-6)
+            + (20.0 * 0.5e-6)
+            + (10.0 * 6.25e-6)
+            + (5.0 * 30e-6)
+        #expect(cost == expected)
+    }
+
+    @Test
+    func `claude cost uses unambiguous models dev pricing for other proxy providers`() throws {
+        let cacheRoot = try Self.seedModelsDevCache("""
+        {
+          "proxy-provider": {
+            "id": "proxy-provider",
+            "models": {
+              "proxy-model": {
+                "id": "proxy-model",
+                "cost": { "input": 2, "output": 8, "cache_read": 0.2, "cache_write": 2.5 }
+              }
+            }
+          }
+        }
+        """)
+        let cost = CostUsagePricing.claudeCostUSD(
+            model: "proxy-model",
+            inputTokens: 100,
+            cacheReadInputTokens: 20,
+            cacheCreationInputTokens: 10,
+            outputTokens: 5,
+            modelsDevCacheRoot: cacheRoot)
+        let expected = (100.0 * 2e-6)
+            + (20.0 * 0.2e-6)
+            + (10.0 * 2.5e-6)
+            + (5.0 * 8e-6)
+        #expect(cost == expected)
+    }
+
+    @Test
+    func `claude cost leaves ambiguous cross provider models unpriced`() throws {
+        let cacheRoot = try Self.seedModelsDevCache("""
+        {
+          "provider-a": {
+            "id": "provider-a",
+            "models": {
+              "shared-proxy-model": {
+                "id": "shared-proxy-model",
+                "cost": { "input": 1, "output": 2 }
+              }
+            }
+          },
+          "provider-b": {
+            "id": "provider-b",
+            "models": {
+              "shared-proxy-model": {
+                "id": "shared-proxy-model",
+                "cost": { "input": 3, "output": 4 }
+              }
+            }
+          }
+        }
+        """)
+        let cost = CostUsagePricing.claudeCostUSD(
+            model: "shared-proxy-model",
+            inputTokens: 100,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            outputTokens: 5,
+            modelsDevCacheRoot: cacheRoot)
+        #expect(cost == nil)
+    }
+
+    @Test
     func `claude cost preserves historical sonnet46 long context pricing`() throws {
         let emptyCacheRoot = try Self.cacheRoot()
         let historical = CostUsagePricing.claudeCostUSD(

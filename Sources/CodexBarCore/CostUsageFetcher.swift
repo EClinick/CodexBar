@@ -383,6 +383,7 @@ public struct CostUsageFetcher: Sendable {
     private struct UnknownPricingRefreshRequest: Sendable {
         let providerID: String
         let modelIDs: Set<String>
+        let allowsCrossProviderFallback: Bool
         let now: Date
         let cacheRoot: URL?
         let client: ModelsDevClient
@@ -412,6 +413,7 @@ public struct CostUsageFetcher: Sendable {
         return UnknownPricingRefreshRequest(
             providerID: provider == .codex ? "openai" : "anthropic",
             modelIDs: unknownModelIDs,
+            allowsCrossProviderFallback: provider == .claude,
             now: now,
             cacheRoot: cacheRoot,
             client: client)
@@ -432,12 +434,23 @@ public struct CostUsageFetcher: Sendable {
             }
             return false
         }
-        return await ModelsDevPricingPipeline.refreshForUnknownModelsIfNeeded(
+        let outcome = await ModelsDevPricingPipeline.refreshForUnknownModelsIfNeeded(
             providerID: request.providerID,
             modelIDs: request.modelIDs,
             now: request.now,
             cacheRoot: request.cacheRoot,
-            client: request.client) == .pricingAvailable
+            client: request.client)
+        if outcome == .pricingAvailable {
+            return true
+        }
+        guard request.allowsCrossProviderFallback else { return false }
+
+        return request.modelIDs.contains {
+            CostUsagePricing.hasClaudeProxyPricing(
+                model: $0,
+                now: request.now,
+                modelsDevCacheRoot: request.cacheRoot)
+        }
     }
 
     static func loadCachedCodexTokenSnapshot(

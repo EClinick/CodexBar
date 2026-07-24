@@ -68,6 +68,19 @@ struct ModelsDevCatalog: Codable, Equatable {
         return self.providers[providerID]?.pricing(modelID: rawModelID)
     }
 
+    func pricing(
+        modelID rawModelID: String,
+        excludingProviderIDs rawExcludedProviderIDs: Set<String> = []) -> ModelsDevPricingLookup?
+    {
+        let excludedProviderIDs = Set(rawExcludedProviderIDs.map(ModelsDevProvider.normalizeProviderID))
+        let matches = self.providers.keys.sorted().compactMap { providerID -> ModelsDevPricingLookup? in
+            guard !excludedProviderIDs.contains(providerID) else { return nil }
+            return self.providers[providerID]?.pricing(modelID: rawModelID)
+        }
+        guard matches.count == 1 else { return nil }
+        return matches[0]
+    }
+
     func isPlausibleRefresh() -> Bool {
         // These are the direct pricing sources CodexBar relies on. Requiring both
         // rejects empty/partial responses without comparing against a fallback-
@@ -601,6 +614,18 @@ enum ModelsDevPricingPipeline {
             .artifact?
             .catalog
             .pricing(providerID: providerID, modelID: modelID)
+    }
+
+    static func lookup(
+        modelID: String,
+        excludingProviderIDs: Set<String> = [],
+        now: Date = Date(),
+        cacheRoot: URL? = nil) -> ModelsDevPricingLookup?
+    {
+        ModelsDevCache.load(now: now, cacheRoot: cacheRoot)
+            .artifact?
+            .catalog
+            .pricing(modelID: modelID, excludingProviderIDs: excludingProviderIDs)
     }
 
     static func refreshIfNeeded(

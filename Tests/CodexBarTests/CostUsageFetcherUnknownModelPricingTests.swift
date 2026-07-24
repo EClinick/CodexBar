@@ -25,6 +25,43 @@ struct CostUsageFetcherUnknownModelPricingTests {
     }
 
     @Test
+    func `claude fetcher reprices a proxy model from another catalog provider`() async throws {
+        let fixture = try UnknownModelPricingFixture()
+        defer { fixture.environment.cleanup() }
+        let assistant: [String: Any] = [
+            "type": "assistant",
+            "timestamp": fixture.environment.isoString(for: fixture.day),
+            "requestId": "request-proxy",
+            "message": [
+                "id": "message-proxy",
+                "model": "proxy-new",
+                "usage": [
+                    "input_tokens": 100,
+                    "cache_read_input_tokens": 20,
+                    "cache_creation_input_tokens": 10,
+                    "output_tokens": 5,
+                ],
+            ],
+        ]
+        _ = try fixture.environment.writeClaudeProjectFile(
+            relativePath: "project/proxy-session.jsonl",
+            contents: fixture.environment.jsonl([assistant]))
+
+        let snapshot = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .claude,
+            now: fixture.day,
+            refreshPricingInBackground: false,
+            includePiSessions: false,
+            scannerOptions: fixture.options,
+            modelsDevClient: ModelsDevClient(transport: CostUsageFetcherModelsDevTransport(
+                data: fixture.refreshedCatalog)))
+
+        let breakdown = try #require(snapshot.daily.first?.modelBreakdowns?.first)
+        #expect(breakdown.modelName == "proxy-new")
+        #expect(abs((breakdown.costUSD ?? 0) - 0.000269) < 0.0000001)
+    }
+
+    @Test
     func `pricing retry preserves disabled pi session merging`() async throws {
         let fixture = try UnknownModelPricingFixture()
         defer { fixture.environment.cleanup() }
@@ -225,6 +262,15 @@ private struct UnknownModelPricingFixture {
           "anthropic": {
             "id": "anthropic",
             "models": { "claude-new": { "id": "claude-new", "cost": { "input": 3, "output": 15 } } }
+          },
+          "proxy-provider": {
+            "id": "proxy-provider",
+            "models": {
+              "proxy-new": {
+                "id": "proxy-new",
+                "cost": { "input": 2, "output": 8, "cache_read": 0.2, "cache_write": 2.5 }
+              }
+            }
           }
         }
         """.utf8)

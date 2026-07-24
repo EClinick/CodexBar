@@ -733,10 +733,46 @@ enum CostUsagePricing {
                 tokens: tokens)
         }
 
-        guard let pricing = self.claude[key] else { return nil }
-        return self.claudeCostUSD(
-            pricing: pricing,
-            tokens: tokens)
+        if let pricing = self.claude[key] {
+            return self.claudeCostUSD(
+                pricing: pricing,
+                tokens: tokens)
+        }
+
+        // Claude Code logs can contain non-Anthropic models when an Anthropic-compatible proxy
+        // (for example CLIProxyAPI) supplies the backend. Reuse the OpenAI pricing path first so
+        // bundled model rates and OpenAI-specific long-context/cache rules stay authoritative.
+        let openAIInputTokens = [tokens.input, tokens.cacheRead, tokens.cacheCreation].reduce(0) {
+            let component = max(0, $1)
+            return $0 > Int.max - component ? Int.max : $0 + component
+        }
+        if let cost = self.codexCostUSD(
+            model: model,
+            inputTokens: openAIInputTokens,
+            cachedInputTokens: tokens.cacheRead,
+            outputTokens: tokens.output,
+            cacheWriteInputTokens: tokens.cacheCreation,
+            modelsDevCatalog: modelsDevCatalog,
+            modelsDevCacheRoot: modelsDevCacheRoot)
+        {
+            return cost
+        }
+
+        // For other proxy backends, accept models.dev pricing only when the model resolves to one
+        // remaining provider. Ambiguous model IDs must stay unpriced instead of silently choosing
+        // an arbitrary vendor's rates.
+        if let lookup = self.modelsDevLookup(
+            model: model,
+            excludingProviderIDs: [self.claudeModelsDevProviderID, self.codexModelsDevProviderID],
+            catalog: modelsDevCatalog,
+            cacheRoot: modelsDevCacheRoot)
+        {
+            return self.claudeCostUSD(
+                pricing: lookup.pricing,
+                tokens: tokens)
+        }
+
+        return nil
     }
 
     private static func claudeCostUSD(
@@ -807,5 +843,40 @@ enum CostUsagePricing {
             providerID: providerID,
             modelID: model,
             cacheRoot: cacheRoot)
+    }
+
+    private static func modelsDevLookup(
+        model: String,
+        excludingProviderIDs: Set<String>,
+        catalog: ModelsDevCatalog?,
+        cacheRoot: URL?) -> ModelsDevPricingLookup?
+    {
+        if let catalog {
+            return catalog.pricing(modelID: model, excludingProviderIDs: excludingProviderIDs)
+        }
+
+        return ModelsDevPricingPipeline.lookup(
+            modelID: model,
+            excludingProviderIDs: excludingProviderIDs,
+            cacheRoot: cacheRoot)
+    }
+}
+
+extension CostUsagePricing {
+    static func hasClaudeProxyPricing(
+        model: String,
+        now: Date,
+        modelsDevCacheRoot: URL?) -> Bool
+    {
+        ModelsDevPricingPipeline.lookup(
+            providerID: self.codexModelsDevProviderID,
+            modelID: model,
+            now: now,
+            cacheRoot: modelsDevCacheRoot) != nil
+            || ModelsDevPricingPipeline.lookup(
+                modelID: model,
+                excludingProviderIDs: [self.claudeModelsDevProviderID, self.codexModelsDevProviderID],
+                now: now,
+                cacheRoot: modelsDevCacheRoot) != nil
     }
 }
