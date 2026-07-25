@@ -24,6 +24,12 @@ enum CostUsageScanner {
         case excludeVertexAI
     }
 
+    enum ClaudeAttributionFilter {
+        case all
+        case codexBackendOnly
+        case excludeCodexBackend
+    }
+
     struct Options {
         var codexSessionsRoot: URL?
         var claudeProjectsRoots: [URL]?
@@ -31,6 +37,8 @@ enum CostUsageScanner {
         var codexTraceDatabaseURL: URL?
         var refreshMinIntervalSeconds: TimeInterval = 60
         var claudeLogProviderFilter: ClaudeLogProviderFilter = .all
+        var claudeAttributionFilter: ClaudeAttributionFilter = .all
+        var cliProxyAPIHome: URL?
         /// Force a full rescan, ignoring per-file cache and incremental offsets.
         var forceRescan: Bool = false
 
@@ -40,6 +48,8 @@ enum CostUsageScanner {
             cacheRoot: URL? = nil,
             codexTraceDatabaseURL: URL? = nil,
             claudeLogProviderFilter: ClaudeLogProviderFilter = .all,
+            claudeAttributionFilter: ClaudeAttributionFilter = .all,
+            cliProxyAPIHome: URL? = nil,
             forceRescan: Bool = false)
         {
             self.codexSessionsRoot = codexSessionsRoot
@@ -47,6 +57,8 @@ enum CostUsageScanner {
             self.cacheRoot = cacheRoot
             self.codexTraceDatabaseURL = codexTraceDatabaseURL
             self.claudeLogProviderFilter = claudeLogProviderFilter
+            self.claudeAttributionFilter = claudeAttributionFilter
+            self.cliProxyAPIHome = cliProxyAPIHome
             self.forceRescan = forceRescan
         }
     }
@@ -768,6 +780,7 @@ enum CostUsageScanner {
         let output: Int
         let costNanos: Int
         let costPriced: Bool?
+        let attribution: CostUsageAttribution?
     }
 
     static func loadDailyReport(

@@ -13,15 +13,101 @@ extension CostUsageScanner {
         let costPriced: Bool
     }
 
+    private struct ClaudeRawTokens {
+        let input: Int
+        let cacheRead: Int
+        let cacheCreate: Int
+        let cacheCreate1h: Int
+        let output: Int
+    }
+
     private struct ClaudeDayModelKey: Hashable {
         let day: String
         let model: String
+        let attribution: CostUsageAttribution?
     }
 
     private struct ClaudeRepricedCost {
         var total: Double = 0
         var sampleCount: Int = 0
         var unresolved = false
+    }
+
+    private struct ClaudeModelResolution {
+        let normalizedModel: String
+        let cost: Double?
+        let attribution: CostUsageAttribution?
+    }
+
+    private struct ClaudeModelResolutionContext {
+        let pricingDate: Date
+        let sessionID: String?
+        let timestampUnixMs: Int64?
+        let attributionResolver: CLIProxyAPIAttributionResolver?
+        let modelsDevCatalog: ModelsDevCatalog?
+        let modelsDevCacheRoot: URL?
+    }
+
+    private static func resolveClaudeModel(
+        model: String,
+        tokens: ClaudeRawTokens,
+        context: ClaudeModelResolutionContext) -> ClaudeModelResolution
+    {
+        let modelProvider = CostUsagePricing.modelProvider(
+            for: model,
+            modelsDevCatalog: context.modelsDevCatalog,
+            modelsDevCacheRoot: context.modelsDevCacheRoot)
+        let resolvedAttribution = context.attributionResolver?.attribution(
+            model: model,
+            modelProvider: modelProvider,
+            sessionID: context.sessionID,
+            timestampUnixMs: context.timestampUnixMs,
+            tokens: .init(
+                input: tokens.input,
+                cacheRead: tokens.cacheRead,
+                cacheCreate: tokens.cacheCreate,
+                output: tokens.output))
+            ?? CostUsageAttribution(
+                client: .claudeCode,
+                route: .unknown,
+                modelProvider: modelProvider,
+                evidence: [.modelProvider])
+        let attribution = resolvedAttribution.route == .cliProxyAPI || modelProvider != .anthropic
+            ? resolvedAttribution
+            : nil
+        let cost: Double? = if modelProvider == .openAI {
+            CostUsagePricing.claudeProxyCodexCostUSD(
+                model: model,
+                inputTokens: tokens.input,
+                cacheReadInputTokens: tokens.cacheRead,
+                cacheCreationInputTokens: tokens.cacheCreate,
+                outputTokens: tokens.output,
+                modelsDevCatalog: context.modelsDevCatalog,
+                modelsDevCacheRoot: context.modelsDevCacheRoot)
+        } else if modelProvider == .anthropic {
+            CostUsagePricing.claudeCostUSD(
+                model: model,
+                inputTokens: tokens.input,
+                cacheReadInputTokens: tokens.cacheRead,
+                cacheCreationInputTokens: tokens.cacheCreate,
+                cacheCreationInputTokens1h: tokens.cacheCreate1h,
+                outputTokens: tokens.output,
+                pricingDate: context.pricingDate,
+                modelsDevCatalog: context.modelsDevCatalog,
+                modelsDevCacheRoot: context.modelsDevCacheRoot)
+        } else { nil }
+        let normalizedModel = switch modelProvider {
+        case .openAI:
+            CostUsagePricing.normalizeCodexModel(model)
+        case .anthropic:
+            CostUsagePricing.normalizeClaudeModel(model)
+        case .google, .unknown:
+            model.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ClaudeModelResolution(
+            normalizedModel: normalizedModel,
+            cost: cost,
+            attribution: attribution)
     }
 
     static func defaultClaudeProjectsRoots(
@@ -77,6 +163,7 @@ extension CostUsageScanner {
         range: CostUsageDayRange,
         providerFilter: ClaudeLogProviderFilter,
         startOffset: Int64 = 0,
+        attributionResolver: CLIProxyAPIAttributionResolver? = nil,
         modelsDevCatalog: ModelsDevCatalog? = nil,
         modelsDevCacheRoot: URL? = nil) -> ClaudeParseResult
     {
@@ -86,6 +173,7 @@ extension CostUsageScanner {
                 range: range,
                 providerFilter: providerFilter,
                 startOffset: startOffset,
+                attributionResolver: attributionResolver,
                 modelsDevCatalog: modelsDevCatalog,
                 modelsDevCacheRoot: modelsDevCacheRoot,
                 checkCancellation: nil)) ?? ClaudeParseResult(days: [:], rows: [], parsedBytes: startOffset)
@@ -96,6 +184,7 @@ extension CostUsageScanner {
         range: CostUsageDayRange,
         providerFilter: ClaudeLogProviderFilter,
         startOffset: Int64 = 0,
+        attributionResolver: CLIProxyAPIAttributionResolver? = nil,
         modelsDevCatalog: ModelsDevCatalog? = nil,
         modelsDevCacheRoot: URL? = nil,
         checkCancellation: CancellationCheck? = nil) throws -> ClaudeParseResult
@@ -178,17 +267,28 @@ extension CostUsageScanner {
                         let output = max(0, toInt(usage["output_tokens"]))
                         if input == 0, cacheCreate == 0, cacheRead == 0, output == 0 { return }
 
-                        let cost = CostUsagePricing.claudeCostUSD(
+                        let rawTokens = ClaudeRawTokens(
+                            input: input,
+                            cacheRead: cacheRead,
+                            cacheCreate: cacheCreate,
+                            cacheCreate1h: cacheCreate1h,
+                            output: output)
+                        let sessionId = obj["sessionId"] as? String
+                            ?? obj["session_id"] as? String
+                            ?? (obj["metadata"] as? [String: Any])?["sessionId"] as? String
+                            ?? (message["metadata"] as? [String: Any])?["sessionId"] as? String
+                        let timestampUnixMs = Int64((timestamp.timeIntervalSince1970 * 1000).rounded())
+                        let modelResolution = Self.resolveClaudeModel(
                             model: model,
-                            inputTokens: input,
-                            cacheReadInputTokens: cacheRead,
-                            cacheCreationInputTokens: cacheCreate,
-                            cacheCreationInputTokens1h: cacheCreate1h,
-                            outputTokens: output,
-                            pricingDate: timestamp,
-                            modelsDevCatalog: modelsDevCatalog,
-                            modelsDevCacheRoot: modelsDevCacheRoot)
-                        let costNanos = cost.map { Int(($0 * costScale).rounded()) } ?? 0
+                            tokens: rawTokens,
+                            context: ClaudeModelResolutionContext(
+                                pricingDate: timestamp,
+                                sessionID: sessionId,
+                                timestampUnixMs: timestampUnixMs,
+                                attributionResolver: attributionResolver,
+                                modelsDevCatalog: modelsDevCatalog,
+                                modelsDevCacheRoot: modelsDevCacheRoot))
+                        let costNanos = modelResolution.cost.map { Int(($0 * costScale).rounded()) } ?? 0
                         let tokens = ClaudeTokens(
                             input: input,
                             cacheRead: cacheRead,
@@ -196,7 +296,7 @@ extension CostUsageScanner {
                             cacheCreate1h: cacheCreate1h,
                             output: output,
                             costNanos: costNanos,
-                            costPriced: cost != nil)
+                            costPriced: modelResolution.cost != nil)
 
                         guard CostUsageDayRange.isInRange(
                             dayKey: dayKey,
@@ -206,18 +306,13 @@ extension CostUsageScanner {
 
                         let messageId = message["id"] as? String
                         let requestId = obj["requestId"] as? String
-                        let sessionId = obj["sessionId"] as? String
-                            ?? obj["session_id"] as? String
-                            ?? (obj["metadata"] as? [String: Any])?["sessionId"] as? String
-                            ?? (message["metadata"] as? [String: Any])?["sessionId"] as? String
-                        let normalizedModel = CostUsagePricing.normalizeClaudeModel(model)
                         let row = ClaudeUsageRow(
                             dayKey: dayKey,
-                            model: normalizedModel,
+                            model: modelResolution.normalizedModel,
                             sessionId: sessionId,
                             messageId: messageId,
                             requestId: requestId,
-                            timestampUnixMs: Int64((timestamp.timeIntervalSince1970 * 1000).rounded()),
+                            timestampUnixMs: timestampUnixMs,
                             isSidechain: toBool(obj["isSidechain"]),
                             pathRole: pathRole,
                             input: tokens.input,
@@ -226,7 +321,8 @@ extension CostUsageScanner {
                             cacheCreate1h: tokens.cacheCreate1h,
                             output: tokens.output,
                             costNanos: tokens.costNanos,
-                            costPriced: tokens.costPriced)
+                            costPriced: tokens.costPriced,
+                            attribution: modelResolution.attribution)
 
                         // Streaming chunks share message.id + requestId inside a file.
                         // Keep overwriting so the final cumulative chunk wins.
@@ -508,6 +604,7 @@ extension CostUsageScanner {
         let range: CostUsageDayRange
         let providerFilter: ClaudeLogProviderFilter
         let forceFullScan: Bool
+        let attributionResolver: CLIProxyAPIAttributionResolver?
         let modelsDevCatalog: ModelsDevCatalog?
         let modelsDevCacheRoot: URL?
         let checkCancellation: CancellationCheck?
@@ -517,6 +614,7 @@ extension CostUsageScanner {
             range: CostUsageDayRange,
             providerFilter: ClaudeLogProviderFilter,
             forceFullScan: Bool,
+            attributionResolver: CLIProxyAPIAttributionResolver?,
             modelsDevCatalog: ModelsDevCatalog?,
             modelsDevCacheRoot: URL?,
             checkCancellation: CancellationCheck?)
@@ -526,6 +624,7 @@ extension CostUsageScanner {
             self.range = range
             self.providerFilter = providerFilter
             self.forceFullScan = forceFullScan
+            self.attributionResolver = attributionResolver
             self.modelsDevCatalog = modelsDevCatalog
             self.modelsDevCacheRoot = modelsDevCacheRoot
             self.checkCancellation = checkCancellation
@@ -560,6 +659,7 @@ extension CostUsageScanner {
                     range: state.range,
                     providerFilter: state.providerFilter,
                     startOffset: startOffset,
+                    attributionResolver: state.attributionResolver,
                     modelsDevCatalog: state.modelsDevCatalog,
                     modelsDevCacheRoot: state.modelsDevCacheRoot,
                     checkCancellation: state.checkCancellation)
@@ -577,6 +677,7 @@ extension CostUsageScanner {
             fileURL: url,
             range: state.range,
             providerFilter: state.providerFilter,
+            attributionResolver: state.attributionResolver,
             modelsDevCatalog: state.modelsDevCatalog,
             modelsDevCacheRoot: state.modelsDevCacheRoot,
             checkCancellation: state.checkCancellation)
@@ -661,13 +762,22 @@ extension CostUsageScanner {
 
         let refreshMs = Int64(max(0, options.refreshMinIntervalSeconds) * 1000)
         let windowExpanded = Self.requestedWindowExpandsCache(range: range, cache: cache)
+        let requiresRowBackfill = cache.files.values.contains {
+            $0.claudeRows == nil && !$0.days.isEmpty
+        }
         let shouldRefresh = options.forceRescan
             || windowExpanded
+            || requiresRowBackfill
             || refreshMs == 0
             || cache.lastScanUnixMs == 0
             || nowMs - cache.lastScanUnixMs > refreshMs
 
         let providerFilter = options.claudeLogProviderFilter
+        let attributionResolver = options.cliProxyAPIHome.map {
+            CLIProxyAPIAttributionResolver.load(
+                home: $0,
+                cacheRoot: options.cacheRoot)
+        }
 
         var touched: Set<String> = []
 
@@ -681,7 +791,10 @@ extension CostUsageScanner {
                 cache: cache,
                 range: range,
                 providerFilter: providerFilter,
-                forceFullScan: options.forceRescan || windowExpanded,
+                forceFullScan: options.forceRescan
+                    || windowExpanded
+                    || requiresRowBackfill,
+                attributionResolver: attributionResolver,
                 modelsDevCatalog: modelsDevCatalog,
                 modelsDevCacheRoot: options.cacheRoot,
                 checkCancellation: checkCancellation)
@@ -715,13 +828,139 @@ extension CostUsageScanner {
         return Self.buildClaudeReportFromCache(
             cache: cache,
             range: range,
+            attributionFilter: options.claudeAttributionFilter,
+            attributionResolver: attributionResolver,
             modelsDevCatalog: modelsDevCatalog,
             modelsDevCacheRoot: options.cacheRoot)
     }
 
-    private static func buildClaudeReportFromCache(
+    private struct ClaudeReportAggregation {
+        var dayModels: [String: [ClaudeDayModelKey: [Int]]] = [:]
+        var repricedCosts: [ClaudeDayModelKey: ClaudeRepricedCost] = [:]
+    }
+
+    private static func aggregateClaudeRows(
+        cache: CostUsageCache,
+        attributionFilter: ClaudeAttributionFilter,
+        attributionResolver: CLIProxyAPIAttributionResolver?,
+        modelsDevCatalog: ModelsDevCatalog?,
+        modelsDevCacheRoot: URL?) -> ClaudeReportAggregation
+    {
+        var result = ClaudeReportAggregation()
+        for row in Self.reconciledClaudeRows(cache: cache) {
+            let modelProvider = if let cachedProvider = row.attribution?.modelProvider,
+                                   cachedProvider != .unknown
+            {
+                cachedProvider
+            } else {
+                CostUsagePricing.modelProvider(
+                    for: row.model,
+                    modelsDevCatalog: modelsDevCatalog,
+                    modelsDevCacheRoot: modelsDevCacheRoot)
+            }
+            let liveAttribution = attributionResolver?.attribution(
+                model: row.model,
+                modelProvider: modelProvider,
+                sessionID: row.sessionId,
+                timestampUnixMs: row.timestampUnixMs,
+                tokens: .init(
+                    input: row.input,
+                    cacheRead: row.cacheRead,
+                    cacheCreate: row.cacheCreate,
+                    output: row.output))
+            let attribution = if let liveAttribution {
+                liveAttribution.route == .cliProxyAPI || modelProvider != .anthropic
+                    ? liveAttribution
+                    : nil
+            } else {
+                row.attribution
+            }
+            let isCodexBackend = attribution?.route == .cliProxyAPI
+                && attribution?.upstream?.isCodex == true
+            let includeRow = switch attributionFilter {
+            case .all: true
+            case .codexBackendOnly: isCodexBackend
+            case .excludeCodexBackend: !isCodexBackend
+            }
+            guard includeRow else { continue }
+
+            var models = result.dayModels[row.dayKey] ?? [:]
+            let key = ClaudeDayModelKey(
+                day: row.dayKey,
+                model: row.model,
+                attribution: attribution)
+            var packed = models[key] ?? [0, 0, 0, 0, 0, 0]
+            packed[0] += row.input
+            packed[1] += row.cacheRead
+            packed[2] += row.cacheCreate
+            packed[3] += row.output
+            packed[5] += 1
+            models[key] = packed
+            result.dayModels[row.dayKey] = models
+
+            var cost = result.repricedCosts[key] ?? ClaudeRepricedCost()
+            cost.sampleCount += 1
+            let wasPriced = row.costPriced ?? (row.costNanos > 0)
+            let currentCost = Self.currentClaudeRowCost(
+                row,
+                modelProvider: modelProvider,
+                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCacheRoot: modelsDevCacheRoot)
+            let resolvedCost: Double? = if wasPriced, row.costNanos == 0 {
+                0
+            } else if let currentCost {
+                currentCost
+            } else if wasPriced {
+                Double(row.costNanos) / Self.costScale
+            } else {
+                nil
+            }
+            if let resolvedCost {
+                cost.total += resolvedCost
+            } else {
+                cost.unresolved = true
+            }
+            result.repricedCosts[key] = cost
+        }
+        return result
+    }
+
+    private static func currentClaudeRowCost(
+        _ row: ClaudeUsageRow,
+        modelProvider: CostUsageAttribution.ModelProvider,
+        modelsDevCatalog: ModelsDevCatalog?,
+        modelsDevCacheRoot: URL?) -> Double?
+    {
+        if modelProvider == .openAI {
+            return CostUsagePricing.claudeProxyCodexCostUSD(
+                model: row.model,
+                inputTokens: row.input,
+                cacheReadInputTokens: row.cacheRead,
+                cacheCreationInputTokens: row.cacheCreate,
+                outputTokens: row.output,
+                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCacheRoot: modelsDevCacheRoot)
+        }
+        guard modelProvider == .anthropic else { return nil }
+        return CostUsagePricing.claudeCostUSD(
+            model: row.model,
+            inputTokens: row.input,
+            cacheReadInputTokens: row.cacheRead,
+            cacheCreationInputTokens: row.cacheCreate,
+            cacheCreationInputTokens1h: row.cacheCreate1h ?? 0,
+            outputTokens: row.output,
+            pricingDate: row.timestampUnixMs.map {
+                Date(timeIntervalSince1970: Double($0) / 1000)
+            },
+            modelsDevCatalog: modelsDevCatalog,
+            modelsDevCacheRoot: modelsDevCacheRoot)
+    }
+
+    static func buildClaudeReportFromCache(
         cache: CostUsageCache,
         range: CostUsageDayRange,
+        attributionFilter: ClaudeAttributionFilter = .all,
+        attributionResolver: CLIProxyAPIAttributionResolver? = nil,
         modelsDevCatalog: ModelsDevCatalog? = nil,
         modelsDevCacheRoot: URL? = nil) -> CostUsageDailyReport
     {
@@ -733,50 +972,25 @@ extension CostUsageScanner {
         var totalTokens = 0
         var totalCost: Double = 0
         var costSeen = false
-        let costScale = 1_000_000_000.0
-        var repricedCosts: [ClaudeDayModelKey: ClaudeRepricedCost] = [:]
+        let aggregation = Self.aggregateClaudeRows(
+            cache: cache,
+            attributionFilter: attributionFilter,
+            attributionResolver: attributionResolver,
+            modelsDevCatalog: modelsDevCatalog,
+            modelsDevCacheRoot: modelsDevCacheRoot)
+        let dayModels = aggregation.dayModels
+        let repricedCosts = aggregation.repricedCosts
 
-        for row in Self.reconciledClaudeRows(cache: cache) {
-            let key = ClaudeDayModelKey(day: row.dayKey, model: row.model)
-            var aggregate = repricedCosts[key] ?? ClaudeRepricedCost()
-            aggregate.sampleCount += 1
-            let isPriced = row.costPriced ?? (row.costNanos > 0)
-            let currentPricingCost = CostUsagePricing.claudeCostUSD(
-                model: row.model,
-                inputTokens: row.input,
-                cacheReadInputTokens: row.cacheRead,
-                cacheCreationInputTokens: row.cacheCreate,
-                cacheCreationInputTokens1h: row.cacheCreate1h ?? 0,
-                outputTokens: row.output,
-                pricingDate: row.timestampUnixMs.map {
-                    Date(timeIntervalSince1970: Double($0) / 1000)
-                },
-                modelsDevCatalog: modelsDevCatalog,
-                modelsDevCacheRoot: modelsDevCacheRoot)
-            let cost: Double? = if isPriced, row.costNanos == 0 {
-                0
-            } else if let currentPricingCost {
-                currentPricingCost
-            } else if isPriced {
-                Double(row.costNanos) / costScale
-            } else {
-                nil
-            }
-            if let cost {
-                aggregate.total += cost
-            } else {
-                aggregate.unresolved = true
-            }
-            repricedCosts[key] = aggregate
-        }
-
-        let dayKeys = cache.days.keys.sorted().filter {
+        let dayKeys = dayModels.keys.sorted().filter {
             CostUsageDayRange.isInRange(dayKey: $0, since: range.sinceKey, until: range.untilKey)
         }
 
         for day in dayKeys {
-            guard let models = cache.days[day] else { continue }
-            let modelNames = models.keys.sorted()
+            guard let models = dayModels[day] else { continue }
+            let modelKeys = models.keys.sorted {
+                if $0.model != $1.model { return $0.model < $1.model }
+                return ($0.attribution?.upstream?.provider ?? "") < ($1.attribution?.upstream?.provider ?? "")
+            }
 
             var dayInput = 0
             var dayOutput = 0
@@ -787,8 +1001,9 @@ extension CostUsageScanner {
             var dayCost: Double = 0
             var dayCostSeen = false
 
-            for model in modelNames {
-                let packed = models[model] ?? [0, 0, 0, 0]
+            for modelKey in modelKeys {
+                let model = modelKey.model
+                let packed = models[modelKey] ?? [0, 0, 0, 0]
                 let input = packed[safe: 0] ?? 0
                 let cacheRead = packed[safe: 1] ?? 0
                 let cacheCreate = packed[safe: 2] ?? 0
@@ -802,7 +1017,7 @@ extension CostUsageScanner {
                 dayCacheCreate += cacheCreate
                 dayOutput += output
 
-                let repricedCost = repricedCosts[ClaudeDayModelKey(day: day, model: model)]
+                let repricedCost = repricedCosts[modelKey]
                 let currentPricingCost: Double? = if let repricedCost,
                                                      repricedCost.sampleCount == sampleCount,
                                                      !repricedCost.unresolved
@@ -816,7 +1031,8 @@ extension CostUsageScanner {
                     CostUsageDailyReport.ModelBreakdown(
                         modelName: model,
                         costUSD: cost,
-                        totalTokens: totalTokens))
+                        totalTokens: totalTokens,
+                        attribution: modelKey.attribution))
                 if let cost {
                     dayCost += cost
                     dayCostSeen = true
@@ -835,7 +1051,7 @@ extension CostUsageScanner {
                 cacheCreationTokens: dayCacheCreate,
                 totalTokens: dayTotal,
                 costUSD: entryCost,
-                modelsUsed: modelNames,
+                modelsUsed: Array(Set(modelKeys.map(\.model))).sorted(),
                 modelBreakdowns: sortedBreakdown))
 
             totalInput += dayInput

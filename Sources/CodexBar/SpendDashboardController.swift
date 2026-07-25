@@ -394,6 +394,16 @@ enum SpendDashboardSource {
             encoder.append(entry.modelBreakdowns?.count)
             for breakdown in entry.modelBreakdowns ?? [] {
                 encoder.append(breakdown.modelName)
+                encoder.append(breakdown.attribution?.client.rawValue ?? "")
+                encoder.append(breakdown.attribution?.route.rawValue ?? "")
+                encoder.append(breakdown.attribution?.modelProvider.rawValue ?? "")
+                encoder.append(breakdown.attribution?.upstream?.provider ?? "")
+                encoder.append(breakdown.attribution?.upstream?.authType.rawValue ?? "")
+                encoder.append(breakdown.attribution?.upstream?.model ?? "")
+                encoder.append(breakdown.attribution?.upstream?.executorType ?? "")
+                for evidence in breakdown.attribution?.evidence ?? [] {
+                    encoder.append(evidence.rawValue)
+                }
                 encoder.append(breakdown.totalTokens)
                 encoder.append(breakdown.requestCount)
                 encoder.append(breakdown.costUSD)

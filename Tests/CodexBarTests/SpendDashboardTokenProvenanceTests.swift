@@ -124,7 +124,7 @@ struct SpendDashboardTokenProvenanceTests {
         store.activateCachedTokenAccountSnapshot(provider: .mistral, accountID: account.id)
         #expect(store.tokenSnapshotPublicationRevision(for: .mistral) == baselineRevision)
         store._test_providerRefreshOverride = { _ in }
-        let controller = SpendDashboardController(requestBuilder: { mode in
+        let controller = SpendDashboardController(userDefaults: settings.userDefaults, requestBuilder: { mode in
             await SpendDashboardSource.makeRequest(settings: settings, store: store, mode: mode)
         })
         controller.update(configuration: SpendDashboardSource.configuration(settings: settings, store: store))
@@ -148,7 +148,7 @@ struct SpendDashboardTokenProvenanceTests {
             return loadCount == 1 ? Self.tokenSnapshot(cost: 4) : Self.emptyTokenSnapshot()
         }
         await store.refreshTokenUsageNow(for: .bedrock, force: true)
-        let controller = SpendDashboardController(requestBuilder: { mode in
+        let controller = SpendDashboardController(userDefaults: settings.userDefaults, requestBuilder: { mode in
             await SpendDashboardSource.makeRequest(settings: settings, store: store, mode: mode)
         })
         controller.update(configuration: SpendDashboardSource.configuration(settings: settings, store: store))
@@ -177,7 +177,7 @@ struct SpendDashboardTokenProvenanceTests {
         }
         await store.refreshTokenUsageNow(for: .bedrock, force: true)
         let publicationRevision = store.tokenSnapshotPublicationRevision(for: .bedrock)
-        let controller = SpendDashboardController(requestBuilder: { mode in
+        let controller = SpendDashboardController(userDefaults: settings.userDefaults, requestBuilder: { mode in
             await SpendDashboardSource.makeRequest(settings: settings, store: store, mode: mode)
         })
 

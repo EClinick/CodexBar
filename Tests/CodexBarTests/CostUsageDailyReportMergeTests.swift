@@ -4,6 +4,56 @@ import Testing
 
 struct CostUsageDailyReportMergeTests {
     @Test
+    func `merged report keeps native and claude code proxy model rows distinct`() throws {
+        let native = CostUsageDailyReport(
+            data: [
+                CostUsageDailyReport.Entry(
+                    date: "2026-07-24",
+                    inputTokens: 100,
+                    outputTokens: 10,
+                    totalTokens: 110,
+                    costUSD: 1,
+                    modelsUsed: ["gpt-5.6-sol"],
+                    modelBreakdowns: [
+                        CostUsageDailyReport.ModelBreakdown(
+                            modelName: "gpt-5.6-sol",
+                            costUSD: 1,
+                            totalTokens: 110),
+                    ]),
+            ],
+            summary: nil)
+        let proxyAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(provider: "codex", authType: .oauth),
+            evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider])
+        let proxy = CostUsageDailyReport(
+            data: [
+                CostUsageDailyReport.Entry(
+                    date: "2026-07-24",
+                    inputTokens: 50,
+                    outputTokens: 5,
+                    totalTokens: 55,
+                    costUSD: 0.5,
+                    modelsUsed: ["gpt-5.6-sol"],
+                    modelBreakdowns: [
+                        CostUsageDailyReport.ModelBreakdown(
+                            modelName: "gpt-5.6-sol",
+                            costUSD: 0.5,
+                            totalTokens: 55,
+                            attribution: proxyAttribution),
+                    ]),
+            ],
+            summary: nil)
+
+        let breakdowns = try #require(native.merged(with: proxy).data.first?.modelBreakdowns)
+        #expect(breakdowns.count == 2)
+        #expect(breakdowns.first { $0.attribution == nil }?.totalTokens == 110)
+        #expect(breakdowns.first { $0.attribution == proxyAttribution }?.totalTokens == 55)
+    }
+
+    @Test
     func `merged report sums overlapping day totals and model breakdowns`() {
         let native = CostUsageDailyReport(
             data: [

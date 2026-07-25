@@ -160,6 +160,10 @@ public struct CostUsageFetcher: Sendable {
         codexHomePath: String?) -> CostUsageScanner.Options
     {
         var options = override ?? CostUsageScanner.Options()
+        if override == nil {
+            options.cliProxyAPIHome = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cli-proxy-api", isDirectory: true)
+        }
         if provider == .codex,
            let codexHomePath = codexHomePath?.trimmingCharacters(in: .whitespacesAndNewlines),
            !codexHomePath.isEmpty
@@ -228,6 +232,7 @@ public struct CostUsageFetcher: Sendable {
             options.claudeLogProviderFilter = allowVertexClaudeFallback ? .all : .vertexAIOnly
         } else if provider == .claude {
             options.claudeLogProviderFilter = .excludeVertexAI
+            options.claudeAttributionFilter = .excludeCodexBackend
         }
         if forceRefresh || bypassScannerDebounce {
             options.refreshMinIntervalSeconds = 0
@@ -277,21 +282,19 @@ public struct CostUsageFetcher: Sendable {
             var projects: [CostUsageProjectBreakdown] = []
             var sessions: [CostUsageSessionBreakdown] = []
             var piDaily: CostUsageDailyReport?
+            var claudeProxyDaily: CostUsageDailyReport?
             if provider == .codex {
-                let roots = CostUsageScanner.codexSessionsRoots(options: scanOptions)
-                let cache = CostUsageScanner.codexCache(
-                    CostUsageCacheIO.load(provider: .codex, cacheRoot: scanOptions.cacheRoot),
-                    scopedTo: roots)
                 let range = CostUsageScanner.CostUsageDayRange(since: since, until: until)
-                projects = CostUsageScanner.buildCodexProjectBreakdownsFromCache(
-                    cache: cache,
+                let supplemental = try Self.loadCodexSupplementalScan(
+                    options: scanOptions,
                     range: range,
-                    modelsDevCacheRoot: scanOptions.cacheRoot)
-                sessions = CostUsageScanner.buildCodexSessionBreakdownsFromCache(
-                    cache: cache,
-                    range: range,
-                    modelsDevCacheRoot: scanOptions.cacheRoot,
-                    sessionRoots: roots)
+                    now: now,
+                    includeClaudeProxy: shouldMergePiUsage,
+                    checkCancellation: checkCancellation)
+                projects = supplemental.projects
+                sessions = supplemental.sessions
+                claudeProxyDaily = supplemental.claudeProxyDaily
+                daily = claudeProxyDaily.map { daily.merged(with: $0) } ?? daily
             }
             if includePiSessions, provider == .claude || (provider == .codex && shouldMergePiUsage) {
                 let piReport = try PiSessionCostScanner.loadDailyReportCancellable(
@@ -308,11 +311,13 @@ public struct CostUsageFetcher: Sendable {
                 daily = CostUsageDailyReport.merged([daily, piReport])
             }
             if provider == .codex {
-                projects = Self.mergedProjectBreakdowns(
-                    projects + [piDaily.flatMap(Self.unknownProjectBreakdown(from:))].compactMap(\.self))
-                if piDaily?.data.isEmpty == false {
-                    sessions = []
-                }
+                let finalized = Self.finalizeCodexSupplementalScan(
+                    projects: projects,
+                    sessions: sessions,
+                    claudeProxyDaily: claudeProxyDaily,
+                    piDaily: piDaily)
+                projects = finalized.projects
+                sessions = finalized.sessions
             }
             return (daily: daily, projects: projects, sessions: sessions)
         }
@@ -486,6 +491,7 @@ public struct CostUsageFetcher: Sendable {
             var nativeScanAt: Date?
             var scanTimes: [Date] = []
             var piMerged = false
+            var claudeProxyMerged = false
 
             if !cache.days.isEmpty,
                cache.roots == CostUsageScanner.codexRootsFingerprint(options: options),
@@ -513,6 +519,40 @@ public struct CostUsageFetcher: Sendable {
                             range: range,
                             modelsDevCacheRoot: options.cacheRoot))
                     }
+                }
+            }
+
+            let claudeCache = CostUsageCacheIO.load(provider: .claude, cacheRoot: options.cacheRoot)
+            if !claudeCache.days.isEmpty,
+               !CostUsageScanner.requestedWindowExpandsCache(range: range, cache: claudeCache)
+            {
+                let proxyDaily = CostUsageScanner.buildClaudeReportFromCache(
+                    cache: claudeCache,
+                    range: range,
+                    attributionFilter: .codexBackendOnly,
+                    attributionResolver: options.cliProxyAPIHome.map {
+                        CLIProxyAPIAttributionResolver.load(
+                            home: $0,
+                            cacheRoot: options.cacheRoot)
+                    },
+                    modelsDevCatalog: CostUsagePricing.modelsDevCatalog(
+                        now: now,
+                        cacheRoot: options.cacheRoot),
+                    modelsDevCacheRoot: options.cacheRoot)
+                if !proxyDaily.data.isEmpty {
+                    reports.append(proxyDaily)
+                    claudeProxyMerged = true
+                    if claudeCache.lastScanUnixMs > 0 {
+                        scanTimes.append(Date(
+                            timeIntervalSince1970: TimeInterval(claudeCache.lastScanUnixMs) / 1000))
+                    }
+                    if let proxyProject = Self.unknownProjectBreakdown(
+                        from: proxyDaily,
+                        name: "Claude Code via CLIProxyAPI")
+                    {
+                        projects.append(proxyProject)
+                    }
+                    sessions = []
                 }
             }
 
@@ -549,7 +589,7 @@ public struct CostUsageFetcher: Sendable {
                     projects: Self.mergedProjectBreakdowns(projects),
                     sessions: sessions,
                     updatedAt: scanTimes.min()),
-                lastRefreshAt: piMerged ? nil : nativeScanAt)
+                lastRefreshAt: piMerged || claudeProxyMerged ? nil : nativeScanAt)
         }
         return cachedSnapshot.flatMap(\.self)
     }
@@ -674,11 +714,86 @@ public struct CostUsageFetcher: Sendable {
             sessions: sessions,
             updatedAt: updatedAt ?? now)
     }
+}
 
-    private static func unknownProjectBreakdown(from daily: CostUsageDailyReport) -> CostUsageProjectBreakdown? {
+extension CostUsageFetcher {
+    private struct CodexSupplementalScan {
+        let projects: [CostUsageProjectBreakdown]
+        let sessions: [CostUsageSessionBreakdown]
+        let claudeProxyDaily: CostUsageDailyReport?
+    }
+
+    private static func loadCodexSupplementalScan(
+        options: CostUsageScanner.Options,
+        range: CostUsageScanner.CostUsageDayRange,
+        now: Date,
+        includeClaudeProxy: Bool,
+        checkCancellation: @escaping CostUsageScanner.CancellationCheck) throws -> CodexSupplementalScan
+    {
+        let roots = CostUsageScanner.codexSessionsRoots(options: options)
+        let cache = CostUsageScanner.codexCache(
+            CostUsageCacheIO.load(provider: .codex, cacheRoot: options.cacheRoot),
+            scopedTo: roots)
+        let projects = CostUsageScanner.buildCodexProjectBreakdownsFromCache(
+            cache: cache,
+            range: range,
+            modelsDevCacheRoot: options.cacheRoot)
+        let sessions = CostUsageScanner.buildCodexSessionBreakdownsFromCache(
+            cache: cache,
+            range: range,
+            modelsDevCacheRoot: options.cacheRoot,
+            sessionRoots: roots)
+
+        guard includeClaudeProxy else {
+            return CodexSupplementalScan(
+                projects: projects,
+                sessions: sessions,
+                claudeProxyDaily: nil)
+        }
+        var proxyOptions = options
+        proxyOptions.claudeLogProviderFilter = .excludeVertexAI
+        proxyOptions.claudeAttributionFilter = .codexBackendOnly
+        let proxyDaily = try CostUsageScanner.loadClaudeDaily(
+            provider: .claude,
+            range: range,
+            now: now,
+            options: proxyOptions,
+            checkCancellation: checkCancellation)
+        return CodexSupplementalScan(
+            projects: projects,
+            sessions: sessions,
+            claudeProxyDaily: proxyDaily.data.isEmpty ? nil : proxyDaily)
+    }
+
+    private static func finalizeCodexSupplementalScan(
+        projects: [CostUsageProjectBreakdown],
+        sessions: [CostUsageSessionBreakdown],
+        claudeProxyDaily: CostUsageDailyReport?,
+        piDaily: CostUsageDailyReport?) -> (
+        projects: [CostUsageProjectBreakdown],
+        sessions: [CostUsageSessionBreakdown])
+    {
+        let mergedProjects = Self.mergedProjectBreakdowns(
+            projects + [
+                claudeProxyDaily.flatMap {
+                    Self.unknownProjectBreakdown(
+                        from: $0,
+                        name: "Claude Code via CLIProxyAPI")
+                },
+                piDaily.flatMap { Self.unknownProjectBreakdown(from: $0) },
+            ].compactMap(\.self))
+        let hasUnattributedSessions = piDaily?.data.isEmpty == false
+            || claudeProxyDaily?.data.isEmpty == false
+        return (mergedProjects, hasUnattributedSessions ? [] : sessions)
+    }
+
+    private static func unknownProjectBreakdown(
+        from daily: CostUsageDailyReport,
+        name: String = CostUsageProjectBreakdown.unknownProjectName) -> CostUsageProjectBreakdown?
+    {
         guard !daily.data.isEmpty else { return nil }
         return CostUsageProjectBreakdown(
-            name: CostUsageProjectBreakdown.unknownProjectName,
+            name: name,
             path: nil,
             totalTokens: daily.summary?.totalTokens,
             totalCostUSD: daily.summary?.totalCostUSD,
@@ -686,7 +801,7 @@ public struct CostUsageFetcher: Sendable {
             modelBreakdowns: self.projectModelBreakdowns(from: daily.data),
             sources: [
                 CostUsageProjectSourceBreakdown(
-                    name: CostUsageProjectBreakdown.unknownProjectName,
+                    name: name,
                     path: nil,
                     totalTokens: daily.summary?.totalTokens,
                     totalCostUSD: daily.summary?.totalCostUSD,
@@ -798,28 +913,42 @@ public struct CostUsageFetcher: Sendable {
             }
         }
 
-        func build(modelName: String) -> CostUsageDailyReport.ModelBreakdown {
+        func build(
+            modelName: String,
+            attribution: CostUsageAttribution?) -> CostUsageDailyReport.ModelBreakdown
+        {
             CostUsageDailyReport.ModelBreakdown(
                 modelName: modelName,
                 costUSD: self.sawCost ? self.costUSD : nil,
-                totalTokens: self.sawTotalTokens ? self.totalTokens : nil)
+                totalTokens: self.sawTotalTokens ? self.totalTokens : nil,
+                attribution: attribution)
         }
+    }
+
+    private struct ProjectBreakdownKey: Hashable {
+        let modelName: String
+        let attribution: CostUsageAttribution?
     }
 
     private static func projectModelBreakdowns(
         from entries: [CostUsageDailyReport.Entry]) -> [CostUsageDailyReport.ModelBreakdown]?
     {
-        var accumulators: [String: ProjectBreakdownAccumulator] = [:]
+        var accumulators: [ProjectBreakdownKey: ProjectBreakdownAccumulator] = [:]
         for entry in entries {
             for breakdown in entry.modelBreakdowns ?? [] {
-                var accumulator = accumulators[breakdown.modelName] ?? ProjectBreakdownAccumulator()
+                let key = ProjectBreakdownKey(
+                    modelName: breakdown.modelName,
+                    attribution: breakdown.attribution)
+                var accumulator = accumulators[key] ?? ProjectBreakdownAccumulator()
                 accumulator.add(breakdown)
-                accumulators[breakdown.modelName] = accumulator
+                accumulators[key] = accumulator
             }
         }
         guard !accumulators.isEmpty else { return nil }
-        return accumulators.map { modelName, accumulator in
-            accumulator.build(modelName: modelName)
+        return accumulators.map { key, accumulator in
+            accumulator.build(
+                modelName: key.modelName,
+                attribution: key.attribution)
         }
         .sorted { lhs, rhs in
             let lhsCost = lhs.costUSD ?? -1
@@ -835,7 +964,9 @@ public struct CostUsageFetcher: Sendable {
             return lhs.modelName > rhs.modelName
         }
     }
+}
 
+extension CostUsageFetcher {
     static func selectCurrentSession(from sessions: [CostUsageSessionReport.Entry])
         -> CostUsageSessionReport.Entry?
     {

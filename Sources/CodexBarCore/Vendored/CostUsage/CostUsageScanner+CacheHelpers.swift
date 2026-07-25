@@ -1508,7 +1508,16 @@ extension CostUsageScanner {
                 return lhsTokens > rhsTokens
             }
 
-            return lhs.modelName > rhs.modelName
+            if lhs.modelName != rhs.modelName {
+                return lhs.modelName > rhs.modelName
+            }
+            let lhsAttribution = lhs.attribution.map {
+                "\($0.client.rawValue):\($0.route.rawValue):\($0.upstream?.provider ?? "")"
+            } ?? ""
+            let rhsAttribution = rhs.attribution.map {
+                "\($0.client.rawValue):\($0.route.rawValue):\($0.upstream?.provider ?? "")"
+            } ?? ""
+            return lhsAttribution > rhsAttribution
         }
     }
 

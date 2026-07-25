@@ -41,9 +41,35 @@ struct SpendDashboardModel: Equatable, Sendable {
         let modelName: String
         let totalTokens: Int?
         let totalCost: Double?
+        let attribution: CostUsageAttribution?
+
+        init(
+            rank: Int,
+            provider: UsageProvider,
+            providerName: String,
+            modelName: String,
+            totalTokens: Int?,
+            totalCost: Double?,
+            attribution: CostUsageAttribution? = nil)
+        {
+            self.rank = rank
+            self.provider = provider
+            self.providerName = providerName
+            self.modelName = modelName
+            self.totalTokens = totalTokens
+            self.totalCost = totalCost
+            self.attribution = attribution
+        }
 
         var id: String {
-            "\(self.provider.rawValue):\(self.modelName)"
+            [
+                self.provider.rawValue,
+                self.modelName,
+                self.attribution?.client.rawValue ?? "",
+                self.attribution?.route.rawValue ?? "",
+                self.attribution?.upstream?.provider ?? "",
+                self.attribution?.upstream?.authType.rawValue ?? "",
+            ].joined(separator: ":")
         }
     }
 
@@ -128,6 +154,7 @@ struct SpendDashboardModel: Equatable, Sendable {
     private struct ModelKey: Hashable {
         let provider: UsageProvider
         let modelName: String
+        let attribution: CostUsageAttribution?
     }
 
     private struct ModelAccumulator {
@@ -285,7 +312,10 @@ struct SpendDashboardModel: Equatable, Sendable {
                 for breakdown in breakdowns {
                     let name = breakdown.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !name.isEmpty else { continue }
-                    let key = ModelKey(provider: input.provider, modelName: name)
+                    let key = ModelKey(
+                        provider: input.provider,
+                        modelName: name,
+                        attribution: breakdown.attribution)
                     var aggregate = aggregates[key] ?? ModelAccumulator(
                         providerName: input.modelProviderName,
                         tokens: 0,
@@ -324,7 +354,8 @@ struct SpendDashboardModel: Equatable, Sendable {
                 providerName: value.providerName,
                 modelName: key.modelName,
                 totalTokens: value.sawTokens && !value.invalidTokens && !value.overflowedTokens ? value.tokens : nil,
-                totalCost: value.sawCost && !value.invalidCost && !value.overflowedCost ? value.cost : nil)
+                totalCost: value.sawCost && !value.invalidCost && !value.overflowedCost ? value.cost : nil,
+                attribution: key.attribution)
         }
         .sorted { lhs, rhs in
             switch (lhs.totalCost, rhs.totalCost) {
@@ -346,7 +377,8 @@ struct SpendDashboardModel: Equatable, Sendable {
                 providerName: row.providerName,
                 modelName: row.modelName,
                 totalTokens: row.totalTokens,
-                totalCost: row.totalCost)
+                totalCost: row.totalCost,
+                attribution: row.attribution)
         }
         return ModelSummary(rows: rows, completeness: completeness)
     }

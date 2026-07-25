@@ -363,6 +363,7 @@ final class UsageStore {
 
     /// Background load task; cleared on deinit and on the cancel test seam.
     @ObservationIgnored var planUtilizationHistoryLoadTask: Task<Void, Never>?
+    @ObservationIgnored var cliProxyAPIUsageCollectorTask: Task<Void, Never>?
     /// Set once after the load completes. Gates mutation paths and sync menu
     /// accessors so they cannot race the decode or write empty history back to disk.
     @ObservationIgnored var planUtilizationHistoryLoaded: Bool = false
@@ -478,6 +479,7 @@ final class UsageStore {
         Task { await self.refresh(enrichmentMode: .automatic) }
         self.startTimer()
         self.startTokenTimer()
+        self.startCLIProxyAPIUsageCollector()
     }
 
     var iconStyle: IconStyle {
@@ -856,6 +858,7 @@ final class UsageStore {
         self.codexPlanHistoryBackfillTask?.cancel()
         self.resetBoundaryRefreshTask?.cancel()
         self.planUtilizationHistoryLoadTask?.cancel()
+        self.cliProxyAPIUsageCollectorTask?.cancel()
     }
 
     enum SessionQuotaWindowSource: String {
