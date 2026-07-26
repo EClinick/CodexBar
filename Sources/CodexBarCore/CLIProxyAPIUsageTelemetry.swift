@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
     struct Tokens: Codable, Equatable, Sendable {
