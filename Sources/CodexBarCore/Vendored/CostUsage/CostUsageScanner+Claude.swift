@@ -868,12 +868,14 @@ extension CostUsageScanner {
                     cacheRead: row.cacheRead,
                     cacheCreate: row.cacheCreate,
                     output: row.output))
-            let attribution = if let liveAttribution {
-                liveAttribution.route == .cliProxyAPI || modelProvider != .anthropic
-                    ? liveAttribution
-                    : nil
-            } else {
+            let attribution: CostUsageAttribution? = if liveAttribution?.route == .cliProxyAPI {
+                liveAttribution
+            } else if row.attribution?.route == .cliProxyAPI {
                 row.attribution
+            } else if modelProvider != .anthropic {
+                liveAttribution ?? row.attribution
+            } else {
+                nil
             }
             let isCodexBackend = attribution?.route == .cliProxyAPI
                 && attribution?.upstream?.isCodex == true

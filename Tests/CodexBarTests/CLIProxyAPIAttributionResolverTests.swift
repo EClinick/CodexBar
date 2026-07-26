@@ -44,7 +44,7 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
-    func `codex auth inventory restores upstream after local proxy use is proven`() {
+    func `codex auth inventory identifies upstream after this session route is proven`() {
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
                 .init(sessionID: "logged-session", model: "gpt-5.6-sol", timestamp: nil),
@@ -56,7 +56,7 @@ struct CLIProxyAPIAttributionResolverTests {
         let attribution = resolver.attribution(
             model: "gpt-5.6-sol",
             modelProvider: .openAI,
-            sessionID: "historical-session",
+            sessionID: "logged-session",
             timestampUnixMs: nil,
             tokens: Self.tokens)
 
@@ -70,6 +70,28 @@ struct CLIProxyAPIAttributionResolverTests {
             .cliProxyRequestLog,
             .modelProvider,
         ])
+    }
+
+    @Test
+    func `codex auth inventory does not transfer route proof between sessions`() {
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "logged-session", model: "gpt-5.6-sol", timestamp: nil),
+            ],
+            authProviders: [
+                .init(provider: "codex", authType: .oauth),
+            ])
+
+        let attribution = resolver.attribution(
+            model: "gpt-5.6-sol",
+            modelProvider: .openAI,
+            sessionID: "unrelated-session",
+            timestampUnixMs: nil,
+            tokens: Self.tokens)
+
+        #expect(attribution.route == .unknown)
+        #expect(attribution.upstream == nil)
+        #expect(attribution.evidence == [.modelProvider])
     }
 
     @Test

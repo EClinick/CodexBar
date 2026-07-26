@@ -77,7 +77,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 model: model,
                 tokens: tokens)
         }
-        let inventoryUpstream = usageRecord == nil
+        let inventoryUpstream = routeObservation != nil && usageRecord == nil
             ? self.authInventoryUpstream(model: model, modelProvider: modelProvider)
             : nil
         let routeConfirmed = routeObservation != nil || inventoryUpstream != nil

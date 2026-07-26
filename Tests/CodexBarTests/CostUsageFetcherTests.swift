@@ -835,6 +835,14 @@ extension CostUsageFetcherTests {
 
         #expect(cachedCodex.daily.first?.totalTokens == 135)
         #expect(cachedCodex.daily.first?.modelBreakdowns?.first?.attribution == codexBreakdown.attribution)
+
+        try FileManager.default.removeItem(at: cliProxyLogs)
+        try FileManager.default.removeItem(at: cliProxyHome.appendingPathComponent("codex-auth.json"))
+        let cachedAfterLogRotation = try #require(await CostUsageFetcher.loadCachedCodexTokenSnapshot(
+            now: day,
+            scannerOptions: options))
+        #expect(cachedAfterLogRotation.daily.first?.totalTokens == 135)
+        #expect(cachedAfterLogRotation.daily.first?.modelBreakdowns?.first?.attribution == codexBreakdown.attribution)
     }
 
     @Test
