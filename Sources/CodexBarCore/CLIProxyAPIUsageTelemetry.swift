@@ -142,7 +142,7 @@ enum CLIProxyAPIUsageCacheIO {
     static func merge(
         _ records: [CLIProxyAPIUsageRecord],
         cacheRoot: URL? = nil,
-        now: Date = Date()) -> Int
+        now: Date = Date()) -> Int?
     {
         guard !records.isEmpty else { return 0 }
         let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
@@ -155,7 +155,7 @@ enum CLIProxyAPIUsageCacheIO {
             byKey[self.recordKey(record)] = record
         }
         let cache = Cache(records: byKey.values.sorted { $0.timestamp < $1.timestamp })
-        guard self.save(cache, cacheRoot: cacheRoot) else { return 0 }
+        guard self.save(cache, cacheRoot: cacheRoot) else { return nil }
         return max(0, byKey.count - priorCount)
     }
 
@@ -341,15 +341,17 @@ public enum CLIProxyAPIUsageCollector {
         client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
     {
         do {
-            var records: [CLIProxyAPIUsageRecord] = []
+            var added = 0
             for _ in 0..<self.maximumBatches {
                 let batch = try await client.pop(count: self.batchSize)
-                records.append(contentsOf: batch)
+                guard let batchAdded = CLIProxyAPIUsageCacheIO.merge(batch, cacheRoot: cacheRoot) else {
+                    return .failed("Could not save CLIProxyAPI usage telemetry.")
+                }
+                added += batchAdded
                 if batch.count < self.batchSize {
                     break
                 }
             }
-            let added = CLIProxyAPIUsageCacheIO.merge(records, cacheRoot: cacheRoot)
             return .collected(added)
         } catch {
             return .failed(error.localizedDescription)

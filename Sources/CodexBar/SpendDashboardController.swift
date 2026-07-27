@@ -114,11 +114,21 @@ struct CodexSpendSnapshotLoadContext: Sendable {
     let includePiSessions: Bool
 }
 
+struct CodexProxySpendSnapshotLoadContext: Sendable {
+    let now: Date
+    let force: Bool
+    let historyDays: Int
+    let refreshPricingInBackground: Bool
+}
+
 enum SpendDashboardSource {
     typealias CodexSnapshotLoader = @Sendable (CodexSpendSnapshotLoadContext) async throws
         -> CostUsageTokenSnapshot
+    typealias CodexProxySnapshotLoader = @Sendable (CodexProxySpendSnapshotLoadContext) async throws
+        -> CostUsageTokenSnapshot
 
     static let scanDays = 30
+    static let codexProxySourceID = "codex:cliproxyapi"
 
     @MainActor
     static func configuration(settings: SettingsStore, store: UsageStore) -> SpendDashboardConfiguration {
@@ -140,11 +150,16 @@ enum SpendDashboardSource {
         providers: [UsageProvider],
         codexRequests: [CodexSpendScanRequest]) -> SpendDashboardConfiguration
     {
-        SpendDashboardConfiguration(
+        var codexDisplayNames = self.codexDisplayNamesByID(codexRequests)
+        if providers.contains(.codex) {
+            let providerName = store.metadata(for: .codex).displayName
+            codexDisplayNames[Self.codexProxySourceID] = "\(providerName) · CLIProxyAPI"
+        }
+        return SpendDashboardConfiguration(
             costUsageEnabled: settings.costUsageEnabled,
             providerIDs: providers.map(\.rawValue),
             codexAccountIdentities: codexRequests.map { "\($0.id)|\($0.cacheIdentity)" },
-            codexAccountDisplayNames: self.codexDisplayNamesByID(codexRequests),
+            codexAccountDisplayNames: codexDisplayNames,
             sourceOwnershipFingerprints: self.sourceOwnershipFingerprints(
                 providers: providers,
                 settings: settings,
@@ -246,14 +261,30 @@ enum SpendDashboardSource {
     }
 
     static func load(_ request: SpendDashboardLoadRequest) async -> SpendDashboardLoadResult {
-        await self.load(request, codexSnapshotLoader: { context in
-            try await self.loadCodexSnapshot(context)
-        })
+        await self.load(
+            request,
+            codexSnapshotLoader: { context in
+                try await self.loadCodexSnapshot(context)
+            },
+            codexProxySnapshotLoader: { context in
+                try await self.loadCodexProxySnapshot(context)
+            })
     }
 
     static func load(
         _ request: SpendDashboardLoadRequest,
         codexSnapshotLoader: CodexSnapshotLoader) async -> SpendDashboardLoadResult
+    {
+        await self.load(
+            request,
+            codexSnapshotLoader: codexSnapshotLoader,
+            codexProxySnapshotLoader: nil)
+    }
+
+    static func load(
+        _ request: SpendDashboardLoadRequest,
+        codexSnapshotLoader: CodexSnapshotLoader,
+        codexProxySnapshotLoader: CodexProxySnapshotLoader?) async -> SpendDashboardLoadResult
     {
         var inputs = request.capturedInputs
         var failedSourceIDs = request.unavailableSourceIDs
@@ -299,6 +330,36 @@ enum SpendDashboardSource {
                 failedSourceIDs.insert(sourceID)
             }
         }
+        if request.configuration.providerIDs.contains(UsageProvider.codex.rawValue),
+           let codexProxySnapshotLoader
+        {
+            do {
+                let snapshot = try await codexProxySnapshotLoader(CodexProxySpendSnapshotLoadContext(
+                    now: request.now,
+                    force: request.force,
+                    historyDays: Self.scanDays,
+                    refreshPricingInBackground: false))
+                try Task.checkCancellation()
+                if !snapshot.daily.isEmpty {
+                    let providerName = ProviderDescriptorRegistry.descriptor(for: .codex).metadata.displayName
+                    inputs.append(SpendDashboardModel.ProviderInput(
+                        id: Self.codexProxySourceID,
+                        provider: .codex,
+                        displayName: "\(providerName) · CLIProxyAPI",
+                        modelProviderName: providerName,
+                        snapshot: snapshot))
+                }
+            } catch is CancellationError {
+                failedSourceIDs.formUnion(request.codexRequests.map { "codex:\($0.id)" })
+                failedSourceIDs.insert(Self.codexProxySourceID)
+                return SpendDashboardLoadResult(
+                    inputs: [],
+                    failedSourceIDs: failedSourceIDs,
+                    invalidatedSourceIDs: invalidatedSourceIDs)
+            } catch {
+                failedSourceIDs.insert(Self.codexProxySourceID)
+            }
+        }
         let lateInvalidatedSourceIDs = Set(request.codexRequests.compactMap { account in
             self.currentAuthFingerprint(for: account) == account.authFingerprint
                 ? nil
@@ -324,7 +385,18 @@ enum SpendDashboardSource {
             codexHomePath: context.account.homePath,
             historyDays: context.historyDays,
             refreshPricingInBackground: context.refreshPricingInBackground,
-            includePiSessions: context.includePiSessions)
+            includePiSessions: context.includePiSessions,
+            includeClaudeProxyUsage: false)
+    }
+
+    private static func loadCodexProxySnapshot(
+        _ context: CodexProxySpendSnapshotLoadContext) async throws -> CostUsageTokenSnapshot
+    {
+        try await CostUsageFetcher().loadCodexProxyTokenSnapshot(
+            now: context.now,
+            forceRefresh: context.force,
+            historyDays: context.historyDays,
+            refreshPricingInBackground: context.refreshPricingInBackground)
     }
 
     @MainActor
@@ -908,7 +980,10 @@ final class SpendDashboardController {
         let forceFailed = outcome.result.failedSourceIDs
         let invalidated = outcome.result.invalidatedSourceIDs
         let barrierFailed = capture.unavailableSourceIDs
-        let forcedCodexIDs = Set(outcome.request.codexRequests.map { "codex:\($0.id)" })
+        var forcedCodexIDs = Set(outcome.request.codexRequests.map { "codex:\($0.id)" })
+        if outcome.request.configuration.providerIDs.contains(UsageProvider.codex.rawValue) {
+            forcedCodexIDs.insert(SpendDashboardSource.codexProxySourceID)
+        }
         let confirmedNonemptyInputs = outcome.confirmedNonemptyInputs
         let confirmedNonemptyIDs = Set(confirmedNonemptyInputs.map(\.id))
         var inputs = capture.capturedInputs.filter {

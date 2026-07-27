@@ -77,7 +77,8 @@ public struct CostUsageFetcher: Sendable {
         cursorCookieHeaderOverride: String? = nil,
         allowPricingRefresh: Bool = true,
         refreshPricingInBackground: Bool = true,
-        includePiSessions: Bool = true) async throws -> CostUsageTokenSnapshot
+        includePiSessions: Bool = true,
+        includeClaudeProxyUsage: Bool = true) async throws -> CostUsageTokenSnapshot
     {
         try await Self.loadTokenSnapshot(
             provider: provider,
@@ -91,6 +92,7 @@ public struct CostUsageFetcher: Sendable {
             allowPricingRefresh: allowPricingRefresh,
             refreshPricingInBackground: refreshPricingInBackground,
             includePiSessions: includePiSessions,
+            includeClaudeProxyUsage: includeClaudeProxyUsage,
             bypassScannerDebounce: false,
             scannerOptions: self.scannerOptionsOverride())
     }
@@ -107,6 +109,7 @@ public struct CostUsageFetcher: Sendable {
         allowPricingRefresh: Bool = true,
         refreshPricingInBackground: Bool = true,
         includePiSessions: Bool = true,
+        includeClaudeProxyUsage: Bool = true,
         bypassScannerDebounce: Bool) async throws -> CostUsageTokenSnapshot
     {
         try await Self.loadTokenSnapshot(
@@ -121,8 +124,25 @@ public struct CostUsageFetcher: Sendable {
             allowPricingRefresh: allowPricingRefresh,
             refreshPricingInBackground: refreshPricingInBackground,
             includePiSessions: includePiSessions,
+            includeClaudeProxyUsage: includeClaudeProxyUsage,
             bypassScannerDebounce: bypassScannerDebounce,
             scannerOptions: self.scannerOptionsOverride())
+    }
+
+    package func loadCodexProxyTokenSnapshot(
+        now: Date = Date(),
+        forceRefresh: Bool = false,
+        historyDays: Int = 30,
+        allowPricingRefresh: Bool = true,
+        refreshPricingInBackground: Bool = true) async throws -> CostUsageTokenSnapshot
+    {
+        try await Self.loadCodexProxyTokenSnapshot(CodexProxyTokenSnapshotOptions(
+            now: now,
+            forceRefresh: forceRefresh,
+            historyDays: historyDays,
+            allowPricingRefresh: allowPricingRefresh,
+            refreshPricingInBackground: refreshPricingInBackground,
+            scannerOptions: self.scannerOptionsOverride()))
     }
 
     @available(*, deprecated, message: "Codex token-cost scans are uncapped; this limit is ignored.")
@@ -186,6 +206,7 @@ public struct CostUsageFetcher: Sendable {
         allowPricingRefresh: Bool = true,
         refreshPricingInBackground: Bool = true,
         includePiSessions: Bool = true,
+        includeClaudeProxyUsage: Bool = true,
         bypassScannerDebounce: Bool = false,
         scannerOptions overrideScannerOptions: CostUsageScanner.Options? = nil,
         piScannerOptions overridePiScannerOptions: PiSessionCostScanner
@@ -289,7 +310,7 @@ public struct CostUsageFetcher: Sendable {
                     options: scanOptions,
                     range: range,
                     now: now,
-                    includeClaudeProxy: shouldMergePiUsage,
+                    includeClaudeProxy: includeClaudeProxyUsage,
                     checkCancellation: checkCancellation)
                 projects = supplemental.projects
                 sessions = supplemental.sessions
@@ -344,6 +365,7 @@ public struct CostUsageFetcher: Sendable {
                 allowPricingRefresh: allowPricingRefresh,
                 refreshPricingInBackground: false,
                 includePiSessions: includePiSessions,
+                includeClaudeProxyUsage: includeClaudeProxyUsage,
                 scannerOptions: options,
                 piScannerOptions: piOptions,
                 modelsDevClient: modelsDevClient,
@@ -717,10 +739,68 @@ public struct CostUsageFetcher: Sendable {
 }
 
 extension CostUsageFetcher {
+    private struct CodexProxyTokenSnapshotOptions {
+        let now: Date
+        let forceRefresh: Bool
+        let historyDays: Int
+        let allowPricingRefresh: Bool
+        let refreshPricingInBackground: Bool
+        let scannerOptions: CostUsageScanner.Options?
+    }
+
     private struct CodexSupplementalScan {
         let projects: [CostUsageProjectBreakdown]
         let sessions: [CostUsageSessionBreakdown]
         let claudeProxyDaily: CostUsageDailyReport?
+    }
+
+    private static func loadCodexProxyTokenSnapshot(
+        _ request: CodexProxyTokenSnapshotOptions) async throws -> CostUsageTokenSnapshot
+    {
+        let clampedHistoryDays = max(1, min(365, request.historyDays))
+        let since = Calendar.current.date(
+            byAdding: .day,
+            value: -(clampedHistoryDays - 1),
+            to: request.now) ?? request.now
+        var options = Self.resolvedScannerOptions(
+            request.scannerOptions,
+            provider: .codex,
+            codexHomePath: nil)
+        await Self.refreshPricingIfAllowed(
+            options: PricingRefreshOptions(
+                provider: .codex,
+                isAllowed: request.allowPricingRefresh,
+                retryUnknown: true,
+                inBackground: request.refreshPricingInBackground),
+            now: request.now,
+            cacheRoot: options.cacheRoot,
+            client: ModelsDevClient())
+        if request.forceRefresh {
+            options.refreshMinIntervalSeconds = 0
+        }
+
+        let scanOptions = options
+        let proxyDaily = try await CostUsageScanExecutor.run { checkCancellation in
+            let range = CostUsageScanner.CostUsageDayRange(since: since, until: request.now)
+            let supplemental = try Self.loadCodexSupplementalScan(
+                options: scanOptions,
+                range: range,
+                now: request.now,
+                includeClaudeProxy: true,
+                checkCancellation: checkCancellation)
+            return supplemental.claudeProxyDaily
+        }
+        let daily = proxyDaily ?? CostUsageDailyReport(data: [], summary: nil)
+        let projects = proxyDaily.flatMap {
+            Self.unknownProjectBreakdown(
+                from: $0,
+                name: "Claude Code via CLIProxyAPI")
+        }.map { [$0] } ?? []
+        return Self.tokenSnapshot(
+            from: daily,
+            now: request.now,
+            historyDays: clampedHistoryDays,
+            projects: projects)
     }
 
     private static func loadCodexSupplementalScan(

@@ -794,6 +794,7 @@ extension CostUsageFetcherTests {
         let codex = try await CostUsageFetcher.loadTokenSnapshot(
             provider: .codex,
             now: day,
+            codexHomePath: env.codexHomeRoot.path,
             allowPricingRefresh: false,
             includePiSessions: false,
             scannerOptions: options)

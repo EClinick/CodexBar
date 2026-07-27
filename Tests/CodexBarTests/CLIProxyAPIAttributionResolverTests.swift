@@ -422,6 +422,76 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `usage collector persists a full batch before a later pop fails`() async throws {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-partial-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let records = (0..<100).map { index in
+            CLIProxyAPIUsageRecord(
+                timestamp: timestamp.addingTimeInterval(TimeInterval(index)),
+                provider: "codex",
+                model: "gpt-5.6-sol",
+                alias: "gpt-5.6-sol",
+                endpoint: "POST /v1/messages",
+                authType: "oauth",
+                requestID: "request-\(index)",
+                tokens: .init(input: 10, output: 20, total: 30))
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let sequence = try CLIProxyAPIBatchSequence(firstPayload: encoder.encode(records))
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                try await sequence.load(request)
+            })
+
+        let result = await CLIProxyAPIUsageCollector.collect(cacheRoot: cacheRoot, client: client)
+
+        #expect(result == .failed("The second queue pop failed."))
+        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).count == 100)
+    }
+
+    @Test
+    func `usage collector reports cache write failure`() async throws {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-blocked-\(UUID().uuidString)", isDirectory: false)
+        try Data("not-a-directory".utf8).write(to: cacheRoot)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let record = CLIProxyAPIUsageRecord(
+            timestamp: timestamp,
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            alias: "gpt-5.6-sol",
+            endpoint: "POST /v1/messages",
+            authType: "oauth",
+            requestID: "request-1",
+            tokens: .init(input: 10, output: 20, total: 30))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode([record])
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (data, response)
+            })
+
+        let result = await CLIProxyAPIUsageCollector.collect(cacheRoot: cacheRoot, client: client)
+
+        #expect(result == .failed("Could not save CLIProxyAPI usage telemetry."))
+    }
+
+    @Test
     func `plain http management url is limited to loopback`() {
         #expect(CLIProxyAPIConnectionSettings(
             baseURL: "http://127.0.0.1:8317",
@@ -481,5 +551,36 @@ private actor CLIProxyAPICollectionConcurrencyProbe {
 
     func maximumActiveCallCount() -> Int {
         self.maximumActiveCount
+    }
+}
+
+private actor CLIProxyAPIBatchSequence {
+    private enum SequenceError: LocalizedError {
+        case secondPopFailed
+
+        var errorDescription: String? {
+            "The second queue pop failed."
+        }
+    }
+
+    private let firstPayload: Data
+    private var callCount = 0
+
+    init(firstPayload: Data) {
+        self.firstPayload = firstPayload
+    }
+
+    func load(_ request: URLRequest) throws -> (Data, URLResponse) {
+        self.callCount += 1
+        guard self.callCount == 1 else {
+            throw SequenceError.secondPopFailed
+        }
+        let url = try #require(request.url)
+        let response = try #require(HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil))
+        return (self.firstPayload, response)
     }
 }
