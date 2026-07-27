@@ -573,6 +573,7 @@ public struct CostUsageFetcher: Sendable {
                     try CLIProxyAPIAttributionResolver.load(
                         home: home,
                         cacheRoot: options.cacheRoot,
+                        forceReload: options.forceRescan,
                         checkCancellation: checkCancellation)
                 } else {
                     nil

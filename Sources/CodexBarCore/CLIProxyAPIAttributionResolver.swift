@@ -24,6 +24,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     private static let maxLogPrefixBytes = 2 * 1024 * 1024
     private static let maximumRouteMatchDistance: TimeInterval = 60 * 60
     private static let maximumTelemetryMatchDistance: TimeInterval = 5
+    private static let observationCache = ObservationCache()
 
     private let observationsBySessionID: [String: [Observation]]
     private let usageRecordsByCanonicalModel: [String: [CLIProxyAPIUsageRecord]]
@@ -46,11 +47,13 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         home: URL,
         cacheRoot: URL? = nil,
         fileManager: FileManager = .default,
+        forceReload: Bool = false,
         checkCancellation: (() throws -> Void)? = nil) throws -> Self
     {
         let observations = try self.loadObservations(
             logDirectory: home.appendingPathComponent("logs", isDirectory: true),
             fileManager: fileManager,
+            forceReload: forceReload,
             checkCancellation: checkCancellation)
         return Self(
             observations: observations,
@@ -264,6 +267,79 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         let disabled: Bool?
     }
 
+    private final class ObservationCache: @unchecked Sendable {
+        private struct Metadata: Equatable {
+            let modificationDate: Date?
+            let size: Int?
+        }
+
+        private struct Entry {
+            let metadata: Metadata
+            let observation: Observation?
+        }
+
+        private let lock = NSLock()
+        private var entriesByDirectory: [String: [String: Entry]] = [:]
+
+        func load(
+            logDirectory: URL,
+            fileManager: FileManager,
+            forceReload: Bool,
+            checkCancellation: (() throws -> Void)?,
+            parse: (URL) -> Observation?) throws -> [Observation]
+        {
+            try self.lock.withLock {
+                let directoryKey = logDirectory.standardizedFileURL.path
+                let resourceKeys: Set<URLResourceKey> = [
+                    .contentModificationDateKey,
+                    .fileSizeKey,
+                    .isRegularFileKey,
+                ]
+                guard let urls = try? fileManager.contentsOfDirectory(
+                    at: logDirectory,
+                    includingPropertiesForKeys: Array(resourceKeys),
+                    options: [.skipsHiddenFiles])
+                else {
+                    self.entriesByDirectory.removeValue(forKey: directoryKey)
+                    return []
+                }
+
+                let cachedEntries = forceReload ? [:] : self.entriesByDirectory[directoryKey] ?? [:]
+                var currentEntries: [String: Entry] = [:]
+                var observations: [Observation] = []
+                for url in urls where url.pathExtension.lowercased() == "log" {
+                    try checkCancellation?()
+                    guard let values = try? url.resourceValues(forKeys: resourceKeys),
+                          values.isRegularFile == true
+                    else { continue }
+
+                    let path = url.standardizedFileURL.path
+                    let metadata = Metadata(
+                        modificationDate: values.contentModificationDate,
+                        size: values.fileSize)
+                    let entry = if let cached = cachedEntries[path],
+                                   cached.metadata == metadata
+                    {
+                        cached
+                    } else {
+                        Entry(metadata: metadata, observation: parse(url))
+                    }
+                    currentEntries[path] = entry
+                    if let observation = entry.observation {
+                        observations.append(observation)
+                    }
+                }
+
+                if currentEntries.isEmpty {
+                    self.entriesByDirectory.removeValue(forKey: directoryKey)
+                } else {
+                    self.entriesByDirectory[directoryKey] = currentEntries
+                }
+                return observations
+            }
+        }
+    }
+
     private static func loadAuthProviders(
         home: URL,
         fileManager: FileManager) -> [AuthProvider]
@@ -310,22 +386,17 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     private static func loadObservations(
         logDirectory: URL,
         fileManager: FileManager,
+        forceReload: Bool,
         checkCancellation: (() throws -> Void)?) throws -> [Observation]
     {
-        guard let urls = try? fileManager.contentsOfDirectory(
-            at: logDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-            options: [.skipsHiddenFiles])
-        else { return [] }
-
-        var observations: [Observation] = []
-        for url in urls where url.pathExtension.lowercased() == "log" {
-            try checkCancellation?()
-            if let observation = self.parseObservation(url: url) {
-                observations.append(observation)
-            }
+        try self.observationCache.load(
+            logDirectory: logDirectory,
+            fileManager: fileManager,
+            forceReload: forceReload,
+            checkCancellation: checkCancellation)
+        { url in
+            self.parseObservation(url: url)
         }
-        return observations
     }
 
     private static func parseObservation(url: URL) -> Observation? {

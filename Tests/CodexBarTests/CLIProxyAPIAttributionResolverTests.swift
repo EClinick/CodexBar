@@ -372,6 +372,66 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `filesystem loader reuses unchanged logs and refreshes changed paths`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-log-cache-\(UUID().uuidString)", isDirectory: true)
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let logs = home.appendingPathComponent("logs", isDirectory: true)
+        let logURL = logs.appendingPathComponent("request.log")
+        try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let requestTimestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let pinnedModificationDate = Date(timeIntervalSince1970: 1_000_000)
+        let firstLog = Self.requestLog(sessionID: "session-one", timestamp: requestTimestamp)
+        let secondLog = Self.requestLog(sessionID: "session-two", timestamp: requestTimestamp)
+        let thirdLog = Self.requestLog(sessionID: "session-new", timestamp: requestTimestamp)
+        #expect(firstLog.utf8.count == secondLog.utf8.count)
+        #expect(secondLog.utf8.count == thirdLog.utf8.count)
+
+        try Data(firstLog.utf8).write(to: logURL)
+        try fileManager.setAttributes(
+            [.modificationDate: pinnedModificationDate],
+            ofItemAtPath: logURL.path)
+        let firstResolver = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
+        #expect(Self.route(for: "session-one", resolver: firstResolver) == .cliProxyAPI)
+
+        try Data(secondLog.utf8).write(to: logURL)
+        try fileManager.setAttributes(
+            [.modificationDate: pinnedModificationDate],
+            ofItemAtPath: logURL.path)
+        let cachedResolver = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
+        #expect(Self.route(for: "session-one", resolver: cachedResolver) == .cliProxyAPI)
+        #expect(Self.route(for: "session-two", resolver: cachedResolver) == .unknown)
+
+        let forcedResolver = try CLIProxyAPIAttributionResolver.load(
+            home: home,
+            fileManager: fileManager,
+            forceReload: true)
+        #expect(Self.route(for: "session-one", resolver: forcedResolver) == .unknown)
+        #expect(Self.route(for: "session-two", resolver: forcedResolver) == .cliProxyAPI)
+
+        try Data(firstLog.utf8).write(to: logURL)
+        try fileManager.setAttributes(
+            [.modificationDate: pinnedModificationDate.addingTimeInterval(1)],
+            ofItemAtPath: logURL.path)
+        let refreshedResolver = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
+        #expect(Self.route(for: "session-one", resolver: refreshedResolver) == .cliProxyAPI)
+        #expect(Self.route(for: "session-two", resolver: refreshedResolver) == .unknown)
+
+        try fileManager.removeItem(at: logURL)
+        _ = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
+        try Data(thirdLog.utf8).write(to: logURL)
+        try fileManager.setAttributes(
+            [.modificationDate: pinnedModificationDate.addingTimeInterval(1)],
+            ofItemAtPath: logURL.path)
+        let recreatedResolver = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
+        #expect(Self.route(for: "session-one", resolver: recreatedResolver) == .unknown)
+        #expect(Self.route(for: "session-new", resolver: recreatedResolver) == .cliProxyAPI)
+    }
+
+    @Test
     func `usage cache never persists source or api key fields`() throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory
@@ -705,6 +765,18 @@ struct CLIProxyAPIAttributionResolverTests {
         cacheRead: 30,
         cacheCreate: 40,
         output: 20)
+
+    private static func route(
+        for sessionID: String,
+        resolver: CLIProxyAPIAttributionResolver) -> CostUsageAttribution.Route
+    {
+        resolver.attribution(
+            model: "gpt-5.6-sol",
+            modelProvider: .openAI,
+            sessionID: sessionID,
+            timestampUnixMs: nil,
+            tokens: self.tokens).route
+    }
 
     private static func requestLog(sessionID: String, timestamp: Date) -> String {
         """
