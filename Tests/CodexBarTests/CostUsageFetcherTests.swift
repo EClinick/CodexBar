@@ -722,7 +722,7 @@ extension CostUsageFetcherTests {
             "requestId": "request-proxy",
             "message": [
                 "id": "message-proxy",
-                "model": "gpt-5.6-sol",
+                "model": "claude-sonnet-4-6",
                 "usage": [
                     "input_tokens": 100,
                     "cache_creation_input_tokens": 10,
@@ -761,7 +761,7 @@ extension CostUsageFetcherTests {
         === HEADERS ===
         X-Claude-Code-Session-Id: session-proxy
         === REQUEST BODY ===
-        {"model":"gpt-5.6-sol"}
+        {"model":"claude-sonnet-4-6"}
         === API RESPONSE ===
         """
         try Data(proxyLog.utf8).write(to: cliProxyLogs.appendingPathComponent("request.log"))
@@ -772,7 +772,7 @@ extension CostUsageFetcherTests {
                     provider: "codex",
                     executorType: "CodexExecutor",
                     model: "gpt-5.6-sol",
-                    alias: "gpt-5.6-sol",
+                    alias: "claude-sonnet-4-6",
                     endpoint: "/v1/messages",
                     authType: "oauth",
                     requestID: "cliproxy-request-proxy",
@@ -817,11 +817,11 @@ extension CostUsageFetcherTests {
         let codexBreakdown = try #require(codex.daily.first?.modelBreakdowns?.first)
         #expect(codex.daily.first?.totalTokens == 135)
         #expect(abs((codex.daily.first?.costUSD ?? 0) - expectedCodexCost) < 0.000001)
-        #expect(codexBreakdown.modelName == "gpt-5.6-sol")
+        #expect(codexBreakdown.modelName == "claude-sonnet-4-6")
         #expect(codexBreakdown.attribution == CostUsageAttribution(
             client: .claudeCode,
             route: .cliProxyAPI,
-            modelProvider: .openAI,
+            modelProvider: .anthropic,
             upstream: .init(
                 provider: "codex",
                 authType: .oauth,
@@ -965,10 +965,7 @@ extension CostUsageFetcherTests {
             scannerOptions: options)
 
         #expect(codex.daily.isEmpty)
-        let attribution = try #require(claude.daily.first?.modelBreakdowns?.first?.attribution)
-        #expect(attribution.modelProvider == .openAI)
-        #expect(attribution.route == .unknown)
-        #expect(attribution.upstream == nil)
+        #expect(claude.daily.isEmpty)
     }
 
     @Test

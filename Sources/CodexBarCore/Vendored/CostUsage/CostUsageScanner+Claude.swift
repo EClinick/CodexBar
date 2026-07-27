@@ -75,18 +75,26 @@ extension CostUsageScanner {
         let attribution = resolvedAttribution.route == .cliProxyAPI || modelProvider != .anthropic
             ? resolvedAttribution
             : nil
-        let cost: Double? = if modelProvider == .openAI {
+        let upstreamModel = resolvedAttribution.route == .cliProxyAPI
+            ? resolvedAttribution.upstream?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
+        let pricingModel = upstreamModel.flatMap { $0.isEmpty ? nil : $0 } ?? model
+        let pricingProvider = CostUsagePricing.modelProvider(
+            for: pricingModel,
+            modelsDevCatalog: context.modelsDevCatalog,
+            modelsDevCacheRoot: context.modelsDevCacheRoot)
+        let cost: Double? = if pricingProvider == .openAI {
             CostUsagePricing.claudeProxyCodexCostUSD(
-                model: model,
+                model: pricingModel,
                 inputTokens: tokens.input,
                 cacheReadInputTokens: tokens.cacheRead,
                 cacheCreationInputTokens: tokens.cacheCreate,
                 outputTokens: tokens.output,
                 modelsDevCatalog: context.modelsDevCatalog,
                 modelsDevCacheRoot: context.modelsDevCacheRoot)
-        } else if modelProvider == .anthropic {
+        } else if pricingProvider == .anthropic {
             CostUsagePricing.claudeCostUSD(
-                model: model,
+                model: pricingModel,
                 inputTokens: tokens.input,
                 cacheReadInputTokens: tokens.cacheRead,
                 cacheCreationInputTokens: tokens.cacheCreate,
@@ -882,10 +890,13 @@ extension CostUsageScanner {
             }
             let isCodexBackend = attribution?.route == .cliProxyAPI
                 && attribution?.upstream?.isCodex == true
+            let isUnresolvedForeignModel = attribution?.route != .cliProxyAPI
+                && modelProvider != .anthropic
+                && modelProvider != .unknown
             let includeRow = switch attributionFilter {
             case .all: true
             case .codexBackendOnly: isCodexBackend
-            case .excludeCodexBackend: !isCodexBackend
+            case .excludeCodexBackend: !isCodexBackend && !isUnresolvedForeignModel
             }
             guard includeRow else { continue }
 
@@ -906,9 +917,18 @@ extension CostUsageScanner {
             var cost = result.repricedCosts[key] ?? ClaudeRepricedCost()
             cost.sampleCount += 1
             let wasPriced = row.costPriced ?? (row.costNanos > 0)
+            let upstreamModel = attribution?.route == .cliProxyAPI
+                ? attribution?.upstream?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+                : nil
+            let pricingModel = upstreamModel.flatMap { $0.isEmpty ? nil : $0 } ?? row.model
+            let pricingProvider = CostUsagePricing.modelProvider(
+                for: pricingModel,
+                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCacheRoot: modelsDevCacheRoot)
             let currentCost = Self.currentClaudeRowCost(
                 row,
-                modelProvider: modelProvider,
+                pricingModel: pricingModel,
+                pricingProvider: pricingProvider,
                 modelsDevCatalog: modelsDevCatalog,
                 modelsDevCacheRoot: modelsDevCacheRoot)
             let resolvedCost: Double? = if wasPriced, row.costNanos == 0 {
@@ -932,13 +952,14 @@ extension CostUsageScanner {
 
     private static func currentClaudeRowCost(
         _ row: ClaudeUsageRow,
-        modelProvider: CostUsageAttribution.ModelProvider,
+        pricingModel: String,
+        pricingProvider: CostUsageAttribution.ModelProvider,
         modelsDevCatalog: ModelsDevCatalog?,
         modelsDevCacheRoot: URL?) -> Double?
     {
-        if modelProvider == .openAI {
+        if pricingProvider == .openAI {
             return CostUsagePricing.claudeProxyCodexCostUSD(
-                model: row.model,
+                model: pricingModel,
                 inputTokens: row.input,
                 cacheReadInputTokens: row.cacheRead,
                 cacheCreationInputTokens: row.cacheCreate,
@@ -946,9 +967,9 @@ extension CostUsageScanner {
                 modelsDevCatalog: modelsDevCatalog,
                 modelsDevCacheRoot: modelsDevCacheRoot)
         }
-        guard modelProvider == .anthropic else { return nil }
+        guard pricingProvider == .anthropic else { return nil }
         return CostUsagePricing.claudeCostUSD(
-            model: row.model,
+            model: pricingModel,
             inputTokens: row.input,
             cacheReadInputTokens: row.cacheRead,
             cacheCreationInputTokens: row.cacheCreate,
