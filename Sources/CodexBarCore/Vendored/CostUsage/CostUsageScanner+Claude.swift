@@ -773,10 +773,13 @@ extension CostUsageScanner {
             || nowMs - cache.lastScanUnixMs > refreshMs
 
         let providerFilter = options.claudeLogProviderFilter
-        let attributionResolver = options.cliProxyAPIHome.map {
-            CLIProxyAPIAttributionResolver.load(
-                home: $0,
-                cacheRoot: options.cacheRoot)
+        let attributionResolver: CLIProxyAPIAttributionResolver? = if let home = options.cliProxyAPIHome {
+            try CLIProxyAPIAttributionResolver.load(
+                home: home,
+                cacheRoot: options.cacheRoot,
+                checkCancellation: checkCancellation)
+        } else {
+            nil
         }
 
         var touched: Set<String> = []

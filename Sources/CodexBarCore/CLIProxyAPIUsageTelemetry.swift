@@ -123,19 +123,19 @@ struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
 }
 
 enum CLIProxyAPIUsageCacheIO {
-    private struct Cache: Codable {
+    private struct Cache: Codable, Equatable {
         var version: Int = 1
         var records: [CLIProxyAPIUsageRecord] = []
     }
 
     private static let maximumRecordAge: TimeInterval = 366 * 24 * 60 * 60
 
-    static func load(cacheRoot: URL? = nil) -> [CLIProxyAPIUsageRecord] {
-        guard let data = try? Data(contentsOf: self.cacheFileURL(cacheRoot: cacheRoot)),
-              let cache = try? self.decoder.decode(Cache.self, from: data),
-              cache.version == 1
-        else { return [] }
-        return cache.records
+    static func load(
+        cacheRoot: URL? = nil,
+        now: Date = Date()) -> [CLIProxyAPIUsageRecord]
+    {
+        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+        return self.loadCache(cacheRoot: cacheRoot).records.filter { $0.timestamp >= cutoff }
     }
 
     @discardableResult
@@ -145,8 +145,9 @@ enum CLIProxyAPIUsageCacheIO {
         now: Date = Date()) -> Int?
     {
         let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+        let existingCache = self.loadCache(cacheRoot: cacheRoot)
         var byKey: [String: CLIProxyAPIUsageRecord] = [:]
-        for record in self.load(cacheRoot: cacheRoot) where record.timestamp >= cutoff {
+        for record in existingCache.records where record.timestamp >= cutoff {
             byKey[self.recordKey(record)] = record
         }
         let priorCount = byKey.count
@@ -154,6 +155,9 @@ enum CLIProxyAPIUsageCacheIO {
             byKey[self.recordKey(record)] = record
         }
         let cache = Cache(records: byKey.values.sorted { $0.timestamp < $1.timestamp })
+        if cache == existingCache {
+            return 0
+        }
         guard self.save(cache, cacheRoot: cacheRoot) else { return nil }
         return max(0, byKey.count - priorCount)
     }
@@ -207,6 +211,14 @@ enum CLIProxyAPIUsageCacheIO {
             String(record.tokens.cacheCreation),
             String(record.tokens.output),
         ].joined(separator: ":")
+    }
+
+    private static func loadCache(cacheRoot: URL?) -> Cache {
+        guard let data = try? Data(contentsOf: self.cacheFileURL(cacheRoot: cacheRoot)),
+              let cache = try? self.decoder.decode(Cache.self, from: data),
+              cache.version == 1
+        else { return Cache() }
+        return cache
     }
 
     private static func save(_ cache: Cache, cacheRoot: URL?) -> Bool {

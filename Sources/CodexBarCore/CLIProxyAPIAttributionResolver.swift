@@ -45,11 +45,13 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     static func load(
         home: URL,
         cacheRoot: URL? = nil,
-        fileManager: FileManager = .default) -> Self
+        fileManager: FileManager = .default,
+        checkCancellation: (() throws -> Void)? = nil) throws -> Self
     {
-        let observations = self.loadObservations(
+        let observations = try self.loadObservations(
             logDirectory: home.appendingPathComponent("logs", isDirectory: true),
-            fileManager: fileManager)
+            fileManager: fileManager,
+            checkCancellation: checkCancellation)
         return Self(
             observations: observations,
             usageRecords: CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot),
@@ -273,7 +275,8 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 
     private static func loadObservations(
         logDirectory: URL,
-        fileManager: FileManager) -> [Observation]
+        fileManager: FileManager,
+        checkCancellation: (() throws -> Void)?) throws -> [Observation]
     {
         guard let urls = try? fileManager.contentsOfDirectory(
             at: logDirectory,
@@ -281,9 +284,14 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             options: [.skipsHiddenFiles])
         else { return [] }
 
-        return urls
-            .filter { $0.pathExtension.lowercased() == "log" }
-            .compactMap(self.parseObservation)
+        var observations: [Observation] = []
+        for url in urls where url.pathExtension.lowercased() == "log" {
+            try checkCancellation?()
+            if let observation = self.parseObservation(url: url) {
+                observations.append(observation)
+            }
+        }
+        return observations
     }
 
     private static func parseObservation(url: URL) -> Observation? {

@@ -260,7 +260,7 @@ struct CLIProxyAPIAttributionResolverTests {
             cacheRoot: cacheRoot,
             now: timestamp)
 
-        let resolver = CLIProxyAPIAttributionResolver.load(
+        let resolver = try CLIProxyAPIAttributionResolver.load(
             home: home,
             cacheRoot: cacheRoot,
             fileManager: fileManager)
@@ -302,7 +302,7 @@ struct CLIProxyAPIAttributionResolverTests {
                 ofItemAtPath: url.path)
         }
 
-        let resolver = CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
+        let resolver = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
         let attribution = resolver.attribution(
             model: "gpt-5.6-sol",
             modelProvider: .openAI,
@@ -312,6 +312,27 @@ struct CLIProxyAPIAttributionResolverTests {
 
         #expect(attribution.route == .cliProxyAPI)
         #expect(attribution.evidence.contains(.cliProxyRequestLog))
+    }
+
+    @Test
+    func `filesystem loader checks cancellation before reading request logs`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-log-cancellation-\(UUID().uuidString)", isDirectory: true)
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let logs = home.appendingPathComponent("logs", isDirectory: true)
+        try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+        try Data(Self.requestLog(
+            sessionID: "cancelled-session",
+            timestamp: Date()).utf8).write(to: logs.appendingPathComponent("request.log"))
+
+        #expect(throws: CancellationError.self) {
+            try CLIProxyAPIAttributionResolver.load(
+                home: home,
+                fileManager: fileManager,
+                checkCancellation: { throw CancellationError() })
+        }
     }
 
     @Test
@@ -527,6 +548,67 @@ struct CLIProxyAPIAttributionResolverTests {
 
         #expect(result == .collected(0))
         #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID) == [current.requestID])
+    }
+
+    @Test
+    func `usage cache filters expired records during load`() {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-load-retention-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let now = Date()
+        let expired = Self.record(
+            timestamp: now.addingTimeInterval(-367 * 24 * 60 * 60),
+            provider: "codex",
+            authType: "oauth")
+        let current = Self.record(
+            timestamp: now.addingTimeInterval(-24 * 60 * 60),
+            provider: "codex",
+            authType: "oauth")
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            [expired, current],
+            cacheRoot: cacheRoot,
+            now: expired.timestamp) == 2)
+
+        #expect(CLIProxyAPIUsageCacheIO.load(
+            cacheRoot: cacheRoot,
+            now: now).map(\.requestID) == [current.requestID])
+    }
+
+    @Test
+    func `empty usage poll does not rewrite an unchanged cache`() async throws {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-empty-poll-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let current = Self.record(
+            timestamp: Date(),
+            provider: "codex",
+            authType: "oauth")
+        #expect(CLIProxyAPIUsageCacheIO.merge([current], cacheRoot: cacheRoot) == 1)
+        let cacheURL = CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: cacheRoot)
+        let marker = Date(timeIntervalSince1970: 1_700_000_000)
+        try fileManager.setAttributes([.modificationDate: marker], ofItemAtPath: cacheURL.path)
+        let before = try #require(
+            fileManager.attributesOfItem(atPath: cacheURL.path)[.modificationDate] as? Date)
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (Data("[]".utf8), response)
+            })
+
+        let result = await CLIProxyAPIUsageCollector.collect(cacheRoot: cacheRoot, client: client)
+        let after = try #require(
+            fileManager.attributesOfItem(atPath: cacheURL.path)[.modificationDate] as? Date)
+
+        #expect(result == .collected(0))
+        #expect(after == before)
     }
 
     @Test

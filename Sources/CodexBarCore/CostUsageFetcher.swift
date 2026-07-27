@@ -493,9 +493,11 @@ public struct CostUsageFetcher: Sendable {
             return nil
         }
 
+        typealias CachedResult = CachedCodexTokenSnapshotResult?
+
         // Decoding the persisted scan cache parses multi-megabyte JSON; keep it off the
         // cooperative pool alongside the scans themselves.
-        let cachedSnapshot: CachedCodexTokenSnapshotResult?? = try? await CostUsageScanExecutor.run { _ in
+        let cachedSnapshot: CachedResult? = try? await CostUsageScanExecutor.run { checkCancellation in
             let clampedHistoryDays = max(1, min(365, historyDays))
             let until = now
             let since = Calendar.current.date(byAdding: .day, value: -(clampedHistoryDays - 1), to: now) ?? now
@@ -548,15 +550,19 @@ public struct CostUsageFetcher: Sendable {
             if !claudeCache.days.isEmpty,
                !CostUsageScanner.requestedWindowExpandsCache(range: range, cache: claudeCache)
             {
+                let attributionResolver: CLIProxyAPIAttributionResolver? = if let home = options.cliProxyAPIHome {
+                    try CLIProxyAPIAttributionResolver.load(
+                        home: home,
+                        cacheRoot: options.cacheRoot,
+                        checkCancellation: checkCancellation)
+                } else {
+                    nil
+                }
                 let proxyDaily = CostUsageScanner.buildClaudeReportFromCache(
                     cache: claudeCache,
                     range: range,
                     attributionFilter: .codexBackendOnly,
-                    attributionResolver: options.cliProxyAPIHome.map {
-                        CLIProxyAPIAttributionResolver.load(
-                            home: $0,
-                            cacheRoot: options.cacheRoot)
-                    },
+                    attributionResolver: attributionResolver,
                     modelsDevCatalog: CostUsagePricing.modelsDevCatalog(
                         now: now,
                         cacheRoot: options.cacheRoot),
