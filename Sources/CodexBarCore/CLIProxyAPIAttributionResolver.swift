@@ -235,11 +235,14 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         timestamp: (T) -> Date?) -> T?
     {
         let ranked = candidates.compactMap { candidate -> (candidate: T, distance: TimeInterval)? in
-            guard let date = timestamp(candidate) else { return (candidate, 0) }
+            guard let date = timestamp(candidate) else { return nil }
             return (candidate, abs(date.timeIntervalSince(target)))
         }
         .sorted { $0.distance < $1.distance }
-        guard let first = ranked.first else { return nil }
+        guard let first = ranked.first else {
+            let undated = candidates.filter { timestamp($0) == nil }
+            return undated.count == 1 ? undated[0] : nil
+        }
         guard ranked.count == 1 || ranked[1].distance > first.distance else { return nil }
         return first.candidate
     }

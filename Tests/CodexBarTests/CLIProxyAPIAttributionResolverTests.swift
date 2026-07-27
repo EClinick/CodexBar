@@ -127,6 +127,34 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `dated request log outranks an undated log for telemetry correlation`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: nil),
+                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+            ],
+            usageRecords: [
+                Self.record(timestamp: timestamp, provider: "openrouter", authType: "api_key"),
+            ],
+            authProviders: [
+                .init(provider: "codex", authType: .oauth),
+            ])
+
+        let attribution = resolver.attribution(
+            model: "gpt-5.6-sol",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: Self.tokens)
+
+        #expect(attribution.upstream?.provider == "openrouter")
+        #expect(attribution.upstream?.authType == .apiKey)
+        #expect(attribution.evidence.contains(.cliProxyUsageTelemetry))
+        #expect(!attribution.evidence.contains(.cliProxyAuthInventory))
+    }
+
+    @Test
     func `request telemetry preserves api key authentication type`() {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
