@@ -996,7 +996,9 @@ final class SpendDashboardController {
         let invalidated = outcome.result.invalidatedSourceIDs
         let barrierFailed = capture.unavailableSourceIDs
         var forcedCodexIDs = Set(outcome.request.codexRequests.map { "codex:\($0.id)" })
-        if outcome.request.configuration.providerIDs.contains(UsageProvider.codex.rawValue) {
+        if SpendDashboardSource.shouldLoadCodexProxy(
+            providerIDs: outcome.request.configuration.providerIDs)
+        {
             forcedCodexIDs.insert(SpendDashboardSource.codexProxySourceID)
         }
         let confirmedNonemptyInputs = outcome.confirmedNonemptyInputs
