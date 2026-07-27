@@ -203,10 +203,11 @@ struct CLIProxyAPIAttributionResolver: Sendable {
               !self.observationsBySessionID.isEmpty,
               !self.hasConfiguredOpenAIAPIUpstream
         else { return nil }
-        let providers = Array(Set(self.authProviders.filter {
-            $0.provider.caseInsensitiveCompare("codex") == .orderedSame
-        }))
-        guard providers.count == 1, let provider = providers.first else { return nil }
+        let providers = Array(Set(self.authProviders))
+        guard providers.count == 1,
+              let provider = providers.first,
+              provider.provider.caseInsensitiveCompare("codex") == .orderedSame
+        else { return nil }
         return CostUsageAttribution.Upstream(
             provider: provider.provider,
             authType: provider.authType,
@@ -362,9 +363,12 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                   let auth = try? decoder.decode(AuthFile.self, from: data),
                   auth.disabled != true,
                   let rawType = auth.type?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  rawType.caseInsensitiveCompare("codex") == .orderedSame
+                  !rawType.isEmpty
             else { return nil }
-            return AuthProvider(provider: "codex", authType: .oauth)
+            let isCodex = rawType.caseInsensitiveCompare("codex") == .orderedSame
+            return AuthProvider(
+                provider: isCodex ? "codex" : rawType.lowercased(),
+                authType: isCodex ? .oauth : .unknown)
         }
         return Array(Set(providers))
     }

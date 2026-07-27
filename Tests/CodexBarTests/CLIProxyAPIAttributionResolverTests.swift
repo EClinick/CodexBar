@@ -95,6 +95,37 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `codex auth inventory stays ambiguous with another active provider`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-auth-inventory-\(UUID().uuidString)", isDirectory: true)
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let logs = home.appendingPathComponent("logs", isDirectory: true)
+        try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        try Data(Self.requestLog(sessionID: "session-1", timestamp: timestamp).utf8)
+            .write(to: logs.appendingPathComponent("request.log"))
+        try Data(#"{"type":"codex"}"#.utf8)
+            .write(to: home.appendingPathComponent("codex.json"))
+        try Data(#"{"type":"openrouter"}"#.utf8)
+            .write(to: home.appendingPathComponent("openrouter.json"))
+
+        let resolver = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
+        let attribution = resolver.attribution(
+            model: "gpt-5.6-sol",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: Self.tokens)
+
+        #expect(attribution.route == .cliProxyAPI)
+        #expect(attribution.upstream == nil)
+        #expect(attribution.evidence == [.cliProxyRequestLog, .modelProvider])
+    }
+
+    @Test
     func `request telemetry identifies exact codex oauth upstream`() {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
