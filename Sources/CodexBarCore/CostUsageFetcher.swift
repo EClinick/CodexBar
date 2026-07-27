@@ -35,7 +35,7 @@ public struct CostUsageFetcher: Sendable {
     private let scannerOptions: CostUsageScanner.Options?
 
     public init(cacheRoot: URL? = nil) {
-        self.scannerOptions = cacheRoot.map { CostUsageScanner.Options(cacheRoot: $0) }
+        self.scannerOptions = Self.defaultScannerOptions(cacheRoot: cacheRoot)
     }
 
     init(scannerOptions: CostUsageScanner.Options) {
@@ -193,15 +193,14 @@ public struct CostUsageFetcher: Sendable {
         self.scannerOptions
     }
 
-    private static func resolvedScannerOptions(
+    static func resolvedScannerOptions(
         _ override: CostUsageScanner.Options?,
         provider: UsageProvider,
         codexHomePath: String?) -> CostUsageScanner.Options
     {
         var options = override ?? CostUsageScanner.Options()
         if override == nil {
-            options.cliProxyAPIHome = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cli-proxy-api", isDirectory: true)
+            options.cliProxyAPIHome = Self.defaultCLIProxyAPIHome()
         }
         if provider == .codex,
            let codexHomePath = codexHomePath?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -211,6 +210,23 @@ public struct CostUsageFetcher: Sendable {
                 .appendingPathComponent("sessions", isDirectory: true)
         }
         return options
+    }
+
+    static func defaultScannerOptions(
+        cacheRoot: URL?,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> CostUsageScanner.Options?
+    {
+        cacheRoot.map {
+            CostUsageScanner.Options(
+                cacheRoot: $0,
+                cliProxyAPIHome: Self.defaultCLIProxyAPIHome(homeDirectory: homeDirectory))
+        }
+    }
+
+    private static func defaultCLIProxyAPIHome(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL
+    {
+        homeDirectory.appendingPathComponent(".cli-proxy-api", isDirectory: true)
     }
 
     static func loadTokenSnapshot(
@@ -521,7 +537,10 @@ public struct CostUsageFetcher: Sendable {
             let until = now
             let since = Calendar.current.date(byAdding: .day, value: -(clampedHistoryDays - 1), to: now) ?? now
             let range = CostUsageScanner.CostUsageDayRange(since: since, until: until)
-            let options = overrideScannerOptions ?? CostUsageScanner.Options()
+            let options = Self.resolvedScannerOptions(
+                overrideScannerOptions,
+                provider: .codex,
+                codexHomePath: nil)
             let roots = CostUsageScanner.codexSessionsRoots(options: options)
             let cache = CostUsageScanner.codexCache(
                 CostUsageCacheIO.load(provider: .codex, cacheRoot: options.cacheRoot),
