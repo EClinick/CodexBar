@@ -363,6 +363,65 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `usage collector serializes queue pops and cache merges`() async throws {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-collector-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let probe = CLIProxyAPICollectionConcurrencyProbe()
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+
+        func client(requestID: String, seconds: TimeInterval) throws -> CLIProxyAPIUsageQueueClient {
+            let record = CLIProxyAPIUsageRecord(
+                timestamp: timestamp.addingTimeInterval(seconds),
+                provider: "codex",
+                model: "gpt-5.6-sol",
+                alias: "gpt-5.6-sol",
+                endpoint: "POST /v1/messages",
+                authType: "oauth",
+                requestID: requestID,
+                tokens: .init(input: 10, output: 20, total: 30))
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode([record])
+            return CLIProxyAPIUsageQueueClient(
+                settings: .init(managementKey: "management-secret"),
+                dataLoader: { request in
+                    await probe.recordCall()
+                    let url = try #require(request.url)
+                    let response = try #require(HTTPURLResponse(
+                        url: url,
+                        statusCode: 200,
+                        httpVersion: nil,
+                        headerFields: nil))
+                    return (data, response)
+                })
+        }
+
+        let firstClient = try client(requestID: "request-1", seconds: 0)
+        let secondClient = try client(requestID: "request-2", seconds: 1)
+        let results = await withTaskGroup(
+            of: CLIProxyAPIUsageCollectionResult.self,
+            returning: [CLIProxyAPIUsageCollectionResult].self)
+        { group in
+            group.addTask {
+                await CLIProxyAPIUsageCollector.collect(cacheRoot: cacheRoot, client: firstClient)
+            }
+            group.addTask {
+                await CLIProxyAPIUsageCollector.collect(cacheRoot: cacheRoot, client: secondClient)
+            }
+            return await group.reduce(into: []) { $0.append($1) }
+        }
+
+        #expect(results.allSatisfy { $0 == .collected(1) })
+        #expect(await probe.maximumActiveCallCount() == 1)
+        #expect(Set(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID)) == [
+            "request-1",
+            "request-2",
+        ])
+    }
+
+    @Test
     func `plain http management url is limited to loopback`() {
         #expect(CLIProxyAPIConnectionSettings(
             baseURL: "http://127.0.0.1:8317",
@@ -406,5 +465,21 @@ struct CLIProxyAPIAttributionResolverTests {
                 cacheRead: 30,
                 cacheCreation: 40,
                 total: 100))
+    }
+}
+
+private actor CLIProxyAPICollectionConcurrencyProbe {
+    private var activeCallCount = 0
+    private var maximumActiveCount = 0
+
+    func recordCall() async {
+        self.activeCallCount += 1
+        self.maximumActiveCount = max(self.maximumActiveCount, self.activeCallCount)
+        try? await Task.sleep(for: .milliseconds(100))
+        self.activeCallCount -= 1
+    }
+
+    func maximumActiveCallCount() -> Int {
+        self.maximumActiveCount
     }
 }

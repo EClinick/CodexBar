@@ -813,12 +813,12 @@ extension CostUsageFetcher {
     private static func mergedProjectBreakdowns(
         _ projects: [CostUsageProjectBreakdown]) -> [CostUsageProjectBreakdown]
     {
-        var dailyByPath: [String: [CostUsageDailyReport]] = [:]
-        var namesByPath: [String: String] = [:]
-        var sourceDailyByProjectPath: [String: [String: [CostUsageDailyReport]]] = [:]
-        var sourceNamesByProjectPath: [String: [String: String]] = [:]
+        var dailyByPath: [ProjectMergeKey: [CostUsageDailyReport]] = [:]
+        var namesByPath: [ProjectMergeKey: String] = [:]
+        var sourceDailyByProjectPath: [ProjectMergeKey: [ProjectMergeKey: [CostUsageDailyReport]]] = [:]
+        var sourceNamesByProjectPath: [ProjectMergeKey: [ProjectMergeKey: String]] = [:]
         for project in projects {
-            let key = project.path ?? ""
+            let key = ProjectMergeKey(name: project.name, path: project.path)
             namesByPath[key] = project.name
             dailyByPath[key, default: []].append(CostUsageDailyReport(data: project.daily, summary: nil))
             let sources = project.sources.isEmpty
@@ -833,7 +833,7 @@ extension CostUsageFetcher {
                 ]
                 : project.sources
             for source in sources {
-                let sourceKey = source.path ?? ""
+                let sourceKey = ProjectMergeKey(name: source.name, path: source.path)
                 sourceNamesByProjectPath[key, default: [:]][sourceKey] = source.name
                 sourceDailyByProjectPath[key, default: [:]][sourceKey, default: []]
                     .append(CostUsageDailyReport(data: source.daily, summary: nil))
@@ -843,7 +843,7 @@ extension CostUsageFetcher {
             let merged = CostUsageDailyReport.merged(reports)
             return CostUsageProjectBreakdown(
                 name: namesByPath[key] ?? CostUsageProjectBreakdown.unknownProjectName,
-                path: key.isEmpty ? nil : key,
+                path: key.path,
                 totalTokens: merged.summary?.totalTokens,
                 totalCostUSD: merged.summary?.totalCostUSD,
                 daily: merged.data,
@@ -867,15 +867,25 @@ extension CostUsageFetcher {
         }
     }
 
+    private struct ProjectMergeKey: Hashable {
+        let path: String?
+        let syntheticName: String?
+
+        init(name: String, path: String?) {
+            self.path = path
+            self.syntheticName = path == nil ? name : nil
+        }
+    }
+
     private static func mergedProjectSources(
-        sourceDailyByPath: [String: [CostUsageDailyReport]],
-        sourceNamesByPath: [String: String]) -> [CostUsageProjectSourceBreakdown]
+        sourceDailyByPath: [ProjectMergeKey: [CostUsageDailyReport]],
+        sourceNamesByPath: [ProjectMergeKey: String]) -> [CostUsageProjectSourceBreakdown]
     {
         sourceDailyByPath.map { key, reports in
             let merged = CostUsageDailyReport.merged(reports)
             return CostUsageProjectSourceBreakdown(
                 name: sourceNamesByPath[key] ?? CostUsageProjectBreakdown.unknownProjectName,
-                path: key.isEmpty ? nil : key,
+                path: key.path,
                 totalTokens: merged.summary?.totalTokens,
                 totalCostUSD: merged.summary?.totalCostUSD,
                 daily: merged.data,

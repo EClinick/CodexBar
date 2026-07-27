@@ -281,9 +281,40 @@ public enum CLIProxyAPIUsageCollectionResult: Equatable, Sendable {
     case failed(String)
 }
 
+private actor CLIProxyAPIUsageCollectionGate {
+    private var isLocked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func perform<T: Sendable>(_ operation: @Sendable () async -> T) async -> T {
+        await self.acquire()
+        let result = await operation()
+        self.release()
+        return result
+    }
+
+    private func acquire() async {
+        if !self.isLocked {
+            self.isLocked = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            self.waiters.append(continuation)
+        }
+    }
+
+    private func release() {
+        guard !self.waiters.isEmpty else {
+            self.isLocked = false
+            return
+        }
+        self.waiters.removeFirst().resume()
+    }
+}
+
 public enum CLIProxyAPIUsageCollector {
     private static let maximumBatches = 10
     private static let batchSize = 100
+    private static let collectionGate = CLIProxyAPIUsageCollectionGate()
 
     public static func collect(
         cacheRoot: URL? = nil,
@@ -291,8 +322,25 @@ public enum CLIProxyAPIUsageCollector {
         -> CLIProxyAPIUsageCollectionResult
     {
         guard let settings, settings.isConfigured else { return .notConfigured }
+        return await self.collect(
+            cacheRoot: cacheRoot,
+            client: CLIProxyAPIUsageQueueClient(settings: settings))
+    }
+
+    static func collect(
+        cacheRoot: URL? = nil,
+        client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
+    {
+        await self.collectionGate.perform {
+            await self.collectUnserialized(cacheRoot: cacheRoot, client: client)
+        }
+    }
+
+    private static func collectUnserialized(
+        cacheRoot: URL?,
+        client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
+    {
         do {
-            let client = CLIProxyAPIUsageQueueClient(settings: settings)
             var records: [CLIProxyAPIUsageRecord] = []
             for _ in 0..<self.maximumBatches {
                 let batch = try await client.pop(count: self.batchSize)

@@ -81,4 +81,73 @@ struct SpendDashboardProxyAttributionTests {
             providerName: row.providerName,
             attribution: row.attribution) == "Codex OAuth · CLIProxyAPI via Claude Code")
     }
+
+    @Test
+    func `model row identity includes complete proxy attribution`() throws {
+        let inventoryAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .oauth,
+                model: "gpt-5.6-sol"),
+            evidence: [.cliProxyAuthInventory, .cliProxyRequestLog, .modelProvider])
+        let telemetryAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .oauth,
+                model: "openai/gpt-5.6-sol",
+                executorType: "CodexExecutor"),
+            evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider])
+        let entry = CostUsageDailyReport.Entry(
+            date: "2026-07-16",
+            inputTokens: 100,
+            outputTokens: 100,
+            totalTokens: 200,
+            costUSD: 2,
+            modelsUsed: ["gpt-5.6-sol"],
+            modelBreakdowns: [
+                .init(
+                    modelName: "gpt-5.6-sol",
+                    costUSD: 1,
+                    totalTokens: 100,
+                    attribution: inventoryAttribution),
+                .init(
+                    modelName: "gpt-5.6-sol",
+                    costUSD: 1,
+                    totalTokens: 100,
+                    attribution: telemetryAttribution),
+            ])
+        let now = Date(timeIntervalSince1970: 1_784_179_200)
+        let snapshot = CostUsageTokenSnapshot(
+            sessionTokens: 200,
+            sessionCostUSD: 2,
+            last30DaysTokens: 200,
+            last30DaysCostUSD: 2,
+            daily: [entry],
+            updatedAt: now)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+
+        let model = SpendDashboardModel.build(
+            inputs: [
+                .init(
+                    provider: .codex,
+                    displayName: "Codex",
+                    snapshot: snapshot),
+            ],
+            requestedDays: 7,
+            now: now,
+            calendar: calendar)
+
+        let group = try #require(model.groups.first)
+        let rows = group.models
+        #expect(rows.count == 2)
+        #expect(Set(rows.map(\.id)).count == 2)
+        #expect(Set(rows.compactMap(\.attribution)) == [inventoryAttribution, telemetryAttribution])
+    }
 }

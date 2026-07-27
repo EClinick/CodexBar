@@ -846,6 +846,80 @@ extension CostUsageFetcherTests {
     }
 
     @Test
+    func `proxy and pi usage keep distinct synthetic projects`() async throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let day = try env.makeLocalNoon(year: 2026, month: 7, day: 24)
+        _ = try env.writeClaudeProjectFile(
+            relativePath: "proxy/session.jsonl",
+            contents: env.jsonl([[
+                "type": "assistant",
+                "timestamp": env.isoString(for: day),
+                "sessionId": "session-proxy",
+                "requestId": "request-proxy",
+                "message": [
+                    "id": "message-proxy",
+                    "model": "gpt-5.6-sol",
+                    "usage": ["input_tokens": 100, "output_tokens": 5],
+                ],
+            ]]))
+        _ = try env.writePiSessionFile(
+            relativePath: "2026-07-24T10-00-00-000Z_pi.jsonl",
+            contents: env.jsonl([[
+                "type": "message",
+                "timestamp": env.isoString(for: day.addingTimeInterval(1)),
+                "message": [
+                    "role": "assistant",
+                    "provider": "openai-codex",
+                    "model": "openai/gpt-5.4",
+                    "timestamp": Int(day.addingTimeInterval(1).timeIntervalSince1970 * 1000),
+                    "usage": ["input": 50, "output": 5, "totalTokens": 55],
+                ],
+            ]]))
+        let cliProxyHome = env.root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        let cliProxyLogs = cliProxyHome.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: cliProxyLogs, withIntermediateDirectories: true)
+        try Data(#"{"type":"codex"}"#.utf8)
+            .write(to: cliProxyHome.appendingPathComponent("codex-auth.json"))
+        let proxyLog = """
+        === REQUEST INFO ===
+        URL: /v1/messages
+        Timestamp: \(env.isoString(for: day))
+        === HEADERS ===
+        X-Claude-Code-Session-Id: session-proxy
+        === REQUEST BODY ===
+        {"model":"gpt-5.6-sol"}
+        === API RESPONSE ===
+        """
+        try Data(proxyLog.utf8).write(to: cliProxyLogs.appendingPathComponent("request.log"))
+        let options = CostUsageScanner.Options(
+            codexSessionsRoot: env.codexSessionsRoot,
+            claudeProjectsRoots: [env.claudeProjectsRoot],
+            cacheRoot: env.cacheRoot,
+            cliProxyAPIHome: cliProxyHome)
+        let piOptions = PiSessionCostScanner.Options(
+            piSessionsRoot: env.piSessionsRoot,
+            cacheRoot: env.cacheRoot,
+            refreshMinIntervalSeconds: 0)
+
+        let snapshot = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .codex,
+            now: day,
+            allowPricingRefresh: false,
+            scannerOptions: options,
+            piScannerOptions: piOptions)
+
+        #expect(snapshot.projects.count == 2)
+        #expect(Set(snapshot.projects.map(\.name)) == [
+            "Claude Code via CLIProxyAPI",
+            CostUsageProjectBreakdown.unknownProjectName,
+        ])
+        #expect(snapshot.projects.allSatisfy { $0.path == nil })
+        #expect(snapshot.projects.allSatisfy { $0.sources.map(\.name) == [$0.name] })
+    }
+
+    @Test
     func `openai model without proxy evidence stays out of codex totals`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

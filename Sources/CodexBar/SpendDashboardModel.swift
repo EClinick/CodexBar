@@ -35,6 +35,12 @@ struct SpendDashboardModel: Equatable, Sendable {
     }
 
     struct ModelRow: Identifiable, Equatable, Sendable {
+        struct ID: Hashable, Sendable {
+            let provider: UsageProvider
+            let modelName: String
+            let attribution: CostUsageAttribution?
+        }
+
         let rank: Int
         let provider: UsageProvider
         let providerName: String
@@ -61,15 +67,11 @@ struct SpendDashboardModel: Equatable, Sendable {
             self.attribution = attribution
         }
 
-        var id: String {
-            [
-                self.provider.rawValue,
-                self.modelName,
-                self.attribution?.client.rawValue ?? "",
-                self.attribution?.route.rawValue ?? "",
-                self.attribution?.upstream?.provider ?? "",
-                self.attribution?.upstream?.authType.rawValue ?? "",
-            ].joined(separator: ":")
+        var id: ID {
+            ID(
+                provider: self.provider,
+                modelName: self.modelName,
+                attribution: self.attribution)
         }
     }
 
