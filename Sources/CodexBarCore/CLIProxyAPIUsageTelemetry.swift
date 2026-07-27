@@ -144,7 +144,6 @@ enum CLIProxyAPIUsageCacheIO {
         cacheRoot: URL? = nil,
         now: Date = Date()) -> Int?
     {
-        guard !records.isEmpty else { return 0 }
         let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
         var byKey: [String: CLIProxyAPIUsageRecord] = [:]
         for record in self.load(cacheRoot: cacheRoot) where record.timestamp >= cutoff {

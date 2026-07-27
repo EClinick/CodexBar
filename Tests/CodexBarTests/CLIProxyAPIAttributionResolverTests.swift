@@ -455,6 +455,43 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `usage collector prunes expired cache records when the queue is empty`() async {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-prune-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let now = Date()
+        let expired = Self.record(
+            timestamp: now.addingTimeInterval(-367 * 24 * 60 * 60),
+            provider: "codex",
+            authType: "oauth")
+        let current = Self.record(
+            timestamp: now.addingTimeInterval(-24 * 60 * 60),
+            provider: "codex",
+            authType: "oauth")
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            [expired, current],
+            cacheRoot: cacheRoot,
+            now: expired.timestamp) == 2)
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (Data("[]".utf8), response)
+            })
+
+        let result = await CLIProxyAPIUsageCollector.collect(cacheRoot: cacheRoot, client: client)
+
+        #expect(result == .collected(0))
+        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID) == [current.requestID])
+    }
+
+    @Test
     func `usage collector reports cache write failure`() async throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory
