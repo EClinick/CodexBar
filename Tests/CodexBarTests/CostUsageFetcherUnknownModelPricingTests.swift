@@ -187,6 +187,97 @@ struct CostUsageFetcherUnknownModelPricingTests {
         #expect(breakdown.costUSD == nil)
         #expect(await counter.requestCount == 0)
     }
+
+    @Test
+    func `proxy-only fetcher reprices an unknown upstream model after catalog refresh`() async throws {
+        let environment = try CostUsageTestEnvironment()
+        defer { environment.cleanup() }
+        let day = try environment.makeLocalNoon(year: 2026, month: 7, day: 24)
+        let freshCatalog = try JSONDecoder().decode(ModelsDevCatalog.self, from: Data("""
+        {
+          "openai": {
+            "id": "openai",
+            "models": { "gpt-old": { "id": "gpt-old", "cost": { "input": 1, "output": 4 } } }
+          }
+        }
+        """.utf8))
+        ModelsDevCache.save(
+            catalog: freshCatalog,
+            fetchedAt: day.addingTimeInterval(-901),
+            cacheRoot: environment.cacheRoot)
+
+        _ = try environment.writeClaudeProjectFile(
+            relativePath: "proxy/unknown-model.jsonl",
+            contents: environment.jsonl([[
+                "type": "assistant",
+                "timestamp": environment.isoString(for: day),
+                "sessionId": "session-proxy",
+                "requestId": "request-proxy",
+                "message": [
+                    "id": "message-proxy",
+                    "model": "gpt-new",
+                    "usage": ["input_tokens": 100, "output_tokens": 10],
+                ],
+            ]]))
+        let cliProxyHome = environment.root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        let cliProxyLogs = cliProxyHome.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: cliProxyLogs, withIntermediateDirectories: true)
+        try Data(#"{"type":"codex"}"#.utf8)
+            .write(to: cliProxyHome.appendingPathComponent("codex-auth.json"))
+        let proxyLog = """
+        === REQUEST INFO ===
+        URL: /v1/messages
+        Timestamp: \(environment.isoString(for: day))
+        === HEADERS ===
+        X-Claude-Code-Session-Id: session-proxy
+        === REQUEST BODY ===
+        {"model":"gpt-new"}
+        === API RESPONSE ===
+        """
+        try Data(proxyLog.utf8).write(to: cliProxyLogs.appendingPathComponent("request.log"))
+        CLIProxyAPIUsageCacheIO.merge(
+            [
+                CLIProxyAPIUsageRecord(
+                    timestamp: day,
+                    provider: "codex",
+                    executorType: "CodexExecutor",
+                    model: "gpt-new",
+                    alias: "gpt-new",
+                    endpoint: "/v1/messages",
+                    authType: "oauth",
+                    requestID: "cliproxy-request",
+                    tokens: .init(input: 100, output: 10, total: 110)),
+            ],
+            cacheRoot: environment.cacheRoot,
+            now: day)
+        let options = CostUsageScanner.Options(
+            claudeProjectsRoots: [environment.claudeProjectsRoot],
+            cacheRoot: environment.cacheRoot,
+            cliProxyAPIHome: cliProxyHome)
+        let refreshedCatalog = Data("""
+        {
+          "openai": {
+            "id": "openai",
+            "models": { "gpt-new": { "id": "gpt-new", "cost": { "input": 2, "output": 8 } } }
+          },
+          "anthropic": {
+            "id": "anthropic",
+            "models": { "claude-new": { "id": "claude-new", "cost": { "input": 3, "output": 15 } } }
+          }
+        }
+        """.utf8)
+
+        let snapshot = try await CostUsageFetcher(scannerOptions: options).loadCodexProxyTokenSnapshot(
+            now: day,
+            forceRefresh: true,
+            refreshPricingInBackground: false,
+            modelsDevClient: ModelsDevClient(transport: CostUsageFetcherModelsDevTransport(
+                data: refreshedCatalog)))
+
+        let breakdown = try #require(snapshot.daily.first?.modelBreakdowns?.first)
+        #expect(breakdown.modelName == "gpt-new")
+        #expect(abs((breakdown.costUSD ?? 0) - 0.00028) < 0.0000001)
+    }
 }
 
 private struct UnknownModelPricingFixture {

@@ -136,13 +136,32 @@ public struct CostUsageFetcher: Sendable {
         allowPricingRefresh: Bool = true,
         refreshPricingInBackground: Bool = true) async throws -> CostUsageTokenSnapshot
     {
+        try await self.loadCodexProxyTokenSnapshot(
+            now: now,
+            forceRefresh: forceRefresh,
+            historyDays: historyDays,
+            allowPricingRefresh: allowPricingRefresh,
+            refreshPricingInBackground: refreshPricingInBackground,
+            modelsDevClient: ModelsDevClient())
+    }
+
+    func loadCodexProxyTokenSnapshot(
+        now: Date,
+        forceRefresh: Bool,
+        historyDays: Int = 30,
+        allowPricingRefresh: Bool = true,
+        refreshPricingInBackground: Bool,
+        modelsDevClient: ModelsDevClient) async throws -> CostUsageTokenSnapshot
+    {
         try await Self.loadCodexProxyTokenSnapshot(CodexProxyTokenSnapshotOptions(
             now: now,
             forceRefresh: forceRefresh,
             historyDays: historyDays,
             allowPricingRefresh: allowPricingRefresh,
             refreshPricingInBackground: refreshPricingInBackground,
-            scannerOptions: self.scannerOptionsOverride()))
+            scannerOptions: self.scannerOptionsOverride(),
+            modelsDevClient: modelsDevClient,
+            retryUnknownPricing: true))
     }
 
     @available(*, deprecated, message: "Codex token-cost scans are uncapped; this limit is ignored.")
@@ -752,6 +771,8 @@ extension CostUsageFetcher {
         let allowPricingRefresh: Bool
         let refreshPricingInBackground: Bool
         let scannerOptions: CostUsageScanner.Options?
+        let modelsDevClient: ModelsDevClient
+        let retryUnknownPricing: Bool
     }
 
     private struct CodexSupplementalScan {
@@ -776,11 +797,11 @@ extension CostUsageFetcher {
             options: PricingRefreshOptions(
                 provider: .codex,
                 isAllowed: request.allowPricingRefresh,
-                retryUnknown: true,
+                retryUnknown: request.retryUnknownPricing,
                 inBackground: request.refreshPricingInBackground),
             now: request.now,
             cacheRoot: options.cacheRoot,
-            client: ModelsDevClient())
+            client: request.modelsDevClient)
         if request.forceRefresh {
             options.refreshMinIntervalSeconds = 0
         }
@@ -802,6 +823,28 @@ extension CostUsageFetcher {
                 from: $0,
                 name: "Claude Code via CLIProxyAPI")
         }.map { [$0] } ?? []
+        if request.allowPricingRefresh,
+           request.retryUnknownPricing,
+           let refreshRequest = Self.unknownPricingRefreshRequest(
+               provider: .codex,
+               daily: daily,
+               now: request.now,
+               cacheRoot: options.cacheRoot,
+               client: request.modelsDevClient),
+           await Self.refreshUnknownPricingIfNeeded(
+               refreshRequest,
+               inBackground: request.refreshPricingInBackground)
+        {
+            return try await Self.loadCodexProxyTokenSnapshot(CodexProxyTokenSnapshotOptions(
+                now: request.now,
+                forceRefresh: request.forceRefresh,
+                historyDays: request.historyDays,
+                allowPricingRefresh: request.allowPricingRefresh,
+                refreshPricingInBackground: false,
+                scannerOptions: options,
+                modelsDevClient: request.modelsDevClient,
+                retryUnknownPricing: false))
+        }
         return Self.tokenSnapshot(
             from: daily,
             now: request.now,
