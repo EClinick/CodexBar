@@ -461,12 +461,16 @@ public struct CostUsageFetcher: Sendable {
         let unknownModelIDs = Set(daily.data.flatMap { entry in
             entry.modelBreakdowns?.compactMap { breakdown -> String? in
                 guard breakdown.costUSD == nil else { return nil }
+                let upstreamModel = breakdown.attribution?.route == .cliProxyAPI
+                    ? breakdown.attribution?.upstream?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    : nil
+                let pricingModel = upstreamModel.flatMap { $0.isEmpty ? nil : $0 } ?? breakdown.modelName
                 if provider == .codex,
-                   CostUsagePricing.isCodexUnattributedModel(breakdown.modelName)
+                   CostUsagePricing.isCodexUnattributedModel(pricingModel)
                 {
                     return nil
                 }
-                return breakdown.modelName
+                return pricingModel
             } ?? []
         })
         guard !unknownModelIDs.isEmpty else { return nil }

@@ -189,10 +189,11 @@ struct CostUsageFetcherUnknownModelPricingTests {
     }
 
     @Test
-    func `proxy-only fetcher reprices an unknown upstream model after catalog refresh`() async throws {
+    func `proxy-only fetcher refreshes pricing for the resolved upstream model`() async throws {
         let environment = try CostUsageTestEnvironment()
         defer { environment.cleanup() }
         let day = try environment.makeLocalNoon(year: 2026, month: 7, day: 24)
+        let alias = "claude-proxy-alias"
         let freshCatalog = try JSONDecoder().decode(ModelsDevCatalog.self, from: Data("""
         {
           "openai": {
@@ -215,7 +216,7 @@ struct CostUsageFetcherUnknownModelPricingTests {
                 "requestId": "request-proxy",
                 "message": [
                     "id": "message-proxy",
-                    "model": "gpt-new",
+                    "model": "\(alias)",
                     "usage": ["input_tokens": 100, "output_tokens": 10],
                 ],
             ]]))
@@ -231,7 +232,7 @@ struct CostUsageFetcherUnknownModelPricingTests {
         === HEADERS ===
         X-Claude-Code-Session-Id: session-proxy
         === REQUEST BODY ===
-        {"model":"gpt-new"}
+        {"model":"\(alias)"}
         === API RESPONSE ===
         """
         try Data(proxyLog.utf8).write(to: cliProxyLogs.appendingPathComponent("request.log"))
@@ -242,7 +243,7 @@ struct CostUsageFetcherUnknownModelPricingTests {
                     provider: "codex",
                     executorType: "CodexExecutor",
                     model: "gpt-new",
-                    alias: "gpt-new",
+                    alias: alias,
                     endpoint: "/v1/messages",
                     authType: "oauth",
                     requestID: "cliproxy-request",
@@ -275,7 +276,8 @@ struct CostUsageFetcherUnknownModelPricingTests {
                 data: refreshedCatalog)))
 
         let breakdown = try #require(snapshot.daily.first?.modelBreakdowns?.first)
-        #expect(breakdown.modelName == "gpt-new")
+        #expect(breakdown.modelName == alias)
+        #expect(breakdown.attribution?.upstream?.model == "gpt-new")
         #expect(abs((breakdown.costUSD ?? 0) - 0.00028) < 0.0000001)
     }
 }
