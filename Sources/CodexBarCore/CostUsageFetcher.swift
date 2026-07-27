@@ -470,12 +470,14 @@ public struct CostUsageFetcher: Sendable {
                 {
                     continue
                 }
-                let providerID = Self.modelsDevProviderID(
+                let providerIDs = Self.modelsDevProviderIDs(
                     pricingModel: pricingModel,
                     attribution: breakdown.attribution,
                     fallbackProvider: provider,
                     cacheRoot: cacheRoot)
-                modelIDsByProviderID[providerID, default: []].insert(pricingModel)
+                for providerID in providerIDs {
+                    modelIDsByProviderID[providerID, default: []].insert(pricingModel)
+                }
             }
         }
         guard !modelIDsByProviderID.isEmpty else { return nil }
@@ -487,34 +489,35 @@ public struct CostUsageFetcher: Sendable {
             client: client)
     }
 
-    private static func modelsDevProviderID(
+    private static func modelsDevProviderIDs(
         pricingModel: String,
         attribution: CostUsageAttribution?,
         fallbackProvider: UsageProvider,
-        cacheRoot: URL?) -> String
+        cacheRoot: URL?) -> Set<String>
     {
-        if attribution?.route == .cliProxyAPI {
-            switch attribution?.upstream?.executorType?.lowercased() {
-            case "codexexecutor", "openaicompatexecutor":
-                return "openai"
-            case "claudeexecutor":
-                return "anthropic"
-            case "geminiexecutor":
-                return "google"
-            default:
-                break
-            }
-        }
-
-        return switch CostUsagePricing.modelProvider(
+        let knownProviderID: String? = switch CostUsagePricing.modelProvider(
             for: pricingModel,
             modelsDevCacheRoot: cacheRoot)
         {
         case .openAI: "openai"
         case .anthropic: "anthropic"
         case .google: "google"
-        case .unknown: fallbackProvider == .codex ? "openai" : "anthropic"
+        case .unknown: nil
         }
+        if let knownProviderID {
+            return [knownProviderID]
+        }
+
+        if attribution?.route == .cliProxyAPI {
+            return switch attribution?.upstream?.executorType?.lowercased() {
+            case "codexexecutor": ["openai"]
+            case "claudeexecutor": ["anthropic"]
+            case "geminiexecutor": ["google"]
+            case "openaicompatexecutor": ["openai", "anthropic", "google"]
+            default: [fallbackProvider == .codex ? "openai" : "anthropic"]
+            }
+        }
+        return [fallbackProvider == .codex ? "openai" : "anthropic"]
     }
 
     private static func refreshUnknownPricingIfNeeded(

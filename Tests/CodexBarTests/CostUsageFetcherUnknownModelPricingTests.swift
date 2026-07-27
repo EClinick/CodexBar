@@ -281,8 +281,14 @@ struct CostUsageFetcherUnknownModelPricingTests {
         #expect(abs((breakdown.costUSD ?? 0) - 0.00028) < 0.0000001)
     }
 
-    @Test
-    func `claude fetch refreshes OpenAI compatible proxy pricing under the resolved provider`() async throws {
+    @Test(arguments: [
+        ("gpt-new", 0.00028),
+        ("claude-new", 0.00045),
+    ])
+    func `claude fetch resolves OpenAI compatible proxy pricing across model vendors`(
+        upstreamModel: String,
+        expectedCost: Double) async throws
+    {
         let environment = try CostUsageTestEnvironment()
         defer { environment.cleanup() }
         let day = try environment.makeLocalNoon(year: 2026, month: 7, day: 24)
@@ -337,11 +343,11 @@ struct CostUsageFetcherUnknownModelPricingTests {
                     timestamp: day,
                     provider: "openrouter",
                     executorType: "OpenAICompatExecutor",
-                    model: "gpt-new",
+                    model: upstreamModel,
                     alias: alias,
                     endpoint: "/v1/messages",
                     authType: "api_key",
-                    requestID: "cliproxy-openrouter-request",
+                    requestID: "cliproxy-openrouter-\(upstreamModel)",
                     tokens: .init(input: 100, output: 10, total: 110)),
             ],
             cacheRoot: environment.cacheRoot,
@@ -375,8 +381,8 @@ struct CostUsageFetcherUnknownModelPricingTests {
         let breakdown = try #require(snapshot.daily.first?.modelBreakdowns?.first)
         #expect(breakdown.modelName == alias)
         #expect(breakdown.attribution?.upstream?.provider == "openrouter")
-        #expect(breakdown.attribution?.upstream?.model == "gpt-new")
-        #expect(abs((breakdown.costUSD ?? 0) - 0.00028) < 0.0000001)
+        #expect(breakdown.attribution?.upstream?.model == upstreamModel)
+        #expect(abs((breakdown.costUSD ?? 0) - expectedCost) < 0.0000001)
     }
 }
 
