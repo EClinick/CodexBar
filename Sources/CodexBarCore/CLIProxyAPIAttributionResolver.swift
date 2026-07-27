@@ -283,14 +283,6 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 
         return urls
             .filter { $0.pathExtension.lowercased() == "log" }
-            .sorted { lhs, rhs in
-                let lhsValues = try? lhs.resourceValues(forKeys: [.contentModificationDateKey])
-                let rhsValues = try? rhs.resourceValues(forKeys: [.contentModificationDateKey])
-                let lhsDate = lhsValues?.contentModificationDate ?? .distantPast
-                let rhsDate = rhsValues?.contentModificationDate ?? .distantPast
-                return lhsDate > rhsDate
-            }
-            .prefix(500)
             .compactMap(self.parseObservation)
     }
 

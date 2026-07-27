@@ -277,6 +277,44 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `filesystem loader preserves observations beyond five hundred newer logs`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-log-window-\(UUID().uuidString)", isDirectory: true)
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let logs = home.appendingPathComponent("logs", isDirectory: true)
+        try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-01-01T12:00:00Z"))
+        let targetURL = logs.appendingPathComponent("target.log")
+        try Data(Self.requestLog(
+            sessionID: "target-session",
+            timestamp: timestamp).utf8).write(to: targetURL)
+        try fileManager.setAttributes([.modificationDate: timestamp], ofItemAtPath: targetURL.path)
+        for index in 0..<500 {
+            let newerTimestamp = timestamp.addingTimeInterval(TimeInterval(index + 1))
+            let url = logs.appendingPathComponent("newer-\(index).log")
+            try Data(Self.requestLog(
+                sessionID: "newer-session-\(index)",
+                timestamp: newerTimestamp).utf8).write(to: url)
+            try fileManager.setAttributes(
+                [.modificationDate: newerTimestamp],
+                ofItemAtPath: url.path)
+        }
+
+        let resolver = CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
+        let attribution = resolver.attribution(
+            model: "gpt-5.6-sol",
+            modelProvider: .openAI,
+            sessionID: "target-session",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: Self.tokens)
+
+        #expect(attribution.route == .cliProxyAPI)
+        #expect(attribution.evidence.contains(.cliProxyRequestLog))
+    }
+
+    @Test
     func `usage cache never persists source or api key fields`() throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory
@@ -549,6 +587,21 @@ struct CLIProxyAPIAttributionResolverTests {
         cacheRead: 30,
         cacheCreate: 40,
         output: 20)
+
+    private static func requestLog(sessionID: String, timestamp: Date) -> String {
+        """
+        === REQUEST INFO ===
+        URL: /v1/messages
+        Method: POST
+        Timestamp: \(ISO8601DateFormatter().string(from: timestamp))
+        === HEADERS ===
+        X-Claude-Code-Session-Id: \(sessionID)
+        === REQUEST BODY ===
+        {"model":"gpt-5.6-sol"}
+        === RESPONSE ===
+        Status: 200
+        """
+    }
 
     private static func record(
         timestamp: Date,

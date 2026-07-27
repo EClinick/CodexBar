@@ -129,6 +129,13 @@ enum SpendDashboardSource {
 
     static let scanDays = 30
     static let codexProxySourceID = "codex:cliproxyapi"
+    private static let isRunningTests: Bool = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment["TESTING_LIBRARY_VERSION"] != nil
+            || environment["SWIFT_TESTING"] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }()
 
     @MainActor
     static func configuration(settings: SettingsStore, store: UsageStore) -> SpendDashboardConfiguration {
@@ -261,14 +268,17 @@ enum SpendDashboardSource {
     }
 
     static func load(_ request: SpendDashboardLoadRequest) async -> SpendDashboardLoadResult {
-        await self.load(
+        let codexProxySnapshotLoader: CodexProxySnapshotLoader? = if self.isRunningTests {
+            nil
+        } else {
+            self.loadCodexProxySnapshot
+        }
+        return await self.load(
             request,
             codexSnapshotLoader: { context in
                 try await self.loadCodexSnapshot(context)
             },
-            codexProxySnapshotLoader: { context in
-                try await self.loadCodexProxySnapshot(context)
-            })
+            codexProxySnapshotLoader: codexProxySnapshotLoader)
     }
 
     static func load(
@@ -330,7 +340,7 @@ enum SpendDashboardSource {
                 failedSourceIDs.insert(sourceID)
             }
         }
-        if request.configuration.providerIDs.contains(UsageProvider.codex.rawValue),
+        if self.shouldLoadCodexProxy(providerIDs: request.configuration.providerIDs),
            let codexProxySnapshotLoader
         {
             do {
@@ -404,6 +414,11 @@ enum SpendDashboardSource {
         store.enabledProvidersForDisplay().filter {
             ProviderDescriptorRegistry.descriptor(for: $0).tokenCost.supportsTokenCost
         }
+    }
+
+    static func shouldLoadCodexProxy(providerIDs: [String]) -> Bool {
+        providerIDs.contains(UsageProvider.codex.rawValue)
+            || providerIDs.contains(UsageProvider.claude.rawValue)
     }
 
     @MainActor

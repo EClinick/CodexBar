@@ -53,6 +53,33 @@ struct SpendDashboardCodexProxySourceTests {
         #expect(proxyContexts.first?.now == now)
     }
 
+    @Test
+    func `proxy usage loads when claude is enabled without codex`() async {
+        let now = Date(timeIntervalSince1970: 1_784_179_200)
+        let request = SpendDashboardLoadRequest(
+            configuration: SpendDashboardConfiguration(
+                costUsageEnabled: true,
+                providerIDs: [UsageProvider.claude.rawValue],
+                codexAccountIdentities: []),
+            capturedInputs: [],
+            unavailableSourceIDs: [],
+            codexRequests: [],
+            now: now,
+            force: false)
+        let proxySnapshot = Self.snapshot(cost: 2, now: now)
+        let emptySnapshot = Self.snapshot(cost: 0, now: now)
+
+        let result = await SpendDashboardSource.load(
+            request,
+            codexSnapshotLoader: { _ in
+                Issue.record("No account-scoped Codex snapshot should be requested.")
+                return emptySnapshot
+            },
+            codexProxySnapshotLoader: { _ in proxySnapshot })
+
+        #expect(result.inputs.map(\.id) == [SpendDashboardSource.codexProxySourceID])
+    }
+
     private static func snapshot(cost: Double, now: Date) -> CostUsageTokenSnapshot {
         let entry = CostUsageDailyReport.Entry(
             date: "2026-07-15",
