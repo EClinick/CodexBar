@@ -209,6 +209,42 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `telemetry index isolates the matching model and time window`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let unrelated = (0..<10000).map { index in
+            CLIProxyAPIUsageRecord(
+                timestamp: timestamp.addingTimeInterval(TimeInterval(index - 5000)),
+                provider: "openrouter",
+                model: "unrelated-model",
+                alias: "unrelated-model",
+                endpoint: "POST /v1/messages",
+                authType: "api_key",
+                requestID: "unrelated-\(index)",
+                tokens: .init(input: 10, output: 20, total: 30))
+        }
+        let matching = Self.record(
+            timestamp: timestamp.addingTimeInterval(1),
+            provider: "codex",
+            authType: "oauth")
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+            ],
+            usageRecords: unrelated + [matching])
+
+        let attribution = resolver.attribution(
+            model: "gpt-5.6-sol",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: Self.tokens)
+
+        #expect(attribution.upstream?.provider == "codex")
+        #expect(attribution.upstream?.model == "gpt-5.6-sol")
+        #expect(attribution.evidence.contains(.cliProxyUsageTelemetry))
+    }
+
+    @Test
     func `model without correlated request does not claim cliproxyapi`() {
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [

@@ -794,7 +794,17 @@ extension CostUsageFetcherTests {
         let codex = try await CostUsageFetcher.loadTokenSnapshot(
             provider: .codex,
             now: day,
-            codexHomePath: env.codexHomeRoot.path,
+            allowPricingRefresh: false,
+            includePiSessions: false,
+            scannerOptions: options)
+        let scopedHome = env.root.appendingPathComponent("managed-codex-home", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: scopedHome.appendingPathComponent("sessions", isDirectory: true),
+            withIntermediateDirectories: true)
+        let scopedCodex = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .codex,
+            now: day,
+            codexHomePath: scopedHome.path,
             allowPricingRefresh: false,
             includePiSessions: false,
             scannerOptions: options)
@@ -829,6 +839,8 @@ extension CostUsageFetcherTests {
                 executorType: "CodexExecutor"),
             evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider]))
         #expect(codex.projects.map(\.name) == ["Claude Code via CLIProxyAPI"])
+        #expect(scopedCodex.daily.isEmpty)
+        #expect(scopedCodex.projects.isEmpty)
 
         #expect(claude.daily.first?.totalTokens == 70)
         #expect(claude.daily.first?.modelsUsed == ["claude-sonnet-4-6"])

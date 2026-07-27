@@ -26,7 +26,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     private static let maximumTelemetryMatchDistance: TimeInterval = 5
 
     private let observationsBySessionID: [String: [Observation]]
-    private let usageRecords: [CLIProxyAPIUsageRecord]
+    private let usageRecordsByCanonicalModel: [String: [CLIProxyAPIUsageRecord]]
     private let authProviders: [AuthProvider]
     private let hasConfiguredOpenAIAPIUpstream: Bool
 
@@ -37,7 +37,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         hasConfiguredOpenAIAPIUpstream: Bool = false)
     {
         self.observationsBySessionID = Dictionary(grouping: observations, by: \.sessionID)
-        self.usageRecords = usageRecords
+        self.usageRecordsByCanonicalModel = Self.indexUsageRecords(usageRecords)
         self.authProviders = authProviders
         self.hasConfiguredOpenAIAPIUpstream = hasConfiguredOpenAIAPIUpstream
     }
@@ -143,19 +143,53 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     {
         guard let observationTimestamp = observation.timestamp else { return nil }
         let canonicalModel = Self.canonicalModel(model)
-        let candidates = self.usageRecords.filter { record in
-            guard !record.failed,
-                  record.generate,
-                  record.endpoint.lowercased().contains("/v1/messages"),
-                  abs(record.timestamp.timeIntervalSince(observationTimestamp))
-                  <= Self.maximumTelemetryMatchDistance
-            else { return false }
-            let modelMatches = Self.canonicalModel(record.alias) == canonicalModel
-                || Self.canonicalModel(record.model) == canonicalModel
-            guard modelMatches else { return false }
-            return tokens.map { Self.tokensMatch($0, record.tokens) } ?? true
+        guard let records = self.usageRecordsByCanonicalModel[canonicalModel] else { return nil }
+        let earliest = observationTimestamp.addingTimeInterval(-Self.maximumTelemetryMatchDistance)
+        let latest = observationTimestamp.addingTimeInterval(Self.maximumTelemetryMatchDistance)
+        let startIndex = Self.firstRecordIndex(atOrAfter: earliest, in: records)
+        var candidates: [CLIProxyAPIUsageRecord] = []
+        for record in records[startIndex...] {
+            guard record.timestamp <= latest else { break }
+            if tokens.map({ Self.tokensMatch($0, record.tokens) }) ?? true {
+                candidates.append(record)
+            }
         }
         return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    private static func indexUsageRecords(
+        _ records: [CLIProxyAPIUsageRecord]) -> [String: [CLIProxyAPIUsageRecord]]
+    {
+        var recordsByModel: [String: [CLIProxyAPIUsageRecord]] = [:]
+        for record in records where !record.failed
+            && record.generate
+            && record.endpoint.lowercased().contains("/v1/messages")
+        {
+            let models = Set([self.canonicalModel(record.alias), self.canonicalModel(record.model)])
+            for model in models where !model.isEmpty {
+                recordsByModel[model, default: []].append(record)
+            }
+        }
+        return recordsByModel.mapValues { records in
+            records.sorted { $0.timestamp < $1.timestamp }
+        }
+    }
+
+    private static func firstRecordIndex(
+        atOrAfter timestamp: Date,
+        in records: [CLIProxyAPIUsageRecord]) -> Int
+    {
+        var lowerBound = 0
+        var upperBound = records.count
+        while lowerBound < upperBound {
+            let midpoint = lowerBound + (upperBound - lowerBound) / 2
+            if records[midpoint].timestamp < timestamp {
+                lowerBound = midpoint + 1
+            } else {
+                upperBound = midpoint
+            }
+        }
+        return lowerBound
     }
 
     private func authInventoryUpstream(

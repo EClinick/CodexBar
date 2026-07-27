@@ -257,7 +257,7 @@ public struct CostUsageFetcher: Sendable {
             provider: provider,
             codexHomePath: codexHomePath)
         let scopedCodexHomePath = codexHomePath?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shouldMergePiUsage = provider != .codex || scopedCodexHomePath?.isEmpty != false
+        let shouldMergeGlobalCodexUsage = provider != .codex || scopedCodexHomePath?.isEmpty != false
         await Self.refreshPricingIfAllowed(
             options: PricingRefreshOptions(
                 provider: provider,
@@ -329,14 +329,14 @@ public struct CostUsageFetcher: Sendable {
                     options: scanOptions,
                     range: range,
                     now: now,
-                    includeClaudeProxy: includeClaudeProxyUsage,
+                    includeClaudeProxy: includeClaudeProxyUsage && shouldMergeGlobalCodexUsage,
                     checkCancellation: checkCancellation)
                 projects = supplemental.projects
                 sessions = supplemental.sessions
                 claudeProxyDaily = supplemental.claudeProxyDaily
                 daily = claudeProxyDaily.map { daily.merged(with: $0) } ?? daily
             }
-            if includePiSessions, provider == .claude || (provider == .codex && shouldMergePiUsage) {
+            if includePiSessions, provider == .claude || (provider == .codex && shouldMergeGlobalCodexUsage) {
                 let piReport = try PiSessionCostScanner.loadDailyReportCancellable(
                     provider: provider,
                     since: since,
