@@ -280,6 +280,104 @@ struct CostUsageFetcherUnknownModelPricingTests {
         #expect(breakdown.attribution?.upstream?.model == "gpt-new")
         #expect(abs((breakdown.costUSD ?? 0) - 0.00028) < 0.0000001)
     }
+
+    @Test
+    func `claude fetch refreshes OpenAI compatible proxy pricing under the resolved provider`() async throws {
+        let environment = try CostUsageTestEnvironment()
+        defer { environment.cleanup() }
+        let day = try environment.makeLocalNoon(year: 2026, month: 7, day: 24)
+        let alias = "claude-proxy-alias"
+        let staleCatalog = try JSONDecoder().decode(ModelsDevCatalog.self, from: Data("""
+        {
+          "openai": {
+            "id": "openai",
+            "models": { "gpt-old": { "id": "gpt-old", "cost": { "input": 1, "output": 4 } } }
+          },
+          "anthropic": {
+            "id": "anthropic",
+            "models": { "claude-old": { "id": "claude-old", "cost": { "input": 3, "output": 15 } } }
+          }
+        }
+        """.utf8))
+        ModelsDevCache.save(
+            catalog: staleCatalog,
+            fetchedAt: day.addingTimeInterval(-901),
+            cacheRoot: environment.cacheRoot)
+
+        _ = try environment.writeClaudeProjectFile(
+            relativePath: "proxy/openrouter-unknown-model.jsonl",
+            contents: environment.jsonl([[
+                "type": "assistant",
+                "timestamp": environment.isoString(for: day),
+                "sessionId": "session-openrouter",
+                "requestId": "request-openrouter",
+                "message": [
+                    "id": "message-openrouter",
+                    "model": "\(alias)",
+                    "usage": ["input_tokens": 100, "output_tokens": 10],
+                ],
+            ]]))
+        let cliProxyHome = environment.root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        let cliProxyLogs = cliProxyHome.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: cliProxyLogs, withIntermediateDirectories: true)
+        let proxyLog = """
+        === REQUEST INFO ===
+        URL: /v1/messages
+        Timestamp: \(environment.isoString(for: day))
+        === HEADERS ===
+        X-Claude-Code-Session-Id: session-openrouter
+        === REQUEST BODY ===
+        {"model":"\(alias)"}
+        === API RESPONSE ===
+        """
+        try Data(proxyLog.utf8).write(to: cliProxyLogs.appendingPathComponent("request.log"))
+        CLIProxyAPIUsageCacheIO.merge(
+            [
+                CLIProxyAPIUsageRecord(
+                    timestamp: day,
+                    provider: "openrouter",
+                    executorType: "OpenAICompatExecutor",
+                    model: "gpt-new",
+                    alias: alias,
+                    endpoint: "/v1/messages",
+                    authType: "api_key",
+                    requestID: "cliproxy-openrouter-request",
+                    tokens: .init(input: 100, output: 10, total: 110)),
+            ],
+            cacheRoot: environment.cacheRoot,
+            now: day)
+        let options = CostUsageScanner.Options(
+            claudeProjectsRoots: [environment.claudeProjectsRoot],
+            cacheRoot: environment.cacheRoot,
+            cliProxyAPIHome: cliProxyHome)
+        let refreshedCatalog = Data("""
+        {
+          "openai": {
+            "id": "openai",
+            "models": { "gpt-new": { "id": "gpt-new", "cost": { "input": 2, "output": 8 } } }
+          },
+          "anthropic": {
+            "id": "anthropic",
+            "models": { "claude-new": { "id": "claude-new", "cost": { "input": 3, "output": 15 } } }
+          }
+        }
+        """.utf8)
+
+        let snapshot = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .claude,
+            now: day,
+            refreshPricingInBackground: false,
+            includePiSessions: false,
+            scannerOptions: options,
+            modelsDevClient: ModelsDevClient(transport: CostUsageFetcherModelsDevTransport(
+                data: refreshedCatalog)))
+
+        let breakdown = try #require(snapshot.daily.first?.modelBreakdowns?.first)
+        #expect(breakdown.modelName == alias)
+        #expect(breakdown.attribution?.upstream?.provider == "openrouter")
+        #expect(breakdown.attribution?.upstream?.model == "gpt-new")
+        #expect(abs((breakdown.costUSD ?? 0) - 0.00028) < 0.0000001)
+    }
 }
 
 private struct UnknownModelPricingFixture {

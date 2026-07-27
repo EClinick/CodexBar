@@ -443,8 +443,7 @@ public struct CostUsageFetcher: Sendable {
     }
 
     private struct UnknownPricingRefreshRequest: Sendable {
-        let providerID: String
-        let modelIDs: Set<String>
+        let modelIDsByProviderID: [String: Set<String>]
         let now: Date
         let cacheRoot: URL?
         let client: ModelsDevClient
@@ -458,9 +457,10 @@ public struct CostUsageFetcher: Sendable {
         client: ModelsDevClient) -> UnknownPricingRefreshRequest?
     {
         guard provider == .codex || provider == .claude else { return nil }
-        let unknownModelIDs = Set(daily.data.flatMap { entry in
-            entry.modelBreakdowns?.compactMap { breakdown -> String? in
-                guard breakdown.costUSD == nil else { return nil }
+        var modelIDsByProviderID: [String: Set<String>] = [:]
+        for entry in daily.data {
+            for breakdown in entry.modelBreakdowns ?? [] {
+                guard breakdown.costUSD == nil else { continue }
                 let upstreamModel = breakdown.attribution?.route == .cliProxyAPI
                     ? breakdown.attribution?.upstream?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
                     : nil
@@ -468,19 +468,53 @@ public struct CostUsageFetcher: Sendable {
                 if provider == .codex,
                    CostUsagePricing.isCodexUnattributedModel(pricingModel)
                 {
-                    return nil
+                    continue
                 }
-                return pricingModel
-            } ?? []
-        })
-        guard !unknownModelIDs.isEmpty else { return nil }
+                let providerID = Self.modelsDevProviderID(
+                    pricingModel: pricingModel,
+                    attribution: breakdown.attribution,
+                    fallbackProvider: provider,
+                    cacheRoot: cacheRoot)
+                modelIDsByProviderID[providerID, default: []].insert(pricingModel)
+            }
+        }
+        guard !modelIDsByProviderID.isEmpty else { return nil }
 
         return UnknownPricingRefreshRequest(
-            providerID: provider == .codex ? "openai" : "anthropic",
-            modelIDs: unknownModelIDs,
+            modelIDsByProviderID: modelIDsByProviderID,
             now: now,
             cacheRoot: cacheRoot,
             client: client)
+    }
+
+    private static func modelsDevProviderID(
+        pricingModel: String,
+        attribution: CostUsageAttribution?,
+        fallbackProvider: UsageProvider,
+        cacheRoot: URL?) -> String
+    {
+        if attribution?.route == .cliProxyAPI {
+            switch attribution?.upstream?.executorType?.lowercased() {
+            case "codexexecutor", "openaicompatexecutor":
+                return "openai"
+            case "claudeexecutor":
+                return "anthropic"
+            case "geminiexecutor":
+                return "google"
+            default:
+                break
+            }
+        }
+
+        return switch CostUsagePricing.modelProvider(
+            for: pricingModel,
+            modelsDevCacheRoot: cacheRoot)
+        {
+        case .openAI: "openai"
+        case .anthropic: "anthropic"
+        case .google: "google"
+        case .unknown: fallbackProvider == .codex ? "openai" : "anthropic"
+        }
     }
 
     private static func refreshUnknownPricingIfNeeded(
@@ -489,21 +523,29 @@ public struct CostUsageFetcher: Sendable {
     {
         if inBackground {
             Task.detached(priority: .utility) {
-                _ = await ModelsDevPricingPipeline.refreshForUnknownModelsIfNeeded(
-                    providerID: request.providerID,
-                    modelIDs: request.modelIDs,
-                    now: request.now,
-                    cacheRoot: request.cacheRoot,
-                    client: request.client)
+                for providerID in request.modelIDsByProviderID.keys.sorted() {
+                    _ = await ModelsDevPricingPipeline.refreshForUnknownModelsIfNeeded(
+                        providerID: providerID,
+                        modelIDs: request.modelIDsByProviderID[providerID] ?? [],
+                        now: request.now,
+                        cacheRoot: request.cacheRoot,
+                        client: request.client)
+                }
             }
             return false
         }
-        return await ModelsDevPricingPipeline.refreshForUnknownModelsIfNeeded(
-            providerID: request.providerID,
-            modelIDs: request.modelIDs,
-            now: request.now,
-            cacheRoot: request.cacheRoot,
-            client: request.client) == .pricingAvailable
+
+        var pricingAvailable = false
+        for providerID in request.modelIDsByProviderID.keys.sorted() {
+            let result = await ModelsDevPricingPipeline.refreshForUnknownModelsIfNeeded(
+                providerID: providerID,
+                modelIDs: request.modelIDsByProviderID[providerID] ?? [],
+                now: request.now,
+                cacheRoot: request.cacheRoot,
+                client: request.client)
+            pricingAvailable = result == .pricingAvailable || pricingAvailable
+        }
+        return pricingAvailable
     }
 
     static func loadCachedCodexTokenSnapshot(
