@@ -234,17 +234,13 @@ enum CLIProxyAPIUsageCacheIO {
         return decoder
     }()
 
-    private static let fractionalISO8601Formatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom { date, encoder in
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             var container = encoder.singleValueContainer()
-            try container.encode(CLIProxyAPIUsageCacheIO.fractionalISO8601Formatter.string(from: date))
+            try container.encode(formatter.string(from: date))
         }
         encoder.outputFormatting = [.sortedKeys]
         return encoder
