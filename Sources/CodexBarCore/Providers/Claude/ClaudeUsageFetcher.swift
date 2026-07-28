@@ -1146,7 +1146,9 @@ extension ClaudeUsageFetcher {
                     resetsAt: resetDate,
                     resetDescription: resetDescription))
         }
-        return routineWindows + Self.oauthScopedWeeklyLimitWindows(from: usage)
+        // Keep the same row order as the Web path: model-scoped weekly limits first,
+        // Daily Routines last.
+        return Self.oauthScopedWeeklyLimitWindows(from: usage) + routineWindows
     }
 
     private static func oauthScopedWeeklyLimitWindows(from usage: OAuthUsageResponse) -> [NamedRateWindow] {

@@ -80,4 +80,54 @@ struct ClaudeWebUsageExtraWindowTests {
         #expect(fable?.window.usedPercent == 5)
         #expect(fable?.window.resetsAt != nil)
     }
+
+    @Test
+    func `orders scoped weekly windows before daily routines`() throws {
+        let json = """
+        {
+          "five_hour": { "utilization": 9, "resets_at": "2026-07-03T00:30:00.440902+00:00" },
+          "seven_day": { "utilization": 20, "resets_at": "2026-07-08T09:00:00.440924+00:00" },
+          "seven_day_cowork": { "utilization": 11, "resets_at": "2026-07-08T09:00:00.440924+00:00" },
+          "limits": [
+            {
+              "kind": "weekly_scoped", "group": "weekly", "percent": 29,
+              "resets_at": "2026-07-08T09:00:00.441154+00:00",
+              "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null },
+              "is_active": false
+            }
+          ]
+        }
+        """
+        let data = Data(json.utf8)
+        let parsed = try ClaudeWebAPIFetcher._parseUsageResponseForTesting(data)
+        #expect(parsed.extraRateWindows.map(\.title) == ["Fable only", "Daily Routines"])
+    }
+
+    @Test
+    func `keeps multiple scoped weekly windows in payload order before routines`() throws {
+        let json = """
+        {
+          "five_hour": { "utilization": 9, "resets_at": "2026-07-03T00:30:00.440902+00:00" },
+          "seven_day": { "utilization": 20, "resets_at": "2026-07-08T09:00:00.440924+00:00" },
+          "seven_day_cowork": { "utilization": 11, "resets_at": "2026-07-08T09:00:00.440924+00:00" },
+          "limits": [
+            {
+              "kind": "weekly_scoped", "group": "weekly", "percent": 12,
+              "resets_at": "2026-07-08T09:00:00.441154+00:00",
+              "scope": { "model": { "id": null, "display_name": "Opus" }, "surface": null },
+              "is_active": false
+            },
+            {
+              "kind": "weekly_scoped", "group": "weekly", "percent": 29,
+              "resets_at": "2026-07-08T09:00:00.441154+00:00",
+              "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null },
+              "is_active": false
+            }
+          ]
+        }
+        """
+        let data = Data(json.utf8)
+        let parsed = try ClaudeWebAPIFetcher._parseUsageResponseForTesting(data)
+        #expect(parsed.extraRateWindows.map(\.title) == ["Opus only", "Fable only", "Daily Routines"])
+    }
 }

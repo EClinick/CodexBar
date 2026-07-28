@@ -21,6 +21,11 @@ enum ClaudeWebExtraRateWindowParser {
         var sourceKeys: [String: String] = [:]
         windows.reserveCapacity(Self.definitions.count)
 
+        // Model-scoped weekly limits come first: they track the model budget users spend
+        // day to day, while Daily Routines stays at 0% for accounts that never use
+        // Routines/Cowork and would otherwise push the meaningful row down the card.
+        windows.append(contentsOf: Self.scopedWeeklyLimitWindows(from: json))
+
         for definition in Self.definitions {
             guard let foundWindow = Self.firstUsageWindow(in: json, keys: definition.keys) else { continue }
             let rawWindow = foundWindow.window
@@ -33,7 +38,6 @@ enum ClaudeWebExtraRateWindowParser {
                 resetsAt: resetsAt))
             sourceKeys[definition.id] = foundWindow.sourceKey
         }
-        windows.append(contentsOf: Self.scopedWeeklyLimitWindows(from: json))
         return (windows, sourceKeys)
     }
 
