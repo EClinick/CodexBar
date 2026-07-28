@@ -942,7 +942,9 @@ extension CostUsageFetcher {
             modelsDevCacheRoot: options.cacheRoot,
             sessionRoots: roots)
 
-        guard includeClaudeProxy else {
+        guard includeClaudeProxy,
+              self.hasCodexProxyEvidence(options: options)
+        else {
             return CodexSupplementalScan(
                 projects: projects,
                 sessions: sessions,
@@ -961,6 +963,41 @@ extension CostUsageFetcher {
             projects: projects,
             sessions: sessions,
             claudeProxyDaily: proxyDaily.data.isEmpty ? nil : proxyDaily)
+    }
+
+    static func hasCodexProxyEvidence(
+        options: CostUsageScanner.Options,
+        fileManager: FileManager = .default) -> Bool
+    {
+        if CLIProxyAPIUsageCacheIO.load(cacheRoot: options.cacheRoot).contains(where: {
+            $0.provider.caseInsensitiveCompare("codex") == .orderedSame
+        }) {
+            return true
+        }
+
+        let cachedClaude = CostUsageCacheIO.load(provider: .claude, cacheRoot: options.cacheRoot)
+        if cachedClaude.files.values.contains(where: { usage in
+            usage.claudeRows?.contains {
+                $0.attribution?.route == .cliProxyAPI
+                    && $0.attribution?.upstream?.isCodex == true
+            } == true
+        }) {
+            return true
+        }
+
+        guard let home = options.cliProxyAPIHome else { return false }
+        let logDirectory = home.appendingPathComponent("logs", isDirectory: true)
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: logDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles])
+        else { return false }
+        return urls.contains { url in
+            guard url.pathExtension.caseInsensitiveCompare("log") == .orderedSame,
+                  let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
+            else { return false }
+            return values.isRegularFile == true
+        }
     }
 
     private static func finalizeCodexSupplementalScan(
