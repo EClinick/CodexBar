@@ -230,6 +230,46 @@ struct CostUsageDailyReportMergeTests {
     }
 
     @Test
+    func `vendored cache sorter uses complete attribution for equal model breakdowns`() {
+        let apiKeyAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .apiKey,
+                model: "gpt-5.4",
+                executorType: "codex"),
+            evidence: [.cliProxyRequestLog])
+        let oauthAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .oauth,
+                model: "gpt-5.4",
+                executorType: "codex"),
+            evidence: [.cliProxyRequestLog])
+        let breakdowns = [
+            CostUsageDailyReport.ModelBreakdown(
+                modelName: "gpt-5.4",
+                costUSD: 0.1,
+                totalTokens: 10,
+                attribution: oauthAttribution),
+            CostUsageDailyReport.ModelBreakdown(
+                modelName: "gpt-5.4",
+                costUSD: 0.1,
+                totalTokens: 10,
+                attribution: apiKeyAttribution),
+        ]
+
+        let sorted = CostUsageScanner.sortedModelBreakdowns(breakdowns)
+
+        #expect(sorted.map(\.attribution) == [apiKeyAttribution, oauthAttribution])
+    }
+
+    @Test
     func `attribution sort key includes every distinguishable field`() {
         let attributions = [
             CostUsageAttribution(

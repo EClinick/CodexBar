@@ -40,6 +40,46 @@ struct CostHistoryChartMenuViewTests {
     }
 
     @Test
+    func `model breakdown uses complete attribution as its final ordering key`() {
+        let apiKeyAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .apiKey,
+                model: "gpt-5.4",
+                executorType: "codex"),
+            evidence: [.cliProxyRequestLog])
+        let oauthAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .oauth,
+                model: "gpt-5.4",
+                executorType: "codex"),
+            evidence: [.cliProxyRequestLog])
+        let breakdowns = [
+            CostUsageDailyReport.ModelBreakdown(
+                modelName: "gpt-5.4",
+                costUSD: 0.1,
+                totalTokens: 10,
+                attribution: oauthAttribution),
+            CostUsageDailyReport.ModelBreakdown(
+                modelName: "gpt-5.4",
+                costUSD: 0.1,
+                totalTokens: 10,
+                attribution: apiKeyAttribution),
+        ]
+
+        let sorted = CostHistoryChartMenuView.orderedBreakdownItems(breakdowns)
+
+        #expect(sorted.map(\.attribution) == [apiKeyAttribution, oauthAttribution])
+    }
+
+    @Test
     @MainActor
     func `menu hosting view publishes measured height through intrinsic size`() {
         let hosting = MenuHostingView(rootView: EmptyView())

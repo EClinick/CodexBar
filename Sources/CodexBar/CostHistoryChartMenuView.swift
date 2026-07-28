@@ -822,7 +822,13 @@ struct CostHistoryChartMenuView: View {
                 return lTokens > rTokens
             }
 
-            return lhs.modelName > rhs.modelName
+            if lhs.modelName != rhs.modelName {
+                return lhs.modelName > rhs.modelName
+            }
+
+            let lhsAttribution = lhs.attribution?.deterministicSortKey ?? ""
+            let rhsAttribution = rhs.attribution?.deterministicSortKey ?? ""
+            return lhsAttribution > rhsAttribution
         }
     }
 
