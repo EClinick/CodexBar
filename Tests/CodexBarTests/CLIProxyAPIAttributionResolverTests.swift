@@ -767,7 +767,7 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
-    func `usage collector reports cache write failure`() async throws {
+    func `usage collector retries a popped batch after cache write failure`() async throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-blocked-\(UUID().uuidString)", isDirectory: false)
@@ -801,6 +801,24 @@ struct CLIProxyAPIAttributionResolverTests {
         let result = await CLIProxyAPIUsageCollector.collect(cacheRoot: cacheRoot, client: client)
 
         #expect(result == .failed("Could not save CLIProxyAPI usage telemetry."))
+        try fileManager.removeItem(at: cacheRoot)
+        let retryClient = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID) == ["request-1"])
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (Data("[]".utf8), response)
+            })
+
+        let retryResult = await CLIProxyAPIUsageCollector.collect(cacheRoot: cacheRoot, client: retryClient)
+
+        #expect(retryResult == .collected(1))
+        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID) == ["request-1"])
     }
 
     @Test

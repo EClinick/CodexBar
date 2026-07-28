@@ -322,10 +322,27 @@ private actor CLIProxyAPIUsageCollectionGate {
     }
 }
 
+private actor CLIProxyAPIUsageRetryBuffer {
+    private var recordsByCachePath: [String: [CLIProxyAPIUsageRecord]] = [:]
+
+    func records(for cachePath: String) -> [CLIProxyAPIUsageRecord] {
+        self.recordsByCachePath[cachePath] ?? []
+    }
+
+    func store(_ records: [CLIProxyAPIUsageRecord], for cachePath: String) {
+        self.recordsByCachePath[cachePath] = records
+    }
+
+    func clear(for cachePath: String) {
+        self.recordsByCachePath.removeValue(forKey: cachePath)
+    }
+}
+
 public enum CLIProxyAPIUsageCollector {
     private static let maximumBatches = 10
     private static let batchSize = 100
     private static let collectionGate = CLIProxyAPIUsageCollectionGate()
+    private static let retryBuffer = CLIProxyAPIUsageRetryBuffer()
 
     public static func collect(
         cacheRoot: URL? = nil,
@@ -353,9 +370,26 @@ public enum CLIProxyAPIUsageCollector {
     {
         do {
             var added = 0
+            let cachePath = CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: cacheRoot)
+                .standardizedFileURL.path
+            let pendingRecords = await self.retryBuffer.records(for: cachePath)
+            if !pendingRecords.isEmpty {
+                guard let pendingAdded = CLIProxyAPIUsageCacheIO.merge(
+                    pendingRecords,
+                    cacheRoot: cacheRoot)
+                else {
+                    return .failed("Could not save CLIProxyAPI usage telemetry.")
+                }
+                added += pendingAdded
+                await self.retryBuffer.clear(for: cachePath)
+            }
+
             for _ in 0..<self.maximumBatches {
                 let batch = try await client.pop(count: self.batchSize)
                 guard let batchAdded = CLIProxyAPIUsageCacheIO.merge(batch, cacheRoot: cacheRoot) else {
+                    if !batch.isEmpty {
+                        await self.retryBuffer.store(batch, for: cachePath)
+                    }
                     return .failed("Could not save CLIProxyAPI usage telemetry.")
                 }
                 added += batchAdded
