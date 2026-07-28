@@ -432,7 +432,8 @@ public enum CLIProxyAPIUsageCollector {
     {
         do {
             var added = 0
-            guard let pendingRecords = CLIProxyAPIUsagePendingIO.load(pendingRoot: pendingRoot) else {
+            let effectivePendingRoot = pendingRoot ?? cacheRoot
+            guard let pendingRecords = CLIProxyAPIUsagePendingIO.load(pendingRoot: effectivePendingRoot) else {
                 return .failed("Could not load pending CLIProxyAPI usage telemetry.")
             }
             if !pendingRecords.isEmpty {
@@ -443,7 +444,7 @@ public enum CLIProxyAPIUsageCollector {
                     return .failed("Could not save CLIProxyAPI usage telemetry.")
                 }
                 added += pendingAdded
-                guard CLIProxyAPIUsagePendingIO.clear(pendingRoot: pendingRoot) else {
+                guard CLIProxyAPIUsagePendingIO.clear(pendingRoot: effectivePendingRoot) else {
                     return .failed("Could not clear pending CLIProxyAPI usage telemetry.")
                 }
             }
@@ -452,13 +453,13 @@ public enum CLIProxyAPIUsageCollector {
                 let batch = try await client.pop(count: self.batchSize)
                 let staged = batch.isEmpty || CLIProxyAPIUsagePendingIO.save(
                     batch,
-                    pendingRoot: pendingRoot)
+                    pendingRoot: effectivePendingRoot)
                 guard let batchAdded = CLIProxyAPIUsageCacheIO.merge(batch, cacheRoot: cacheRoot) else {
                     return .failed("Could not save CLIProxyAPI usage telemetry.")
                 }
                 added += batchAdded
                 if staged, !batch.isEmpty,
-                   !CLIProxyAPIUsagePendingIO.clear(pendingRoot: pendingRoot)
+                   !CLIProxyAPIUsagePendingIO.clear(pendingRoot: effectivePendingRoot)
                 {
                     return .failed("Could not clear pending CLIProxyAPI usage telemetry.")
                 }
