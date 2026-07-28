@@ -226,7 +226,7 @@ struct CostUsageDailyReportMergeTests {
             summary: nil)
 
         let breakdowns = try #require(CostUsageDailyReport.merged([report]).data.first?.modelBreakdowns)
-        #expect(breakdowns.map(\.attribution) == [oauthAttribution, apiKeyAttribution])
+        #expect(breakdowns.map(\.attribution) == [apiKeyAttribution, oauthAttribution])
     }
 
     @Test
