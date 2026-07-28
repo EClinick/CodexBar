@@ -5,9 +5,6 @@
 ### Fixed
 - Ollama: reuse validated browser sessions across refreshes, and skip inaccessible Safari cookies during automatic
   fallback while preserving explicit Safari permission guidance.
-- Usage & Spend: keep CLIProxyAPI-routed Claude Code sessions in the correct upstream total using request logs
-  and active provider credentials, with sanitized per-request telemetry when available, instead of splitting
-  unchanged usage into separate proxy and unknown-route rows.
 
 ## 0.45.2 — 2026-07-19
 
