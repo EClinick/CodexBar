@@ -19,6 +19,39 @@ struct ShareStatsTests {
     }
 
     @Test
+    func `proxy spend is not counted as an account or subscription`() {
+        let rows = [
+            SpendDashboardModel.ProviderRow(
+                id: "codex:managed-account",
+                rank: 1,
+                provider: .codex,
+                displayName: "Codex",
+                totalTokens: 100,
+                totalCost: 1,
+                coveredDayCount: 1),
+            SpendDashboardModel.ProviderRow(
+                id: SpendDashboardSource.codexProxySourceID,
+                rank: 2,
+                provider: .codex,
+                displayName: "Codex · CLIProxyAPI",
+                totalTokens: 100,
+                totalCost: 1,
+                coveredDayCount: 1),
+            SpendDashboardModel.ProviderRow(
+                id: "cursor",
+                rank: 3,
+                provider: .cursor,
+                displayName: "Cursor",
+                totalTokens: 100,
+                totalCost: 1,
+                coveredDayCount: 1),
+        ]
+
+        #expect(spendDashboardCodexAccountRowCount(rows) == 1)
+        #expect(spendDashboardSubscriptionCount(rows) == 2)
+    }
+
+    @Test
     func `builder preserves native currencies and unavailable spend`() throws {
         let subscriptionNames = try [
             "codex:one": #require(Self.subscriptionName(provider: .codex, rawName: "pro")),

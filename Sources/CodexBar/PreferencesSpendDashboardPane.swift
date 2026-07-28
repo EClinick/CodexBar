@@ -34,6 +34,20 @@ func spendDashboardShouldUseAmbientCodexSubscription(
     rowID != SpendDashboardSource.codexProxySourceID && codexRowCount == 1
 }
 
+func spendDashboardCodexAccountRowCount(
+    _ rows: [SpendDashboardModel.ProviderRow]) -> Int
+{
+    rows.count {
+        $0.provider == .codex && $0.id != SpendDashboardSource.codexProxySourceID
+    }
+}
+
+func spendDashboardSubscriptionCount(
+    _ rows: [SpendDashboardModel.ProviderRow]) -> Int
+{
+    rows.count { $0.id != SpendDashboardSource.codexProxySourceID }
+}
+
 func spendDashboardModelSourceText(
     providerName: String,
     attribution: CostUsageAttribution?) -> String
@@ -362,9 +376,8 @@ struct SpendDashboardPane: View {
 
     private var subscriptionNames: [String: ShareStatsSubscriptionName] {
         var names: [String: ShareStatsSubscriptionName] = [:]
-        let codexRowCount = self.controller.model.groups
-            .flatMap(\.providers)
-            .count { $0.provider == .codex }
+        let codexRowCount = spendDashboardCodexAccountRowCount(
+            self.controller.model.groups.flatMap(\.providers))
         for group in self.controller.model.groups {
             for row in group.providers {
                 let snapshots: [UsageSnapshot?] = if row.provider == .codex,
@@ -435,7 +448,8 @@ private struct SpendCurrencySection: View {
                         value: self.group.totalTokens.map(UsageFormatter.tokenCountString) ?? "—")
                     SpendSummaryValue(
                         title: L("Subscriptions"),
-                        value: codexBarLocalizedInteger(self.group.providers.count))
+                        value: codexBarLocalizedInteger(
+                            spendDashboardSubscriptionCount(self.group.providers)))
                     Spacer()
                 }
             }
