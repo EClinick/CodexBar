@@ -18,6 +18,48 @@ private actor CLIProxyAPICollectionContinuationProbe {
 
 struct CLIProxyAPIUsageCollectorTests {
     @Test
+    func `queue client preserves valid records around a malformed entry`() async throws {
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let records = ["request-before", "request-after"].map { requestID in
+            CLIProxyAPIUsageRecord(
+                timestamp: timestamp,
+                provider: "codex",
+                model: "gpt-5.6-sol",
+                alias: "gpt-5.6-sol",
+                endpoint: "POST /v1/messages",
+                authType: "oauth",
+                requestID: requestID,
+                tokens: .init(input: 10, output: 20, total: 30))
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let validObjects = try records.map {
+            try JSONSerialization.jsonObject(with: encoder.encode($0))
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            validObjects[0],
+            ["timestamp": "not-a-date"],
+            validObjects[1],
+        ])
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (data, response)
+            })
+
+        let batch = try await client.pop(count: 100)
+
+        #expect(batch.receivedCount == 3)
+        #expect(batch.records.map(\.requestID) == ["request-before", "request-after"])
+    }
+
+    @Test
     func `persists a popped batch outside a failed cache for the next collection`() async throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory

@@ -544,20 +544,23 @@ public enum CLIProxyAPIUsageCollector {
 
             for _ in 0..<self.maximumBatches {
                 guard !Task.isCancelled, await shouldContinue() else { return .disabled }
-                let batch = try await client.pop(count: self.batchSize)
-                let staged = batch.isEmpty || CLIProxyAPIUsagePendingIO.save(
-                    batch,
+                let poppedBatch = try await client.pop(count: self.batchSize)
+                let staged = poppedBatch.records.isEmpty || CLIProxyAPIUsagePendingIO.save(
+                    poppedBatch.records,
                     pendingRoot: effectivePendingRoot)
-                guard let batchAdded = CLIProxyAPIUsageCacheIO.merge(batch, cacheRoot: cacheRoot) else {
+                guard let batchAdded = CLIProxyAPIUsageCacheIO.merge(
+                    poppedBatch.records,
+                    cacheRoot: cacheRoot)
+                else {
                     return .failed("Could not save CLIProxyAPI usage telemetry.")
                 }
                 added += batchAdded
-                if staged, !batch.isEmpty,
+                if staged, !poppedBatch.records.isEmpty,
                    !CLIProxyAPIUsagePendingIO.clear(pendingRoot: effectivePendingRoot)
                 {
                     return .failed("Could not clear pending CLIProxyAPI usage telemetry.")
                 }
-                if batch.count < self.batchSize {
+                if poppedBatch.receivedCount < self.batchSize {
                     break
                 }
             }
@@ -570,6 +573,21 @@ public enum CLIProxyAPIUsageCollector {
 
 struct CLIProxyAPIUsageQueueClient: Sendable {
     typealias DataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
+    struct PoppedBatch: Sendable {
+        let records: [CLIProxyAPIUsageRecord]
+        let receivedCount: Int
+    }
+
+    private struct LossyRecord: Decodable {
+        let value: CLIProxyAPIUsageRecord?
+
+        init(from decoder: Decoder) {
+            self.value = try? CLIProxyAPIUsageRecord(from: decoder)
+        }
+    }
+
+    private static let log = CodexBarLog.logger(LogCategories.tokenCost)
 
     enum ClientError: LocalizedError {
         case invalidBaseURL
@@ -596,7 +614,7 @@ struct CLIProxyAPIUsageQueueClient: Sendable {
         self.dataLoader = dataLoader
     }
 
-    func pop(count: Int) async throws -> [CLIProxyAPIUsageRecord] {
+    func pop(count: Int) async throws -> PoppedBatch {
         guard let baseURL = self.settings.resolvedBaseURL,
               var components = URLComponents(
                   url: baseURL.appendingPathComponent("v0/management/usage-queue"),
@@ -628,7 +646,15 @@ struct CLIProxyAPIUsageQueueClient: Sendable {
             }
             return date
         }
-        return try decoder.decode([CLIProxyAPIUsageRecord].self, from: data)
+        let decoded = try decoder.decode([LossyRecord].self, from: data)
+        let records = decoded.compactMap(\.value)
+        let malformedCount = decoded.count - records.count
+        if malformedCount > 0 {
+            Self.log.warning(
+                "Ignored malformed CLIProxyAPI usage records",
+                metadata: ["count": String(malformedCount)])
+        }
+        return PoppedBatch(records: records, receivedCount: decoded.count)
     }
 
     private static func liveDataLoader(_ request: URLRequest) async throws -> (Data, URLResponse) {
