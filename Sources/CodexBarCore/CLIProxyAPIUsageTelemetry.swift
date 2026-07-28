@@ -134,8 +134,22 @@ enum CLIProxyAPIUsageCacheIO {
         cacheRoot: URL? = nil,
         now: Date = Date()) -> [CLIProxyAPIUsageRecord]
     {
+        let legacyCacheRoot = cacheRoot == nil ? self.defaultLegacyCacheRoot() : nil
+        return self.load(
+            cacheRoot: cacheRoot,
+            legacyCacheRoot: legacyCacheRoot,
+            now: now)
+    }
+
+    static func load(
+        cacheRoot: URL?,
+        legacyCacheRoot: URL?,
+        now: Date = Date()) -> [CLIProxyAPIUsageRecord]
+    {
         let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
-        return self.loadCache(cacheRoot: cacheRoot).records.filter { $0.timestamp >= cutoff }
+        return self.loadCache(
+            cacheRoot: cacheRoot,
+            legacyCacheRoot: legacyCacheRoot).records.filter { $0.timestamp >= cutoff }
     }
 
     @discardableResult
@@ -144,8 +158,25 @@ enum CLIProxyAPIUsageCacheIO {
         cacheRoot: URL? = nil,
         now: Date = Date()) -> Int?
     {
+        let legacyCacheRoot = cacheRoot == nil ? self.defaultLegacyCacheRoot() : nil
+        return self.merge(
+            records,
+            cacheRoot: cacheRoot,
+            legacyCacheRoot: legacyCacheRoot,
+            now: now)
+    }
+
+    @discardableResult
+    static func merge(
+        _ records: [CLIProxyAPIUsageRecord],
+        cacheRoot: URL?,
+        legacyCacheRoot: URL?,
+        now: Date = Date()) -> Int?
+    {
         let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
-        let existingCache = self.loadCache(cacheRoot: cacheRoot)
+        let existingCache = self.loadCache(
+            cacheRoot: cacheRoot,
+            legacyCacheRoot: legacyCacheRoot)
         var byKey: [String: CLIProxyAPIUsageRecord] = [:]
         for record in existingCache.records where record.timestamp >= cutoff {
             byKey[self.recordKey(record)] = record
@@ -163,8 +194,17 @@ enum CLIProxyAPIUsageCacheIO {
     }
 
     static func cacheFileURL(cacheRoot: URL? = nil) -> URL {
-        let root = cacheRoot ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let root = cacheRoot ?? FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first!
             .appendingPathComponent("CodexBar", isDirectory: true)
+        return root
+            .appendingPathComponent("cost-usage", isDirectory: true)
+            .appendingPathComponent("cliproxyapi-usage-v1.json", isDirectory: false)
+    }
+
+    static func legacyCacheFileURL(cacheRoot: URL? = nil) -> URL {
+        let root = cacheRoot ?? self.defaultLegacyCacheRoot()
         return root
             .appendingPathComponent("cost-usage", isDirectory: true)
             .appendingPathComponent("cliproxyapi-usage-v1.json", isDirectory: false)
@@ -213,12 +253,45 @@ enum CLIProxyAPIUsageCacheIO {
         ].joined(separator: ":")
     }
 
-    private static func loadCache(cacheRoot: URL?) -> Cache {
-        guard let data = try? Data(contentsOf: self.cacheFileURL(cacheRoot: cacheRoot)),
+    private static func defaultLegacyCacheRoot() -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("CodexBar", isDirectory: true)
+    }
+
+    private static func loadCache(cacheRoot: URL?, legacyCacheRoot: URL?) -> Cache {
+        let durableURL = self.cacheFileURL(cacheRoot: cacheRoot)
+        let durableCache = self.decodeCache(at: durableURL)
+        guard let legacyCacheRoot else { return durableCache ?? Cache() }
+
+        let legacyURL = self.legacyCacheFileURL(cacheRoot: legacyCacheRoot)
+        guard legacyURL.standardizedFileURL != durableURL.standardizedFileURL,
+              let legacyCache = self.decodeCache(at: legacyURL)
+        else { return durableCache ?? Cache() }
+
+        let migratedCache = self.mergedCaches(legacy: legacyCache, durable: durableCache)
+        if self.save(migratedCache, cacheRoot: cacheRoot) {
+            try? FileManager.default.removeItem(at: legacyURL)
+        }
+        return migratedCache
+    }
+
+    private static func decodeCache(at url: URL) -> Cache? {
+        guard let data = try? Data(contentsOf: url),
               let cache = try? self.decoder.decode(Cache.self, from: data),
               cache.version == 1
-        else { return Cache() }
+        else { return nil }
         return cache
+    }
+
+    private static func mergedCaches(legacy: Cache, durable: Cache?) -> Cache {
+        var byKey: [String: CLIProxyAPIUsageRecord] = [:]
+        for record in legacy.records {
+            byKey[self.recordKey(record)] = record
+        }
+        for record in durable?.records ?? [] {
+            byKey[self.recordKey(record)] = record
+        }
+        return Cache(records: byKey.values.sorted { $0.timestamp < $1.timestamp })
     }
 
     private static func save(_ cache: Cache, cacheRoot: URL?) -> Bool {
