@@ -33,7 +33,7 @@ struct ClaudeWebUsageExtraWindowTests {
     }
 
     @Test
-    func `parses claude web API cowork null as zero routines window`() throws {
+    func `omits routines window when claude web API cowork is null`() throws {
         let json = """
         {
           "five_hour": { "utilization": 9, "resets_at": "2025-12-23T16:00:00.000Z" },
@@ -43,7 +43,7 @@ struct ClaudeWebUsageExtraWindowTests {
         """
         let data = Data(json.utf8)
         let parsed = try ClaudeWebAPIFetcher._parseUsageResponseForTesting(data)
-        #expect(parsed.extraRateWindows.first(where: { $0.id == "claude-routines" })?.window.usedPercent == 0)
+        #expect(parsed.extraRateWindows.contains { $0.id == "claude-routines" } == false)
         #expect(parsed.extraRateWindows.contains { $0.id == "claude-design" } == false)
     }
 

@@ -214,7 +214,7 @@ struct ClaudeOAuthTests {
     }
 
     @Test
-    func `maps O auth null cowork as zero routines window`() throws {
+    func `omits routines window when O auth cowork is null`() throws {
         let json = """
         {
           "five_hour": { "utilization": 12.5, "resets_at": "2025-12-25T12:00:00.000Z" },
@@ -223,7 +223,7 @@ struct ClaudeOAuthTests {
         }
         """
         let snap = try ClaudeUsageFetcher._mapOAuthUsageForTesting(Data(json.utf8))
-        #expect(snap.extraRateWindows.first(where: { $0.id == "claude-routines" })?.window.usedPercent == 0)
+        #expect(snap.extraRateWindows.contains { $0.id == "claude-routines" } == false)
         #expect(snap.extraRateWindows.contains { $0.id == "claude-design" } == false)
     }
 
