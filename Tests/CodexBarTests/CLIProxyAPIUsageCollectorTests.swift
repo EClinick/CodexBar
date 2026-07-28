@@ -2,6 +2,20 @@ import Foundation
 import Testing
 @testable import CodexBarCore
 
+private actor CLIProxyAPICollectionContinuationProbe {
+    private(set) var popCount = 0
+    private var continuationCheckCount = 0
+
+    func shouldContinue() -> Bool {
+        self.continuationCheckCount += 1
+        return self.continuationCheckCount == 1
+    }
+
+    func recordPop() {
+        self.popCount += 1
+    }
+}
+
 struct CLIProxyAPIUsageCollectorTests {
     @Test
     func `persists a popped batch outside a failed cache for the next collection`() async throws {
@@ -70,5 +84,52 @@ struct CLIProxyAPIUsageCollectorTests {
         #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID) == ["request-1"])
         #expect(!fileManager.fileExists(
             atPath: CLIProxyAPIUsagePendingIO.pendingFileURL(pendingRoot: pendingRoot).path))
+    }
+
+    @Test
+    func `collector rechecks opt out before every destructive pop`() async throws {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-opt-out-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let records = (0..<100).map { index in
+            CLIProxyAPIUsageRecord(
+                timestamp: timestamp.addingTimeInterval(TimeInterval(index)),
+                provider: "codex",
+                model: "gpt-5.6-sol",
+                alias: "gpt-5.6-sol",
+                endpoint: "POST /v1/messages",
+                authType: "oauth",
+                requestID: "request-\(index)",
+                tokens: .init(input: 10, output: 20, total: 30))
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(records)
+        let probe = CLIProxyAPICollectionContinuationProbe()
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                await probe.recordPop()
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (data, response)
+            })
+
+        let result = await CLIProxyAPIUsageCollector.collect(
+            cacheRoot: cacheRoot,
+            shouldContinue: {
+                await probe.shouldContinue()
+            },
+            client: client)
+
+        #expect(result == .disabled)
+        #expect(await probe.popCount == 1)
+        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).count == 100)
     }
 }

@@ -7,6 +7,28 @@ import Testing
 
 struct CostUsageFetcherUnknownModelPricingTests {
     @Test
+    func `resolved upstream model does not reuse a cached alias price`() {
+        #expect(CostUsageScanner.resolvedClaudeRowCost(
+            wasPriced: true,
+            cachedCostNanos: 1_000_000_000,
+            cachedPricingModel: "claude-priced-alias",
+            pricingModel: "unpriced-upstream",
+            currentCost: nil) == nil)
+        #expect(CostUsageScanner.resolvedClaudeRowCost(
+            wasPriced: true,
+            cachedCostNanos: 1_000_000_000,
+            cachedPricingModel: "claude-priced-alias",
+            pricingModel: "claude-priced-alias",
+            currentCost: nil) == 1)
+        #expect(CostUsageScanner.resolvedClaudeRowCost(
+            wasPriced: true,
+            cachedCostNanos: 1_000_000_000,
+            cachedPricingModel: "claude-priced-alias",
+            pricingModel: "priced-upstream",
+            currentCost: 2) == 2)
+    }
+
+    @Test
     func `fetcher reprices an unknown model after an on demand catalog refresh`() async throws {
         let fixture = try UnknownModelPricingFixture()
         defer { fixture.environment.cleanup() }

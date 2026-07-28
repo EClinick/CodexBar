@@ -404,24 +404,28 @@ public enum CLIProxyAPIUsageCollector {
 
     public static func collect(
         cacheRoot: URL? = nil,
-        settings: CLIProxyAPIConnectionSettings? = CLIProxyAPIConnectionSettingsStore.load()) async
+        settings: CLIProxyAPIConnectionSettings? = CLIProxyAPIConnectionSettingsStore.load(),
+        shouldContinue: @escaping @Sendable () async -> Bool = { true }) async
         -> CLIProxyAPIUsageCollectionResult
     {
         guard let settings, settings.isConfigured else { return .notConfigured }
         return await self.collect(
             cacheRoot: cacheRoot,
+            shouldContinue: shouldContinue,
             client: CLIProxyAPIUsageQueueClient(settings: settings))
     }
 
     static func collect(
         cacheRoot: URL? = nil,
         pendingRoot: URL? = nil,
+        shouldContinue: @escaping @Sendable () async -> Bool = { true },
         client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
     {
         await self.collectionGate.perform {
             await self.collectUnserialized(
                 cacheRoot: cacheRoot,
                 pendingRoot: pendingRoot,
+                shouldContinue: shouldContinue,
                 client: client)
         }
     }
@@ -429,6 +433,7 @@ public enum CLIProxyAPIUsageCollector {
     private static func collectUnserialized(
         cacheRoot: URL?,
         pendingRoot: URL?,
+        shouldContinue: @escaping @Sendable () async -> Bool,
         client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
     {
         do {
@@ -451,6 +456,7 @@ public enum CLIProxyAPIUsageCollector {
             }
 
             for _ in 0..<self.maximumBatches {
+                guard !Task.isCancelled, await shouldContinue() else { return .disabled }
                 let batch = try await client.pop(count: self.batchSize)
                 let staged = batch.isEmpty || CLIProxyAPIUsagePendingIO.save(
                     batch,

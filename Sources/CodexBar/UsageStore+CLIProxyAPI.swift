@@ -20,11 +20,15 @@ extension UsageStore {
     }
 
     func collectCLIProxyAPIUsageNow(
-        collector: @escaping @Sendable () async -> CLIProxyAPIUsageCollectionResult = {
-            await CLIProxyAPIUsageCollector.collect()
-        }) async -> CLIProxyAPIUsageCollectionResult
+        collector: (@Sendable () async -> CLIProxyAPIUsageCollectionResult)? = nil) async
+        -> CLIProxyAPIUsageCollectionResult
     {
         guard self.settings.costUsageEnabled else { return .disabled }
-        return await collector()
+        if let collector {
+            return await collector()
+        }
+        return await CLIProxyAPIUsageCollector.collect(shouldContinue: { [weak self] in
+            await self?.settings.costUsageEnabled == true
+        })
     }
 }

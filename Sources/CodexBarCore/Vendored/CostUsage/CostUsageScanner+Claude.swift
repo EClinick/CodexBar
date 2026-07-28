@@ -922,6 +922,10 @@ extension CostUsageScanner {
                 ? attribution?.upstream?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
                 : nil
             let pricingModel = upstreamModel.flatMap { $0.isEmpty ? nil : $0 } ?? row.model
+            let cachedUpstreamModel = row.attribution?.route == .cliProxyAPI
+                ? row.attribution?.upstream?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+                : nil
+            let cachedPricingModel = cachedUpstreamModel.flatMap { $0.isEmpty ? nil : $0 } ?? row.model
             let pricingProvider = CostUsagePricing.modelProvider(
                 for: pricingModel,
                 modelsDevCatalog: modelsDevCatalog,
@@ -932,15 +936,12 @@ extension CostUsageScanner {
                 pricingProvider: pricingProvider,
                 modelsDevCatalog: modelsDevCatalog,
                 modelsDevCacheRoot: modelsDevCacheRoot)
-            let resolvedCost: Double? = if wasPriced, row.costNanos == 0 {
-                0
-            } else if let currentCost {
-                currentCost
-            } else if wasPriced {
-                Double(row.costNanos) / Self.costScale
-            } else {
-                nil
-            }
+            let resolvedCost = Self.resolvedClaudeRowCost(
+                wasPriced: wasPriced,
+                cachedCostNanos: row.costNanos,
+                cachedPricingModel: cachedPricingModel,
+                pricingModel: pricingModel,
+                currentCost: currentCost)
             if let resolvedCost {
                 cost.total += resolvedCost
             } else {
@@ -949,6 +950,24 @@ extension CostUsageScanner {
             result.repricedCosts[key] = cost
         }
         return result
+    }
+
+    static func resolvedClaudeRowCost(
+        wasPriced: Bool,
+        cachedCostNanos: Int,
+        cachedPricingModel: String,
+        pricingModel: String,
+        currentCost: Double?) -> Double?
+    {
+        let pricingModelUnchanged = cachedPricingModel.caseInsensitiveCompare(pricingModel) == .orderedSame
+        if wasPriced, cachedCostNanos == 0, pricingModelUnchanged {
+            return 0
+        }
+        if let currentCost {
+            return currentCost
+        }
+        guard wasPriced, pricingModelUnchanged else { return nil }
+        return Double(cachedCostNanos) / Self.costScale
     }
 
     private static func currentClaudeRowCost(
