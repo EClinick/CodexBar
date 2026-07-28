@@ -270,6 +270,53 @@ struct CostUsageDailyReportMergeTests {
     }
 
     @Test
+    func `project breakdown sorter uses complete attribution for equal model breakdowns`() throws {
+        let apiKeyAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .apiKey,
+                model: "gpt-5.4",
+                executorType: "codex"),
+            evidence: [.cliProxyRequestLog])
+        let oauthAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .oauth,
+                model: "gpt-5.4",
+                executorType: "codex"),
+            evidence: [.cliProxyRequestLog])
+        let entry = CostUsageDailyReport.Entry(
+            date: "2026-07-16",
+            inputTokens: 20,
+            outputTokens: 0,
+            totalTokens: 20,
+            costUSD: 0.2,
+            modelsUsed: ["gpt-5.4"],
+            modelBreakdowns: [
+                .init(
+                    modelName: "gpt-5.4",
+                    costUSD: 0.1,
+                    totalTokens: 10,
+                    attribution: oauthAttribution),
+                .init(
+                    modelName: "gpt-5.4",
+                    costUSD: 0.1,
+                    totalTokens: 10,
+                    attribution: apiKeyAttribution),
+            ])
+
+        let sorted = try #require(CostUsageFetcher.projectModelBreakdowns(from: [entry]))
+
+        #expect(sorted.map(\.attribution) == [apiKeyAttribution, oauthAttribution])
+    }
+
+    @Test
     func `attribution sort key includes every distinguishable field`() {
         let attributions = [
             CostUsageAttribution(

@@ -1138,7 +1138,7 @@ extension CostUsageFetcher {
         let attribution: CostUsageAttribution?
     }
 
-    private static func projectModelBreakdowns(
+    static func projectModelBreakdowns(
         from entries: [CostUsageDailyReport.Entry]) -> [CostUsageDailyReport.ModelBreakdown]?
     {
         var accumulators: [ProjectBreakdownKey: ProjectBreakdownAccumulator] = [:]
@@ -1169,7 +1169,12 @@ extension CostUsageFetcher {
             if lhsTokens != rhsTokens {
                 return lhsTokens > rhsTokens
             }
-            return lhs.modelName > rhs.modelName
+            if lhs.modelName != rhs.modelName {
+                return lhs.modelName > rhs.modelName
+            }
+            let lhsAttribution = lhs.attribution?.deterministicSortKey ?? ""
+            let rhsAttribution = rhs.attribution?.deterministicSortKey ?? ""
+            return lhsAttribution > rhsAttribution
         }
     }
 }
