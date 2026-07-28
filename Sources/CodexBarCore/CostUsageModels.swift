@@ -889,14 +889,33 @@ extension CostUsageDailyReport {
             if lhs.modelName != rhs.modelName {
                 return lhs.modelName > rhs.modelName
             }
-            let lhsAttribution = lhs.attribution.map {
-                "\($0.client.rawValue):\($0.route.rawValue):\($0.upstream?.provider ?? "")"
-            } ?? ""
-            let rhsAttribution = rhs.attribution.map {
-                "\($0.client.rawValue):\($0.route.rawValue):\($0.upstream?.provider ?? "")"
-            } ?? ""
+            let lhsAttribution = self.attributionSortKey(lhs.attribution)
+            let rhsAttribution = self.attributionSortKey(rhs.attribution)
             return lhsAttribution > rhsAttribution
         }
+    }
+
+    private static func attributionSortKey(_ attribution: CostUsageAttribution?) -> String {
+        guard let attribution else { return "" }
+
+        let upstream = attribution.upstream
+        let fields = [
+            attribution.client.rawValue,
+            attribution.route.rawValue,
+            attribution.modelProvider.rawValue,
+            upstream == nil ? "0" : "1",
+            upstream?.provider ?? "",
+            upstream?.authType.rawValue ?? "",
+            upstream?.model == nil ? "0" : "1",
+            upstream?.model ?? "",
+            upstream?.executorType == nil ? "0" : "1",
+            upstream?.executorType ?? "",
+            String(attribution.evidence.count),
+        ] + attribution.evidence.map(\.rawValue)
+
+        return fields
+            .map { "\($0.utf8.count):\($0)" }
+            .joined()
     }
 }
 

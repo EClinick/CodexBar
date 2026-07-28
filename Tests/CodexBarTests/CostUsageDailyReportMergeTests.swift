@@ -180,6 +180,56 @@ struct CostUsageDailyReportMergeTests {
     }
 
     @Test
+    func `merged report uses complete attribution to order otherwise equal model breakdowns`() throws {
+        let apiKeyAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .apiKey,
+                model: "gpt-5.4",
+                executorType: "codex"),
+            evidence: [.cliProxyRequestLog])
+        let oauthAttribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(
+                provider: "codex",
+                authType: .oauth,
+                model: "gpt-5.4",
+                executorType: "codex"),
+            evidence: [.cliProxyRequestLog])
+        let report = CostUsageDailyReport(
+            data: [
+                CostUsageDailyReport.Entry(
+                    date: "2026-07-24",
+                    inputTokens: nil,
+                    outputTokens: nil,
+                    totalTokens: 20,
+                    costUSD: 0.2,
+                    modelsUsed: ["gpt-5.4"],
+                    modelBreakdowns: [
+                        CostUsageDailyReport.ModelBreakdown(
+                            modelName: "gpt-5.4",
+                            costUSD: 0.1,
+                            totalTokens: 10,
+                            attribution: apiKeyAttribution),
+                        CostUsageDailyReport.ModelBreakdown(
+                            modelName: "gpt-5.4",
+                            costUSD: 0.1,
+                            totalTokens: 10,
+                            attribution: oauthAttribution),
+                    ]),
+            ],
+            summary: nil)
+
+        let breakdowns = try #require(CostUsageDailyReport.merged([report]).data.first?.modelBreakdowns)
+        #expect(breakdowns.map(\.attribution) == [oauthAttribution, apiKeyAttribution])
+    }
+
+    @Test
     func `merged report includes derived totals when another same day entry has explicit total`() {
         let explicit = CostUsageDailyReport(
             data: [
