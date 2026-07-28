@@ -27,6 +27,13 @@ func spendDashboardCoverageText(covered: Int, requested: Int) -> String {
     "\(L("Coverage")): \(codexBarLocalizedInteger(covered)) / \(codexBarLocalizedInteger(requested))"
 }
 
+func spendDashboardShouldUseAmbientCodexSubscription(
+    rowID: String,
+    codexRowCount: Int) -> Bool
+{
+    rowID != SpendDashboardSource.codexProxySourceID && codexRowCount == 1
+}
+
 func spendDashboardModelSourceText(
     providerName: String,
     attribution: CostUsageAttribution?) -> String
@@ -361,7 +368,11 @@ struct SpendDashboardPane: View {
                         self.store.codexAccountSnapshots.first {
                             row.id == "codex:\($0.id)"
                         }?.snapshot,
-                        codexRowCount == 1 ? self.store.snapshot(for: .codex) : nil,
+                        spendDashboardShouldUseAmbientCodexSubscription(
+                            rowID: row.id,
+                            codexRowCount: codexRowCount)
+                            ? self.store.snapshot(for: .codex)
+                            : nil,
                     ]
                 } else {
                     [self.store.snapshot(for: row.provider)]

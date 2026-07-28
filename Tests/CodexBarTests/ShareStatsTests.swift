@@ -6,6 +6,19 @@ import Testing
 
 struct ShareStatsTests {
     @Test
+    func `proxy spend does not inherit an ambient codex subscription`() {
+        #expect(!spendDashboardShouldUseAmbientCodexSubscription(
+            rowID: SpendDashboardSource.codexProxySourceID,
+            codexRowCount: 1))
+        #expect(spendDashboardShouldUseAmbientCodexSubscription(
+            rowID: "codex:managed-account",
+            codexRowCount: 1))
+        #expect(!spendDashboardShouldUseAmbientCodexSubscription(
+            rowID: "codex:managed-account",
+            codexRowCount: 2))
+    }
+
+    @Test
     func `builder preserves native currencies and unavailable spend`() throws {
         let subscriptionNames = try [
             "codex:one": #require(Self.subscriptionName(provider: .codex, rawName: "pro")),
