@@ -57,4 +57,83 @@ struct CLIProxyAPIUsageCacheTests {
             atPath: CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: durableRoot).path))
         #expect(!fileManager.fileExists(atPath: legacyURL.path))
     }
+
+    @Test
+    func `migration and collection share exclusive cache access`() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-lock-\(UUID().uuidString)", isDirectory: true)
+        let durableRoot = root.appendingPathComponent("application-support", isDirectory: true)
+        let legacyRoot = root.appendingPathComponent("caches", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let legacyRecord = Self.record(id: "legacy", timestamp: timestamp)
+        let collectedRecord = Self.record(
+            id: "collected",
+            timestamp: timestamp.addingTimeInterval(1))
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            [legacyRecord],
+            cacheRoot: legacyRoot,
+            now: timestamp) == 1)
+
+        let lockAcquired = DispatchSemaphore(value: 0)
+        let releaseLock = DispatchSemaphore(value: 0)
+        let loadStarted = DispatchSemaphore(value: 0)
+        let loadFinished = DispatchSemaphore(value: 0)
+        let mergeStarted = DispatchSemaphore(value: 0)
+        let mergeFinished = DispatchSemaphore(value: 0)
+        let lockHolder = Task.detached {
+            CLIProxyAPIUsageCacheIO.withExclusiveAccess {
+                lockAcquired.signal()
+                releaseLock.wait()
+            }
+        }
+        #expect(lockAcquired.wait(timeout: .now() + 1) == .success)
+
+        let loadTask = Task.detached {
+            loadStarted.signal()
+            let records = CLIProxyAPIUsageCacheIO.load(
+                cacheRoot: durableRoot,
+                legacyCacheRoot: legacyRoot,
+                now: timestamp)
+            loadFinished.signal()
+            return records
+        }
+        let mergeTask = Task.detached {
+            mergeStarted.signal()
+            let result = CLIProxyAPIUsageCacheIO.merge(
+                [collectedRecord],
+                cacheRoot: durableRoot,
+                legacyCacheRoot: legacyRoot,
+                now: timestamp)
+            mergeFinished.signal()
+            return result
+        }
+        #expect(loadStarted.wait(timeout: .now() + 1) == .success)
+        #expect(mergeStarted.wait(timeout: .now() + 1) == .success)
+        #expect(loadFinished.wait(timeout: .now() + .milliseconds(50)) == .timedOut)
+        #expect(mergeFinished.wait(timeout: .now() + .milliseconds(50)) == .timedOut)
+
+        releaseLock.signal()
+        await lockHolder.value
+        _ = await loadTask.value
+        #expect(await mergeTask.value == 1)
+        let finalRecords = CLIProxyAPIUsageCacheIO.load(
+            cacheRoot: durableRoot,
+            legacyCacheRoot: legacyRoot,
+            now: timestamp)
+        #expect(Set(finalRecords.map(\.requestID)) == ["legacy", "collected"])
+    }
+
+    private static func record(id: String, timestamp: Date) -> CLIProxyAPIUsageRecord {
+        CLIProxyAPIUsageRecord(
+            timestamp: timestamp,
+            provider: "codex",
+            model: "gpt-5.4",
+            alias: "gpt-5.4",
+            endpoint: "POST /v1/messages",
+            authType: "oauth",
+            requestID: id,
+            tokens: .init(input: 10, output: 20, total: 30))
+    }
 }

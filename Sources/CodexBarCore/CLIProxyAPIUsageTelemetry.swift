@@ -128,7 +128,12 @@ enum CLIProxyAPIUsageCacheIO {
         var records: [CLIProxyAPIUsageRecord] = []
     }
 
+    private static let cacheLock = NSLock()
     private static let maximumRecordAge: TimeInterval = 366 * 24 * 60 * 60
+
+    static func withExclusiveAccess<T>(_ body: () throws -> T) rethrows -> T {
+        try self.cacheLock.withLock(body)
+    }
 
     static func load(
         cacheRoot: URL? = nil,
@@ -146,10 +151,12 @@ enum CLIProxyAPIUsageCacheIO {
         legacyCacheRoot: URL?,
         now: Date = Date()) -> [CLIProxyAPIUsageRecord]
     {
-        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
-        return self.loadCache(
-            cacheRoot: cacheRoot,
-            legacyCacheRoot: legacyCacheRoot).records.filter { $0.timestamp >= cutoff }
+        self.withExclusiveAccess {
+            let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+            return self.loadCache(
+                cacheRoot: cacheRoot,
+                legacyCacheRoot: legacyCacheRoot).records.filter { $0.timestamp >= cutoff }
+        }
     }
 
     @discardableResult
@@ -173,24 +180,26 @@ enum CLIProxyAPIUsageCacheIO {
         legacyCacheRoot: URL?,
         now: Date = Date()) -> Int?
     {
-        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
-        let existingCache = self.loadCache(
-            cacheRoot: cacheRoot,
-            legacyCacheRoot: legacyCacheRoot)
-        var byKey: [String: CLIProxyAPIUsageRecord] = [:]
-        for record in existingCache.records where record.timestamp >= cutoff {
-            byKey[self.recordKey(record)] = record
+        self.withExclusiveAccess {
+            let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+            let existingCache = self.loadCache(
+                cacheRoot: cacheRoot,
+                legacyCacheRoot: legacyCacheRoot)
+            var byKey: [String: CLIProxyAPIUsageRecord] = [:]
+            for record in existingCache.records where record.timestamp >= cutoff {
+                byKey[self.recordKey(record)] = record
+            }
+            let priorCount = byKey.count
+            for record in records where record.timestamp >= cutoff {
+                byKey[self.recordKey(record)] = record
+            }
+            let cache = Cache(records: byKey.values.sorted { $0.timestamp < $1.timestamp })
+            if cache == existingCache {
+                return 0
+            }
+            guard self.save(cache, cacheRoot: cacheRoot) else { return nil }
+            return max(0, byKey.count - priorCount)
         }
-        let priorCount = byKey.count
-        for record in records where record.timestamp >= cutoff {
-            byKey[self.recordKey(record)] = record
-        }
-        let cache = Cache(records: byKey.values.sorted { $0.timestamp < $1.timestamp })
-        if cache == existingCache {
-            return 0
-        }
-        guard self.save(cache, cacheRoot: cacheRoot) else { return nil }
-        return max(0, byKey.count - priorCount)
     }
 
     static func cacheFileURL(cacheRoot: URL? = nil) -> URL {
