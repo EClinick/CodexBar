@@ -125,6 +125,34 @@ struct CLIProxyAPIUsageCacheTests {
         #expect(Set(finalRecords.map(\.requestID)) == ["legacy", "collected"])
     }
 
+    @Test
+    func `fallback record identity survives cache round trips within one second`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-fractional-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let second = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let records = [
+            Self.record(id: "", timestamp: second.addingTimeInterval(0.1)),
+            Self.record(id: "", timestamp: second.addingTimeInterval(0.9)),
+        ]
+
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            records,
+            cacheRoot: root,
+            now: second) == 2)
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            [],
+            cacheRoot: root,
+            now: second) == 0)
+
+        let roundTripped = CLIProxyAPIUsageCacheIO.load(
+            cacheRoot: root,
+            now: second)
+        #expect(roundTripped.count == 2)
+        #expect(roundTripped.map(\.timestamp) == records.map(\.timestamp))
+    }
+
     private static func record(id: String, timestamp: Date) -> CLIProxyAPIUsageRecord {
         CLIProxyAPIUsageRecord(
             timestamp: timestamp,
