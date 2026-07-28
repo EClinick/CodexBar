@@ -313,6 +313,8 @@ struct SpendDashboardPane: View {
         self.cliProxyAPIManagementKey = ""
         self.cliProxyAPIHasSavedConfiguration = true
         switch await self.store.collectCLIProxyAPIUsageNow() {
+        case .disabled:
+            self.cliProxyAPIStatus = "Enable Track costs to test."
         case .notConfigured:
             self.cliProxyAPIStatus = "Configuration was not available."
         case let .collected(count):

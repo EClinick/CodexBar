@@ -7,9 +7,9 @@ extension UsageStore {
 
     func startCLIProxyAPIUsageCollector() {
         self.cliProxyAPIUsageCollectorTask?.cancel()
-        self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) {
+        self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) { [weak self] in
             while !Task.isCancelled {
-                _ = await CLIProxyAPIUsageCollector.collect()
+                guard await self?.collectCLIProxyAPIUsageNow() != nil else { return }
                 do {
                     try await Task.sleep(for: Self.cliProxyAPIUsageCollectionInterval)
                 } catch {
@@ -19,7 +19,12 @@ extension UsageStore {
         }
     }
 
-    func collectCLIProxyAPIUsageNow() async -> CLIProxyAPIUsageCollectionResult {
-        await CLIProxyAPIUsageCollector.collect()
+    func collectCLIProxyAPIUsageNow(
+        collector: @escaping @Sendable () async -> CLIProxyAPIUsageCollectionResult = {
+            await CLIProxyAPIUsageCollector.collect()
+        }) async -> CLIProxyAPIUsageCollectionResult
+    {
+        guard self.settings.costUsageEnabled else { return .disabled }
+        return await collector()
     }
 }

@@ -361,6 +361,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
 }
 
 public enum CLIProxyAPIUsageCollectionResult: Equatable, Sendable {
+    case disabled
     case notConfigured
     case collected(Int)
     case failed(String)
