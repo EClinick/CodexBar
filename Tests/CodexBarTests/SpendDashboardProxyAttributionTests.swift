@@ -148,6 +148,7 @@ struct SpendDashboardProxyAttributionTests {
         let rows = group.models
         #expect(rows.count == 2)
         #expect(Set(rows.map(\.id)).count == 2)
-        #expect(Set(rows.compactMap(\.attribution)) == [inventoryAttribution, telemetryAttribution])
+        #expect(rows.map(\.attribution) == [inventoryAttribution, telemetryAttribution])
+        #expect(rows.map(\.rank) == [1, 2])
     }
 }

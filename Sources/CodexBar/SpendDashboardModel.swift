@@ -368,7 +368,12 @@ struct SpendDashboardModel: Equatable, Sendable {
                 if lhs.providerName != rhs.providerName {
                     return lhs.providerName < rhs.providerName
                 }
-                return lhs.modelName < rhs.modelName
+                if lhs.modelName != rhs.modelName {
+                    return lhs.modelName < rhs.modelName
+                }
+                let lhsAttribution = lhs.attribution?.deterministicSortKey ?? ""
+                let rhsAttribution = rhs.attribution?.deterministicSortKey ?? ""
+                return lhsAttribution < rhsAttribution
             }
         }
         .enumerated()

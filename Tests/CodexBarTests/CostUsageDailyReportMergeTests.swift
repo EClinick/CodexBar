@@ -230,6 +230,99 @@ struct CostUsageDailyReportMergeTests {
     }
 
     @Test
+    func `attribution sort key includes every distinguishable field`() {
+        let attributions = [
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .cliProxyAPI,
+                modelProvider: .openAI,
+                upstream: .init(
+                    provider: "codex",
+                    authType: .oauth,
+                    model: "gpt-5.4",
+                    executorType: "codex"),
+                evidence: [.cliProxyRequestLog, .modelProvider]),
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .unknown,
+                modelProvider: .openAI,
+                upstream: .init(
+                    provider: "codex",
+                    authType: .oauth,
+                    model: "gpt-5.4",
+                    executorType: "codex"),
+                evidence: [.cliProxyRequestLog, .modelProvider]),
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .cliProxyAPI,
+                modelProvider: .anthropic,
+                upstream: .init(
+                    provider: "codex",
+                    authType: .oauth,
+                    model: "gpt-5.4",
+                    executorType: "codex"),
+                evidence: [.cliProxyRequestLog, .modelProvider]),
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .cliProxyAPI,
+                modelProvider: .openAI,
+                evidence: [.cliProxyRequestLog, .modelProvider]),
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .cliProxyAPI,
+                modelProvider: .openAI,
+                upstream: .init(
+                    provider: "openrouter",
+                    authType: .oauth,
+                    model: "gpt-5.4",
+                    executorType: "codex"),
+                evidence: [.cliProxyRequestLog, .modelProvider]),
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .cliProxyAPI,
+                modelProvider: .openAI,
+                upstream: .init(
+                    provider: "codex",
+                    authType: .apiKey,
+                    model: "gpt-5.4",
+                    executorType: "codex"),
+                evidence: [.cliProxyRequestLog, .modelProvider]),
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .cliProxyAPI,
+                modelProvider: .openAI,
+                upstream: .init(
+                    provider: "codex",
+                    authType: .oauth,
+                    model: "gpt-5.3",
+                    executorType: "codex"),
+                evidence: [.cliProxyRequestLog, .modelProvider]),
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .cliProxyAPI,
+                modelProvider: .openAI,
+                upstream: .init(
+                    provider: "codex",
+                    authType: .oauth,
+                    model: "gpt-5.4",
+                    executorType: "openai"),
+                evidence: [.cliProxyRequestLog, .modelProvider]),
+            CostUsageAttribution(
+                client: .claudeCode,
+                route: .cliProxyAPI,
+                modelProvider: .openAI,
+                upstream: .init(
+                    provider: "codex",
+                    authType: .oauth,
+                    model: "gpt-5.4",
+                    executorType: "codex"),
+                evidence: [.modelProvider, .cliProxyRequestLog]),
+        ]
+
+        #expect(Set(attributions.map(\.deterministicSortKey)).count == attributions.count)
+    }
+
+    @Test
     func `merged report includes derived totals when another same day entry has explicit total`() {
         let explicit = CostUsageDailyReport(
             data: [

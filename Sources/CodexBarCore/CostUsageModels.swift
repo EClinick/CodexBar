@@ -375,6 +375,26 @@ public struct CostUsageAttribution: Sendable, Codable, Equatable, Hashable {
         self.upstream = upstream
         self.evidence = evidence
     }
+
+    package var deterministicSortKey: String {
+        let fields = [
+            self.client.rawValue,
+            self.route.rawValue,
+            self.modelProvider.rawValue,
+            self.upstream == nil ? "0" : "1",
+            self.upstream?.provider ?? "",
+            self.upstream?.authType.rawValue ?? "",
+            self.upstream?.model == nil ? "0" : "1",
+            self.upstream?.model ?? "",
+            self.upstream?.executorType == nil ? "0" : "1",
+            self.upstream?.executorType ?? "",
+            String(self.evidence.count),
+        ] + self.evidence.map(\.rawValue)
+
+        return fields
+            .map { "\($0.utf8.count):\($0)" }
+            .joined()
+    }
 }
 
 public struct CostUsageDailyReport: Sendable, Decodable {
@@ -889,33 +909,10 @@ extension CostUsageDailyReport {
             if lhs.modelName != rhs.modelName {
                 return lhs.modelName > rhs.modelName
             }
-            let lhsAttribution = self.attributionSortKey(lhs.attribution)
-            let rhsAttribution = self.attributionSortKey(rhs.attribution)
+            let lhsAttribution = lhs.attribution?.deterministicSortKey ?? ""
+            let rhsAttribution = rhs.attribution?.deterministicSortKey ?? ""
             return lhsAttribution > rhsAttribution
         }
-    }
-
-    private static func attributionSortKey(_ attribution: CostUsageAttribution?) -> String {
-        guard let attribution else { return "" }
-
-        let upstream = attribution.upstream
-        let fields = [
-            attribution.client.rawValue,
-            attribution.route.rawValue,
-            attribution.modelProvider.rawValue,
-            upstream == nil ? "0" : "1",
-            upstream?.provider ?? "",
-            upstream?.authType.rawValue ?? "",
-            upstream?.model == nil ? "0" : "1",
-            upstream?.model ?? "",
-            upstream?.executorType == nil ? "0" : "1",
-            upstream?.executorType ?? "",
-            String(attribution.evidence.count),
-        ] + attribution.evidence.map(\.rawValue)
-
-        return fields
-            .map { "\($0.utf8.count):\($0)" }
-            .joined()
     }
 }
 
