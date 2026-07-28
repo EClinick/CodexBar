@@ -225,7 +225,7 @@ struct SpendDashboardPane: View {
 
                 Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
                     GridRow {
-                        Text("Server URL")
+                        Text("Local server URL")
                             .foregroundStyle(.secondary)
                         TextField(
                             CLIProxyAPIConnectionSettings.defaultBaseURL,
@@ -295,7 +295,7 @@ struct SpendDashboardPane: View {
             baseURL: self.cliProxyAPIBaseURL,
             managementKey: enteredKey.isEmpty ? existingKey : enteredKey)
         guard configuration.isConfigured else {
-            self.cliProxyAPIStatus = "Enter a valid URL and management key."
+            self.cliProxyAPIStatus = "Enter a loopback URL and management key."
             return
         }
         guard CLIProxyAPIConnectionSettingsStore.save(configuration) else {

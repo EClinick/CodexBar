@@ -235,6 +235,80 @@ enum CLIProxyAPIUsageCacheIO {
     }
 }
 
+enum CLIProxyAPIUsagePendingIO {
+    private struct PendingBatch: Codable {
+        var version: Int = 1
+        var records: [CLIProxyAPIUsageRecord] = []
+    }
+
+    static func load(pendingRoot: URL? = nil) -> [CLIProxyAPIUsageRecord]? {
+        let url = self.pendingFileURL(pendingRoot: pendingRoot)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        guard let data = try? Data(contentsOf: url),
+              let pendingBatch = try? self.decoder.decode(PendingBatch.self, from: data),
+              pendingBatch.version == 1
+        else { return nil }
+        return pendingBatch.records
+    }
+
+    static func save(_ records: [CLIProxyAPIUsageRecord], pendingRoot: URL? = nil) -> Bool {
+        let url = self.pendingFileURL(pendingRoot: pendingRoot)
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            let data = try self.encoder.encode(PendingBatch(records: records))
+            try data.write(to: url, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static func clear(pendingRoot: URL? = nil) -> Bool {
+        let url = self.pendingFileURL(pendingRoot: pendingRoot)
+        guard FileManager.default.fileExists(atPath: url.path) else { return true }
+        do {
+            try FileManager.default.removeItem(at: url)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static func pendingFileURL(pendingRoot: URL? = nil) -> URL {
+        let root = pendingRoot ?? FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first!
+            .appendingPathComponent("CodexBar", isDirectory: true)
+        return root
+            .appendingPathComponent("cost-usage", isDirectory: true)
+            .appendingPathComponent("cliproxyapi-pending-v1.json", isDirectory: false)
+    }
+
+    private static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            guard let date = CostUsageDateParser.parse(value) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Invalid pending CLIProxyAPI usage timestamp.")
+            }
+            return date
+        }
+        return decoder
+    }()
+
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }()
+}
+
 public struct CLIProxyAPIConnectionSettings: Codable, Equatable, Sendable {
     public static let defaultBaseURL = "http://127.0.0.1:8317"
 
@@ -256,7 +330,7 @@ public struct CLIProxyAPIConnectionSettings: Codable, Equatable, Sendable {
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https",
               let host = url.host?.lowercased(),
-              scheme == "https" || ["127.0.0.1", "::1", "localhost"].contains(host)
+              ["127.0.0.1", "::1", "localhost"].contains(host)
         else { return nil }
         return url
     }
@@ -322,27 +396,10 @@ private actor CLIProxyAPIUsageCollectionGate {
     }
 }
 
-private actor CLIProxyAPIUsageRetryBuffer {
-    private var recordsByCachePath: [String: [CLIProxyAPIUsageRecord]] = [:]
-
-    func records(for cachePath: String) -> [CLIProxyAPIUsageRecord] {
-        self.recordsByCachePath[cachePath] ?? []
-    }
-
-    func store(_ records: [CLIProxyAPIUsageRecord], for cachePath: String) {
-        self.recordsByCachePath[cachePath] = records
-    }
-
-    func clear(for cachePath: String) {
-        self.recordsByCachePath.removeValue(forKey: cachePath)
-    }
-}
-
 public enum CLIProxyAPIUsageCollector {
     private static let maximumBatches = 10
     private static let batchSize = 100
     private static let collectionGate = CLIProxyAPIUsageCollectionGate()
-    private static let retryBuffer = CLIProxyAPIUsageRetryBuffer()
 
     public static func collect(
         cacheRoot: URL? = nil,
@@ -357,22 +414,27 @@ public enum CLIProxyAPIUsageCollector {
 
     static func collect(
         cacheRoot: URL? = nil,
+        pendingRoot: URL? = nil,
         client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
     {
         await self.collectionGate.perform {
-            await self.collectUnserialized(cacheRoot: cacheRoot, client: client)
+            await self.collectUnserialized(
+                cacheRoot: cacheRoot,
+                pendingRoot: pendingRoot,
+                client: client)
         }
     }
 
     private static func collectUnserialized(
         cacheRoot: URL?,
+        pendingRoot: URL?,
         client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
     {
         do {
             var added = 0
-            let cachePath = CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: cacheRoot)
-                .standardizedFileURL.path
-            let pendingRecords = await self.retryBuffer.records(for: cachePath)
+            guard let pendingRecords = CLIProxyAPIUsagePendingIO.load(pendingRoot: pendingRoot) else {
+                return .failed("Could not load pending CLIProxyAPI usage telemetry.")
+            }
             if !pendingRecords.isEmpty {
                 guard let pendingAdded = CLIProxyAPIUsageCacheIO.merge(
                     pendingRecords,
@@ -381,18 +443,25 @@ public enum CLIProxyAPIUsageCollector {
                     return .failed("Could not save CLIProxyAPI usage telemetry.")
                 }
                 added += pendingAdded
-                await self.retryBuffer.clear(for: cachePath)
+                guard CLIProxyAPIUsagePendingIO.clear(pendingRoot: pendingRoot) else {
+                    return .failed("Could not clear pending CLIProxyAPI usage telemetry.")
+                }
             }
 
             for _ in 0..<self.maximumBatches {
                 let batch = try await client.pop(count: self.batchSize)
+                let staged = batch.isEmpty || CLIProxyAPIUsagePendingIO.save(
+                    batch,
+                    pendingRoot: pendingRoot)
                 guard let batchAdded = CLIProxyAPIUsageCacheIO.merge(batch, cacheRoot: cacheRoot) else {
-                    if !batch.isEmpty {
-                        await self.retryBuffer.store(batch, for: cachePath)
-                    }
                     return .failed("Could not save CLIProxyAPI usage telemetry.")
                 }
                 added += batchAdded
+                if staged, !batch.isEmpty,
+                   !CLIProxyAPIUsagePendingIO.clear(pendingRoot: pendingRoot)
+                {
+                    return .failed("Could not clear pending CLIProxyAPI usage telemetry.")
+                }
                 if batch.count < self.batchSize {
                     break
                 }

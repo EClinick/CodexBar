@@ -777,8 +777,11 @@ struct CLIProxyAPIAttributionResolverTests {
         #expect(!CLIProxyAPIConnectionSettings(
             baseURL: "http://192.168.1.10:8317",
             managementKey: "secret").isConfigured)
-        #expect(CLIProxyAPIConnectionSettings(
+        #expect(!CLIProxyAPIConnectionSettings(
             baseURL: "https://proxy.example.com",
+            managementKey: "secret").isConfigured)
+        #expect(CLIProxyAPIConnectionSettings(
+            baseURL: "https://[::1]:8317",
             managementKey: "secret").isConfigured)
     }
 
