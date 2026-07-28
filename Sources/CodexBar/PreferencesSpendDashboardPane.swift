@@ -305,7 +305,9 @@ struct SpendDashboardPane: View {
             self.cliProxyAPIStatus = "Enter a loopback URL and management key."
             return
         }
+        self.store.stopCLIProxyAPIUsageCollector()
         guard CLIProxyAPIConnectionSettingsStore.save(configuration) else {
+            self.store.startCLIProxyAPIUsageCollector()
             self.cliProxyAPIStatus = "Could not save the management key."
             return
         }
@@ -325,10 +327,12 @@ struct SpendDashboardPane: View {
         case let .failed(message):
             self.cliProxyAPIStatus = "Saved, but test failed: \(message)"
         }
+        self.store.startCLIProxyAPIUsageCollector()
     }
 
     private func removeCLIProxyAPIConfiguration() {
-        guard CLIProxyAPIConnectionSettingsStore.clear() else {
+        guard self.store.removeCLIProxyAPIConfiguration() else {
+            self.store.startCLIProxyAPIUsageCollector()
             self.cliProxyAPIStatus = "Could not remove the saved configuration."
             return
         }

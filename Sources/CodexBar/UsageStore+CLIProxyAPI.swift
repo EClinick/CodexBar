@@ -6,7 +6,7 @@ extension UsageStore {
     private static let cliProxyAPIUsageCollectionInterval: Duration = .seconds(30)
 
     func startCLIProxyAPIUsageCollector() {
-        self.cliProxyAPIUsageCollectorTask?.cancel()
+        self.stopCLIProxyAPIUsageCollector()
         self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) { [weak self] in
             while !Task.isCancelled {
                 guard await self?.collectCLIProxyAPIUsageNow() != nil else { return }
@@ -17,6 +17,19 @@ extension UsageStore {
                 }
             }
         }
+    }
+
+    func stopCLIProxyAPIUsageCollector() {
+        self.cliProxyAPIUsageCollectorTask?.cancel()
+        self.cliProxyAPIUsageCollectorTask = nil
+    }
+
+    @discardableResult
+    func removeCLIProxyAPIConfiguration(
+        clear: () -> Bool = { CLIProxyAPIConnectionSettingsStore.clear() }) -> Bool
+    {
+        self.stopCLIProxyAPIUsageCollector()
+        return clear()
     }
 
     func collectCLIProxyAPIUsageNow(
