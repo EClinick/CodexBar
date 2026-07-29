@@ -129,6 +129,54 @@ struct CLIProxyAPIUsageCollectorTests {
     }
 
     @Test
+    func `does not merge a popped batch when staging fails`() async throws {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-cache-\(UUID().uuidString)", isDirectory: true)
+        let pendingRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-blocked-pending-\(UUID().uuidString)", isDirectory: false)
+        try Data("not-a-directory".utf8).write(to: pendingRoot)
+        defer {
+            try? fileManager.removeItem(at: cacheRoot)
+            try? fileManager.removeItem(at: pendingRoot)
+        }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let record = CLIProxyAPIUsageRecord(
+            timestamp: timestamp,
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            alias: "gpt-5.6-sol",
+            endpoint: "POST /v1/messages",
+            authType: "oauth",
+            requestID: "request-1",
+            tokens: .init(input: 10, output: 20, total: 30))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode([record])
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (data, response)
+            })
+
+        let result = await CLIProxyAPIUsageCollector.collect(
+            cacheRoot: cacheRoot,
+            pendingRoot: pendingRoot,
+            client: client)
+
+        #expect(result == .failed("Could not stage CLIProxyAPI usage telemetry."))
+        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).isEmpty)
+        #expect(!fileManager.fileExists(
+            atPath: CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: cacheRoot).path))
+    }
+
+    @Test
     func `collector rechecks opt out before every destructive pop`() async throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory

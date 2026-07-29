@@ -545,9 +545,14 @@ public enum CLIProxyAPIUsageCollector {
             for _ in 0..<self.maximumBatches {
                 guard !Task.isCancelled, await shouldContinue() else { return .disabled }
                 let poppedBatch = try await client.pop(count: self.batchSize)
-                let staged = poppedBatch.records.isEmpty || CLIProxyAPIUsagePendingIO.save(
-                    poppedBatch.records,
-                    pendingRoot: effectivePendingRoot)
+                if !poppedBatch.records.isEmpty {
+                    guard CLIProxyAPIUsagePendingIO.save(
+                        poppedBatch.records,
+                        pendingRoot: effectivePendingRoot)
+                    else {
+                        return .failed("Could not stage CLIProxyAPI usage telemetry.")
+                    }
+                }
                 guard let batchAdded = CLIProxyAPIUsageCacheIO.merge(
                     poppedBatch.records,
                     cacheRoot: cacheRoot)
@@ -555,7 +560,7 @@ public enum CLIProxyAPIUsageCollector {
                     return .failed("Could not save CLIProxyAPI usage telemetry.")
                 }
                 added += batchAdded
-                if staged, !poppedBatch.records.isEmpty,
+                if !poppedBatch.records.isEmpty,
                    !CLIProxyAPIUsagePendingIO.clear(pendingRoot: effectivePendingRoot)
                 {
                     return .failed("Could not clear pending CLIProxyAPI usage telemetry.")
