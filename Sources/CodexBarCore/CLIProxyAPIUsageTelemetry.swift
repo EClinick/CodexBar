@@ -209,14 +209,14 @@ enum CLIProxyAPIUsageCacheIO {
             .appendingPathComponent("CodexBar", isDirectory: true)
         return root
             .appendingPathComponent("cost-usage", isDirectory: true)
-            .appendingPathComponent("cliproxyapi-usage-v1.json", isDirectory: false)
+            .appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName, isDirectory: false)
     }
 
     static func legacyCacheFileURL(cacheRoot: URL? = nil) -> URL {
         let root = cacheRoot ?? self.defaultLegacyCacheRoot()
         return root
             .appendingPathComponent("cost-usage", isDirectory: true)
-            .appendingPathComponent("cliproxyapi-usage-v1.json", isDirectory: false)
+            .appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName, isDirectory: false)
     }
 
     private static let decoder: JSONDecoder = {
@@ -370,7 +370,7 @@ enum CLIProxyAPIUsagePendingIO {
             .appendingPathComponent("CodexBar", isDirectory: true)
         return root
             .appendingPathComponent("cost-usage", isDirectory: true)
-            .appendingPathComponent("cliproxyapi-pending-v1.json", isDirectory: false)
+            .appendingPathComponent(CostUsageCacheLocations.cliProxyAPIPendingFileName, isDirectory: false)
     }
 
     private static let decoder: JSONDecoder = {

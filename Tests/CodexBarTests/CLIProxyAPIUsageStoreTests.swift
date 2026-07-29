@@ -83,15 +83,46 @@ struct CLIProxyAPIUsageStoreTests {
         store.cliProxyAPIUsageCollectorTask = task
         var didClearConfiguration = false
 
-        let removed = store.removeCLIProxyAPIConfiguration {
-            didClearConfiguration = true
-            return true
-        }
+        let removed = store.removeCLIProxyAPIConfiguration(
+            purgeTelemetry: { true },
+            clear: {
+                didClearConfiguration = true
+                return true
+            })
         await task.value
 
         #expect(removed)
         #expect(didClearConfiguration)
         #expect(store.cliProxyAPIUsageCollectorTask == nil)
         #expect(await recorder.wasCancelled)
+    }
+
+    @Test
+    func `removing the integration preserves configuration when telemetry cleanup fails`() {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = [
+            "HOME": root.path,
+            "CODEX_HOME": root.appendingPathComponent(".codex", isDirectory: true).path,
+        ]
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: environment),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: environment)
+        var didClearConfiguration = false
+
+        let removed = store.removeCLIProxyAPIConfiguration(
+            purgeTelemetry: { false },
+            clear: {
+                didClearConfiguration = true
+                return true
+            })
+
+        #expect(!removed)
+        #expect(!didClearConfiguration)
     }
 }

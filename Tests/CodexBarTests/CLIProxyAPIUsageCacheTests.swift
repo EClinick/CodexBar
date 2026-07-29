@@ -4,6 +4,39 @@ import Testing
 
 struct CLIProxyAPIUsageCacheTests {
     @Test
+    func `integration cleanup removes durable legacy and pending artifacts`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-cleanup-\(UUID().uuidString)", isDirectory: true)
+        let legacy = root.appendingPathComponent("legacy", isDirectory: true)
+        let durable = root.appendingPathComponent("durable", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        for directory in [legacy, durable] {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data("usage".utf8).write(to: directory.appendingPathComponent(
+                CostUsageCacheLocations.cliProxyAPIUsageFileName))
+            try Data("pending".utf8).write(to: directory.appendingPathComponent(
+                CostUsageCacheLocations.cliProxyAPIPendingFileName))
+        }
+        let unrelated = durable.appendingPathComponent("claude-v6.json")
+        try Data("keep".utf8).write(to: unrelated)
+
+        let cleared = CostUsageCacheLocations.clearCLIProxyAPIArtifacts(
+            in: [legacy, durable],
+            fileManager: fileManager)
+
+        #expect(cleared)
+        for directory in [legacy, durable] {
+            #expect(!fileManager.fileExists(atPath: directory.appendingPathComponent(
+                CostUsageCacheLocations.cliProxyAPIUsageFileName).path))
+            #expect(!fileManager.fileExists(atPath: directory.appendingPathComponent(
+                CostUsageCacheLocations.cliProxyAPIPendingFileName).path))
+        }
+        #expect(fileManager.fileExists(atPath: unrelated.path))
+    }
+
+    @Test
     func `cost cache locations include durable telemetry storage`() throws {
         let fileManager = FileManager.default
         let directories = CostUsageCacheLocations.directories(fileManager: fileManager)

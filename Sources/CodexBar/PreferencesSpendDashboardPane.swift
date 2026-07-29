@@ -293,7 +293,8 @@ struct SpendDashboardPane: View {
                 Text(
                     "Reading the queue removes the returned records from CLIProxyAPI. CodexBar stores a " +
                         "sanitized local copy for cost attribution and does not retain source, account, " +
-                        "API-key, response-header, or failure-body fields.")
+                        "API-key, response-header, or failure-body fields. Records are retained for up to " +
+                        "366 days; Remove and Clear cost cache delete both retained and pending records.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -347,12 +348,12 @@ struct SpendDashboardPane: View {
     private func removeCLIProxyAPIConfiguration() {
         guard self.store.removeCLIProxyAPIConfiguration() else {
             self.store.startCLIProxyAPIUsageCollector()
-            self.cliProxyAPIStatus = "Could not remove the saved configuration."
+            self.cliProxyAPIStatus = "Could not remove the saved configuration and local telemetry."
             return
         }
         self.cliProxyAPIManagementKey = ""
         self.cliProxyAPIHasSavedConfiguration = false
-        self.cliProxyAPIStatus = "Configuration removed."
+        self.cliProxyAPIStatus = "Configuration and local telemetry removed."
     }
 
     private var shareAction: some View {

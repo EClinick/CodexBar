@@ -26,9 +26,11 @@ extension UsageStore {
 
     @discardableResult
     func removeCLIProxyAPIConfiguration(
+        purgeTelemetry: () -> Bool = { CostUsageCacheLocations.clearCLIProxyAPIArtifacts() },
         clear: () -> Bool = { CLIProxyAPIConnectionSettingsStore.clear() }) -> Bool
     {
         self.stopCLIProxyAPIUsageCollector()
+        guard purgeTelemetry() else { return false }
         return clear()
     }
 
