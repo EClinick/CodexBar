@@ -4,6 +4,28 @@ import Testing
 
 struct CLIProxyAPIUsageCacheTests {
     @Test
+    func `cost cache locations include durable telemetry storage`() throws {
+        let fileManager = FileManager.default
+        let directories = CostUsageCacheLocations.directories(fileManager: fileManager)
+        let cacheRoot = try #require(fileManager.urls(
+            for: .cachesDirectory,
+            in: .userDomainMask).first)
+        let applicationSupportRoot = try #require(fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first)
+
+        #expect(directories == [cacheRoot, applicationSupportRoot].map { root in
+            root
+                .appendingPathComponent("CodexBar", isDirectory: true)
+                .appendingPathComponent("cost-usage", isDirectory: true)
+        })
+        #expect(directories.contains(
+            CLIProxyAPIUsageCacheIO.cacheFileURL().deletingLastPathComponent()))
+        #expect(directories.contains(
+            CLIProxyAPIUsagePendingIO.pendingFileURL().deletingLastPathComponent()))
+    }
+
+    @Test
     func `default telemetry storage is durable application support`() throws {
         let fileManager = FileManager.default
         let durableURL = CLIProxyAPIUsageCacheIO.cacheFileURL()

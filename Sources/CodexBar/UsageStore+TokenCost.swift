@@ -428,18 +428,13 @@ extension UsageStore {
     nonisolated static func costUsageCacheDirectory(
         fileManager: FileManager = .default) -> URL
     {
-        let root = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        return root
-            .appendingPathComponent("CodexBar", isDirectory: true)
-            .appendingPathComponent("cost-usage", isDirectory: true)
+        CostUsageCacheLocations.directories(fileManager: fileManager)[0]
     }
 
     func clearCostUsageCache() async -> String? {
         let errorMessage: String? = await Task.detached(priority: .utility) {
             let fm = FileManager.default
-            let cacheDirs = [
-                Self.costUsageCacheDirectory(fileManager: fm),
-            ]
+            let cacheDirs = CostUsageCacheLocations.directories(fileManager: fm)
 
             for cacheDir in cacheDirs {
                 do {

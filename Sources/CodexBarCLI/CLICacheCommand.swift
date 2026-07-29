@@ -54,15 +54,17 @@ extension CodexBarCLI {
 
         if clearCost {
             let fm = FileManager.default
-            let cacheDir = Self.costUsageCacheDirectory(fileManager: fm)
             var cleared = 0
             var costError: String?
-            if fm.fileExists(atPath: cacheDir.path) {
+            for cacheDir in CostUsageCacheLocations.directories(fileManager: fm)
+                where fm.fileExists(atPath: cacheDir.path)
+            {
                 do {
                     try fm.removeItem(at: cacheDir)
-                    cleared = 1
+                    cleared += 1
                 } catch {
                     costError = error.localizedDescription
+                    break
                 }
             }
             results.append(CacheClearResult(cache: "cost", provider: nil, cleared: cleared, error: costError))
@@ -144,9 +146,6 @@ private struct CacheClearResult: Encodable {
 extension CodexBarCLI {
     /// Mirrors the cost usage cache directory used by the app (UsageStore.costUsageCacheDirectory).
     static func costUsageCacheDirectory(fileManager: FileManager = .default) -> URL {
-        let root = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        return root
-            .appendingPathComponent("CodexBar", isDirectory: true)
-            .appendingPathComponent("cost-usage", isDirectory: true)
+        CostUsageCacheLocations.directories(fileManager: fileManager)[0]
     }
 }
