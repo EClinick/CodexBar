@@ -999,6 +999,62 @@ extension CostUsageFetcherTests {
     }
 
     @Test
+    func `proxy route without a confirmed upstream stays out of provider totals`() async throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let day = try env.makeLocalNoon(year: 2026, month: 7, day: 24)
+        _ = try env.writeClaudeProjectFile(
+            relativePath: "unresolved-proxy/session.jsonl",
+            contents: env.jsonl([[
+                "type": "assistant",
+                "timestamp": env.isoString(for: day),
+                "sessionId": "unresolved-proxy-session",
+                "requestId": "unresolved-proxy-request",
+                "message": [
+                    "id": "unresolved-proxy-message",
+                    "model": "gpt-5.6-sol",
+                    "usage": ["input_tokens": 100, "output_tokens": 5],
+                ],
+            ]]))
+        let cliProxyHome = env.root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        let logs = cliProxyHome.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let proxyLog = """
+        === REQUEST INFO ===
+        URL: /v1/messages
+        Timestamp: \(env.isoString(for: day))
+        === HEADERS ===
+        X-Claude-Code-Session-Id: unresolved-proxy-session
+        === REQUEST BODY ===
+        {"model":"gpt-5.6-sol"}
+        === API RESPONSE ===
+        """
+        try Data(proxyLog.utf8).write(to: logs.appendingPathComponent("request.log"))
+        let options = CostUsageScanner.Options(
+            codexSessionsRoot: env.codexSessionsRoot,
+            claudeProjectsRoots: [env.claudeProjectsRoot],
+            cacheRoot: env.cacheRoot,
+            cliProxyAPIHome: cliProxyHome)
+
+        let codex = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .codex,
+            now: day,
+            allowPricingRefresh: false,
+            includePiSessions: false,
+            scannerOptions: options)
+        let claude = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .claude,
+            now: day,
+            allowPricingRefresh: false,
+            includePiSessions: false,
+            scannerOptions: options)
+
+        #expect(codex.daily.isEmpty)
+        #expect(claude.daily.isEmpty)
+    }
+
+    @Test
     func `cliproxy codex inventory keeps a session stable beyond the request log window`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

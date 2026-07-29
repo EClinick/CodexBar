@@ -891,13 +891,15 @@ extension CostUsageScanner {
             }
             let isCodexBackend = attribution?.route == .cliProxyAPI
                 && attribution?.upstream?.isCodex == true
-            let isUnresolvedForeignModel = attribution?.route != .cliProxyAPI
-                && modelProvider != .anthropic
-                && modelProvider != .unknown
+            let isUnresolvedAttribution = if attribution?.route == .cliProxyAPI {
+                attribution?.upstream == nil
+            } else {
+                modelProvider != .anthropic && modelProvider != .unknown
+            }
             let includeRow = switch attributionFilter {
             case .all: true
             case .codexBackendOnly: isCodexBackend
-            case .excludeCodexBackend: !isCodexBackend && !isUnresolvedForeignModel
+            case .excludeCodexBackend: !isCodexBackend && !isUnresolvedAttribution
             }
             guard includeRow else { continue }
 
