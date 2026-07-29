@@ -30,8 +30,14 @@ public enum CostUsageCacheLocations {
     {
         var succeeded = true
         for directory in directories {
-            for name in [self.cliProxyAPIUsageFileName, self.cliProxyAPIPendingFileName] {
-                let url = directory.appendingPathComponent(name, isDirectory: false)
+            let urls = [
+                directory.appendingPathComponent(self.cliProxyAPIUsageFileName, isDirectory: false),
+                directory.appendingPathComponent(self.cliProxyAPIPendingFileName, isDirectory: false),
+                CostUsageCacheIO.cacheFileURL(
+                    provider: .claude,
+                    cacheRoot: directory.deletingLastPathComponent()),
+            ]
+            for url in urls {
                 guard fileManager.fileExists(atPath: url.path) else { continue }
                 do {
                     try fileManager.removeItem(at: url)

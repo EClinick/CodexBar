@@ -19,17 +19,21 @@ extension UsageStore {
         }
     }
 
-    func stopCLIProxyAPIUsageCollector() {
-        self.cliProxyAPIUsageCollectorTask?.cancel()
+    @discardableResult
+    func stopCLIProxyAPIUsageCollector() -> Task<Void, Never>? {
+        let task = self.cliProxyAPIUsageCollectorTask
+        task?.cancel()
         self.cliProxyAPIUsageCollectorTask = nil
+        return task
     }
 
     @discardableResult
     func removeCLIProxyAPIConfiguration(
         purgeTelemetry: () -> Bool = { CostUsageCacheLocations.clearCLIProxyAPIArtifacts() },
-        clear: () -> Bool = { CLIProxyAPIConnectionSettingsStore.clear() }) -> Bool
+        clear: () -> Bool = { CLIProxyAPIConnectionSettingsStore.clear() }) async -> Bool
     {
-        self.stopCLIProxyAPIUsageCollector()
+        let collectorTask = self.stopCLIProxyAPIUsageCollector()
+        await collectorTask?.value
         guard purgeTelemetry() else { return false }
         return clear()
     }

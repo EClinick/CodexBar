@@ -74,17 +74,27 @@ struct CLIProxyAPIUsageStoreTests {
             startupBehavior: .testing,
             environmentBase: environment)
         let recorder = CLIProxyAPIUsageCollectorCancellationRecorder()
+        let collectorFinished = LockIsolated(false)
         let task = Task {
             while !Task.isCancelled {
                 await Task.yield()
             }
             await recorder.recordCancellation()
+            let drainDelay = Task.detached {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            await drainDelay.value
+            collectorFinished.setValue(true)
         }
         store.cliProxyAPIUsageCollectorTask = task
         var didClearConfiguration = false
+        var collectorFinishedBeforePurge = false
 
-        let removed = store.removeCLIProxyAPIConfiguration(
-            purgeTelemetry: { true },
+        let removed = await store.removeCLIProxyAPIConfiguration(
+            purgeTelemetry: {
+                collectorFinishedBeforePurge = collectorFinished.value
+                return true
+            },
             clear: {
                 didClearConfiguration = true
                 return true
@@ -93,12 +103,13 @@ struct CLIProxyAPIUsageStoreTests {
 
         #expect(removed)
         #expect(didClearConfiguration)
+        #expect(collectorFinishedBeforePurge)
         #expect(store.cliProxyAPIUsageCollectorTask == nil)
         #expect(await recorder.wasCancelled)
     }
 
     @Test
-    func `removing the integration preserves configuration when telemetry cleanup fails`() {
+    func `removing the integration preserves configuration when telemetry cleanup fails`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
@@ -115,7 +126,7 @@ struct CLIProxyAPIUsageStoreTests {
             environmentBase: environment)
         var didClearConfiguration = false
 
-        let removed = store.removeCLIProxyAPIConfiguration(
+        let removed = await store.removeCLIProxyAPIConfiguration(
             purgeTelemetry: { false },
             clear: {
                 didClearConfiguration = true

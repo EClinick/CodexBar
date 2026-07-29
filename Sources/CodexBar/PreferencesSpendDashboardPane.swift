@@ -273,7 +273,9 @@ struct SpendDashboardPane: View {
 
                     if self.cliProxyAPIHasSavedConfiguration {
                         Button("Remove", role: .destructive) {
-                            self.removeCLIProxyAPIConfiguration()
+                            Task {
+                                await self.removeCLIProxyAPIConfiguration()
+                            }
                         }
                         .disabled(self.cliProxyAPIIsSaving)
                     }
@@ -345,8 +347,11 @@ struct SpendDashboardPane: View {
         self.store.startCLIProxyAPIUsageCollector()
     }
 
-    private func removeCLIProxyAPIConfiguration() {
-        guard self.store.removeCLIProxyAPIConfiguration() else {
+    private func removeCLIProxyAPIConfiguration() async {
+        self.cliProxyAPIIsSaving = true
+        defer { self.cliProxyAPIIsSaving = false }
+
+        guard await self.store.removeCLIProxyAPIConfiguration() else {
             self.store.startCLIProxyAPIUsageCollector()
             self.cliProxyAPIStatus = "Could not remove the saved configuration and local telemetry."
             return

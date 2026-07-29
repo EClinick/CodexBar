@@ -4,12 +4,18 @@ import Testing
 
 struct CLIProxyAPIUsageCacheTests {
     @Test
-    func `integration cleanup removes durable legacy and pending artifacts`() throws {
+    func `integration cleanup removes telemetry pending and derived Claude cache artifacts`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-cleanup-\(UUID().uuidString)", isDirectory: true)
-        let legacy = root.appendingPathComponent("legacy", isDirectory: true)
-        let durable = root.appendingPathComponent("durable", isDirectory: true)
+        let legacy = root
+            .appendingPathComponent("legacy", isDirectory: true)
+            .appendingPathComponent("CodexBar", isDirectory: true)
+            .appendingPathComponent("cost-usage", isDirectory: true)
+        let durable = root
+            .appendingPathComponent("durable", isDirectory: true)
+            .appendingPathComponent("CodexBar", isDirectory: true)
+            .appendingPathComponent("cost-usage", isDirectory: true)
         defer { try? fileManager.removeItem(at: root) }
 
         for directory in [legacy, durable] {
@@ -19,7 +25,13 @@ struct CLIProxyAPIUsageCacheTests {
             try Data("pending".utf8).write(to: directory.appendingPathComponent(
                 CostUsageCacheLocations.cliProxyAPIPendingFileName))
         }
-        let unrelated = durable.appendingPathComponent("claude-v6.json")
+        for directory in [legacy, durable] {
+            let claudeCache = CostUsageCacheIO.cacheFileURL(
+                provider: .claude,
+                cacheRoot: directory.deletingLastPathComponent())
+            try Data("derived attribution".utf8).write(to: claudeCache)
+        }
+        let unrelated = durable.appendingPathComponent("codex-v11.json")
         try Data("keep".utf8).write(to: unrelated)
 
         let cleared = CostUsageCacheLocations.clearCLIProxyAPIArtifacts(
@@ -32,6 +44,9 @@ struct CLIProxyAPIUsageCacheTests {
                 CostUsageCacheLocations.cliProxyAPIUsageFileName).path))
             #expect(!fileManager.fileExists(atPath: directory.appendingPathComponent(
                 CostUsageCacheLocations.cliProxyAPIPendingFileName).path))
+            #expect(!fileManager.fileExists(atPath: CostUsageCacheIO.cacheFileURL(
+                provider: .claude,
+                cacheRoot: directory.deletingLastPathComponent()).path))
         }
         #expect(fileManager.fileExists(atPath: unrelated.path))
     }
