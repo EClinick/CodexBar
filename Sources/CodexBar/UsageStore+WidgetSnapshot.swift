@@ -195,10 +195,18 @@ extension UsageStore {
             {
                 return dyn
             }
+            if provider == .alibabatokenplan,
+               let dyn = AlibabaTokenPlanProviderDescriptor.primaryLabel(window: snapshot.primary)
+            {
+                return dyn
+            }
             return metadata?.sessionLabel ?? "Session"
         }()
         let secondaryTitle = if provider == .amp {
             AmpProviderDescriptor.secondaryLabel(details: snapshot.ampUsage) ?? metadata?.weeklyLabel ?? "Weekly"
+        } else if provider == .alibabatokenplan {
+            AlibabaTokenPlanProviderDescriptor.secondaryLabel(window: snapshot.secondary) ??
+                metadata?.weeklyLabel ?? "Weekly"
         } else {
             metadata?.weeklyLabel ?? "Weekly"
         }

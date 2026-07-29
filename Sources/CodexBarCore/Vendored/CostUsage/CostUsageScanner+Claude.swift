@@ -259,7 +259,8 @@ extension CostUsageScanner {
 
                         guard let tsText = obj["timestamp"] as? String, let timestamp = Self.dateFromTimestamp(tsText)
                         else { return }
-                        guard let dayKey = Self.dayKeyFromTimestamp(tsText) ?? Self.dayKeyFromParsedISO(tsText)
+                        guard let dayKey = Self.dayKeyFromTimestamp(tsText, calendar: range.calendar)
+                            ?? Self.dayKeyFromParsedISO(tsText, calendar: range.calendar)
                         else { return }
 
                         guard let message = obj["message"] as? [String: Any] else { return }
@@ -765,7 +766,10 @@ extension CostUsageScanner {
         options: Options,
         checkCancellation: CancellationCheck?) throws -> CostUsageDailyReport
     {
-        var cache = CostUsageCacheIO.load(provider: provider, cacheRoot: options.cacheRoot)
+        var cache = CostUsageCacheIO.load(
+            provider: provider,
+            cacheRoot: options.cacheRoot,
+            calendar: range.calendar)
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
 
         let refreshMs = Int64(max(0, options.refreshMinIntervalSeconds) * 1000)
@@ -833,7 +837,11 @@ extension CostUsageScanner {
             cache.scanUntilKey = range.scanUntilKey
             cache.lastScanUnixMs = nowMs
             try checkCancellation?()
-            CostUsageCacheIO.save(provider: provider, cache: cache, cacheRoot: options.cacheRoot)
+            CostUsageCacheIO.save(
+                provider: provider,
+                cache: cache,
+                cacheRoot: options.cacheRoot,
+                calendar: range.calendar)
         }
 
         let modelsDevCatalog = CostUsagePricing.modelsDevCatalog(now: now, cacheRoot: options.cacheRoot)

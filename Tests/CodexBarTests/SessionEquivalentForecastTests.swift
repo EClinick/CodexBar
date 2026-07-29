@@ -440,7 +440,7 @@ struct SessionEquivalentForecastTests {
                 planSeries(name: .session, windowMinutes: 300, entries: sessionEntries),
                 planSeries(name: .weekly, windowMinutes: 10080, entries: weeklyEntries),
             ],
-            currentSessionResetsAt: fixture.currentSessionReset,
+            currentSessionResetsAt: nil,
             now: now) == nil)
     }
 
@@ -1453,7 +1453,7 @@ extension SessionEquivalentForecastTests {
             updatedAt: now)
     }
 
-    private static func historyFixture(burns: [Double])
+    static func historyFixture(burns: [Double])
         -> (histories: [PlanUtilizationSeriesHistory], currentSessionReset: Date)
     {
         self.historyFixture(samples: burns.map {

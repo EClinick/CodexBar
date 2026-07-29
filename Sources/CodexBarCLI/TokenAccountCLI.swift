@@ -218,6 +218,8 @@ struct TokenAccountCLIContext {
             return self.makeSnapshot(abacus: self.makeProviderCookieSettings(cookieSettings))
         case .mistral:
             return self.makeSnapshot(mistral: self.makeProviderCookieSettings(cookieSettings))
+        case .zoommate:
+            return self.makeSnapshot(zoommate: self.makeProviderCookieSettings(cookieSettings))
         case .stepfun:
             let stepfunSettings = self.cookieSettings(
                 provider: provider,
@@ -262,7 +264,8 @@ struct TokenAccountCLIContext {
         abacus: ProviderSettingsSnapshot.AbacusProviderSettings? = nil,
         mistral: ProviderSettingsSnapshot.MistralProviderSettings? = nil,
         qoder: ProviderSettingsSnapshot.QoderProviderSettings? = nil,
-        stepfun: ProviderSettingsSnapshot.StepFunProviderSettings? = nil) -> ProviderSettingsSnapshot
+        stepfun: ProviderSettingsSnapshot.StepFunProviderSettings? = nil,
+        zoommate: ProviderSettingsSnapshot.ZoomMateProviderSettings? = nil) -> ProviderSettingsSnapshot
     {
         ProviderSettingsSnapshot.make(
             codex: codex,
@@ -283,6 +286,7 @@ struct TokenAccountCLIContext {
             augment: augment,
             moonshot: moonshot,
             amp: amp,
+            zoommate: zoommate,
             commandcode: commandcode,
             ollama: ollama,
             jetbrains: jetbrains,

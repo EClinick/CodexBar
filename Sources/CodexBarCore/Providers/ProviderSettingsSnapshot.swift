@@ -31,6 +31,7 @@ public struct ProviderSettingsSnapshot: Sendable {
         moonshot: MoonshotProviderSettings? = nil,
         amp: AmpProviderSettings? = nil,
         t3chat: T3ChatProviderSettings? = nil,
+        zoommate: ZoomMateProviderSettings? = nil,
         devin: DevinProviderSettings? = nil,
         commandcode: CommandCodeProviderSettings? = nil,
         ollama: OllamaProviderSettings? = nil,
@@ -66,6 +67,7 @@ public struct ProviderSettingsSnapshot: Sendable {
             moonshot: moonshot,
             amp: amp,
             t3chat: t3chat,
+            zoommate: zoommate,
             devin: devin,
             commandcode: commandcode,
             ollama: ollama,
@@ -363,6 +365,16 @@ public struct ProviderSettingsSnapshot: Sendable {
         }
     }
 
+    public struct ZoomMateProviderSettings: ProviderCookieSettings {
+        public let cookieSource: ProviderCookieSource
+        public let manualCookieHeader: String?
+
+        public init(cookieSource: ProviderCookieSource, manualCookieHeader: String?) {
+            self.cookieSource = cookieSource
+            self.manualCookieHeader = manualCookieHeader
+        }
+    }
+
     public struct DevinProviderSettings: Sendable {
         public let cookieSource: ProviderCookieSource
         public let manualBearerToken: String?
@@ -502,6 +514,7 @@ public struct ProviderSettingsSnapshot: Sendable {
     public let moonshot: MoonshotProviderSettings?
     public let amp: AmpProviderSettings?
     public let t3chat: T3ChatProviderSettings?
+    public let zoommate: ZoomMateProviderSettings?
     public let devin: DevinProviderSettings?
     public let commandcode: CommandCodeProviderSettings?
     public let ollama: OllamaProviderSettings?
@@ -541,6 +554,7 @@ public struct ProviderSettingsSnapshot: Sendable {
         moonshot: MoonshotProviderSettings? = nil,
         amp: AmpProviderSettings?,
         t3chat: T3ChatProviderSettings? = nil,
+        zoommate: ZoomMateProviderSettings? = nil,
         devin: DevinProviderSettings? = nil,
         commandcode: CommandCodeProviderSettings? = nil,
         ollama: OllamaProviderSettings?,
@@ -575,6 +589,7 @@ public struct ProviderSettingsSnapshot: Sendable {
         self.moonshot = moonshot
         self.amp = amp
         self.t3chat = t3chat
+        self.zoommate = zoommate
         self.devin = devin
         self.commandcode = commandcode
         self.ollama = ollama
@@ -610,6 +625,7 @@ public enum ProviderSettingsSnapshotContribution: Sendable {
     case moonshot(ProviderSettingsSnapshot.MoonshotProviderSettings)
     case amp(ProviderSettingsSnapshot.AmpProviderSettings)
     case t3chat(ProviderSettingsSnapshot.T3ChatProviderSettings)
+    case zoommate(ProviderSettingsSnapshot.ZoomMateProviderSettings)
     case devin(ProviderSettingsSnapshot.DevinProviderSettings)
     case commandcode(ProviderSettingsSnapshot.CommandCodeProviderSettings)
     case ollama(ProviderSettingsSnapshot.OllamaProviderSettings)
@@ -646,6 +662,7 @@ public struct ProviderSettingsSnapshotBuilder: Sendable {
     public var moonshot: ProviderSettingsSnapshot.MoonshotProviderSettings?
     public var amp: ProviderSettingsSnapshot.AmpProviderSettings?
     public var t3chat: ProviderSettingsSnapshot.T3ChatProviderSettings?
+    public var zoommate: ProviderSettingsSnapshot.ZoomMateProviderSettings?
     public var devin: ProviderSettingsSnapshot.DevinProviderSettings?
     public var commandcode: ProviderSettingsSnapshot.CommandCodeProviderSettings?
     public var ollama: ProviderSettingsSnapshot.OllamaProviderSettings?
@@ -686,6 +703,7 @@ public struct ProviderSettingsSnapshotBuilder: Sendable {
         case let .moonshot(value): self.moonshot = value
         case let .amp(value): self.amp = value
         case let .t3chat(value): self.t3chat = value
+        case let .zoommate(value): self.zoommate = value
         case let .devin(value): self.devin = value
         case let .commandcode(value): self.commandcode = value
         case let .ollama(value): self.ollama = value
@@ -724,6 +742,7 @@ public struct ProviderSettingsSnapshotBuilder: Sendable {
             moonshot: self.moonshot,
             amp: self.amp,
             t3chat: self.t3chat,
+            zoommate: self.zoommate,
             devin: self.devin,
             commandcode: self.commandcode,
             ollama: self.ollama,

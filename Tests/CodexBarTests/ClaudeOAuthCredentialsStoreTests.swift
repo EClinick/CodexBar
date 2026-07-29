@@ -357,7 +357,9 @@ struct ClaudeOAuthCredentialsStoreTests {
             await ClaudeOAuthCredentialsStore.withCredentialsURLOverrideForTesting(fileURL) {
                 await ClaudeOAuthCredentialsStore.withKeychainAccessOverrideForTesting(true) {
                     ClaudeOAuthCredentialsStore.invalidateCache()
-                    let cacheKey = KeychainCacheStore.Key.oauth(provider: .claude)
+                    let cacheKey = ClaudeOAuthCredentialsStore.cacheKeyForTesting(
+                        profileIdentifier: ClaudeOAuthCredentialsStore.credentialsProfileIdentifier(
+                            environment: [:]))
                     defer { KeychainCacheStore.clear(key: cacheKey) }
 
                     let expiredData = self.makeCredentialsData(
@@ -407,7 +409,9 @@ struct ClaudeOAuthCredentialsStoreTests {
             await ClaudeOAuthCredentialsStore.withCredentialsURLOverrideForTesting(fileURL) {
                 await ClaudeOAuthCredentialsStore.withKeychainAccessOverrideForTesting(true) {
                     ClaudeOAuthCredentialsStore.invalidateCache()
-                    let cacheKey = KeychainCacheStore.Key.oauth(provider: .claude)
+                    let cacheKey = ClaudeOAuthCredentialsStore.cacheKeyForTesting(
+                        profileIdentifier: ClaudeOAuthCredentialsStore.credentialsProfileIdentifier(
+                            environment: [:]))
                     defer { KeychainCacheStore.clear(key: cacheKey) }
 
                     let expiredData = self.makeCredentialsData(
@@ -593,7 +597,9 @@ struct ClaudeOAuthCredentialsStoreTests {
                     // Avoid cross-suite interference from UserDefaults fingerprint persistence.
                     let fingerprintStore = ClaudeOAuthCredentialsStore.ClaudeKeychainFingerprintStore()
 
-                    let cacheKey = KeychainCacheStore.Key.oauth(provider: .claude)
+                    let cacheKey = ClaudeOAuthCredentialsStore.cacheKeyForTesting(
+                        profileIdentifier: ClaudeOAuthCredentialsStore.credentialsProfileIdentifier(
+                            environment: [:]))
                     let cachedData = self.makeCredentialsData(
                         accessToken: "cached-token",
                         expiresAt: Date(timeIntervalSinceNow: 3600))
@@ -697,7 +703,9 @@ struct ClaudeOAuthCredentialsStoreTests {
                         persistentRefHash: "ref1")
                     fingerprintStore.fingerprint = fingerprint1
 
-                    let cacheKey = KeychainCacheStore.Key.oauth(provider: .claude)
+                    let cacheKey = ClaudeOAuthCredentialsStore.cacheKeyForTesting(
+                        profileIdentifier: ClaudeOAuthCredentialsStore.credentialsProfileIdentifier(
+                            environment: [:]))
                     let cachedData = self.makeCredentialsData(
                         accessToken: "cached-token",
                         expiresAt: Date(timeIntervalSinceNow: 3600))
@@ -762,7 +770,9 @@ struct ClaudeOAuthCredentialsStoreTests {
                     ClaudeOAuthCredentialsStore._resetClaudeKeychainChangeTrackingForTesting()
                 }
 
-                let cacheKey = KeychainCacheStore.Key.oauth(provider: .claude)
+                let cacheKey = ClaudeOAuthCredentialsStore.cacheKeyForTesting(
+                    profileIdentifier: ClaudeOAuthCredentialsStore.credentialsProfileIdentifier(
+                        environment: [:]))
                 let cachedData = self.makeCredentialsData(
                     accessToken: "cached-token",
                     expiresAt: Date(timeIntervalSinceNow: 3600))
@@ -819,7 +829,9 @@ struct ClaudeOAuthCredentialsStoreTests {
                     ClaudeOAuthCredentialsStore._resetClaudeKeychainChangeTrackingForTesting()
                 }
 
-                let cacheKey = KeychainCacheStore.Key.oauth(provider: .claude)
+                let cacheKey = ClaudeOAuthCredentialsStore.cacheKeyForTesting(
+                    profileIdentifier: ClaudeOAuthCredentialsStore.credentialsProfileIdentifier(
+                        environment: [:]))
                 let cachedData = self.makeCredentialsData(
                     accessToken: "cached-token",
                     expiresAt: Date(timeIntervalSinceNow: 3600))
@@ -889,7 +901,9 @@ struct ClaudeOAuthCredentialsStoreTests {
                             ClaudeOAuthCredentialsStore._resetClaudeKeychainChangeTrackingForTesting()
                         }
 
-                        let cacheKey = KeychainCacheStore.Key.oauth(provider: .claude)
+                        let cacheKey = ClaudeOAuthCredentialsStore.cacheKeyForTesting(
+                            profileIdentifier: ClaudeOAuthCredentialsStore.credentialsProfileIdentifier(
+                                environment: [:]))
                         let cachedData = self.makeCredentialsData(
                             accessToken: "cached-token",
                             expiresAt: Date(timeIntervalSinceNow: 3600))
