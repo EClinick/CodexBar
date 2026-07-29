@@ -67,8 +67,10 @@ Admin API key setup:
   - Claude CLI Keychain bootstrap/repair fallback: `Claude Code-credentials`.
 - On Claude Code 2.1.x, `Claude Code-credentials` may contain only MCP server OAuth state (`mcpOAuth`) with no `claudeAiOauth`. CodexBar treats that as an OAuth configuration error, does not run background delegated `claude /status` refresh, and surfaces re-auth guidance. Use Web or CLI usage source, or restore a valid Claude OAuth keychain entry. See #1844.
 - Requires `user:profile` scope (CLI tokens with only `user:inference` cannot call usage).
-- Endpoint:
+- Endpoints:
   - `GET https://api.anthropic.com/api/oauth/usage`
+  - `GET https://api.anthropic.com/api/oauth/profile` → account identity used to verify that optional Web enrichment
+    belongs to the same Claude account.
 - Headers:
   - `Authorization: Bearer <access_token>`
   - `anthropic-beta: oauth-2025-04-20`
@@ -108,11 +110,13 @@ Admin API key setup:
   - `GET https://claude.ai/api/organizations` → org UUID.
   - `GET https://claude.ai/api/organizations/{orgId}/usage` → session/weekly/opus.
   - `GET https://claude.ai/api/organizations/{orgId}/overage_spend_limit` → Extra usage spend/limit.
+  - `GET https://claude.ai/api/organizations/{orgId}/prepaid/credits` → remaining Usage credits balance.
   - `GET https://claude.ai/api/account` → email + plan hints.
 - Outputs:
   - Session + weekly + model-specific percent used.
   - Daily Routines extra window when returned by the usage API.
   - Extra usage spend/limit (if enabled).
+  - Remaining Usage credits balance (if enabled).
   - Account email + inferred plan.
 
 ## claude-swap accounts (opt-in)

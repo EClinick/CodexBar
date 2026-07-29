@@ -568,9 +568,11 @@ struct CLIProxyAPIAttributionResolverTests {
                 return (Data(responseBody.utf8), response)
             })
 
-        let records = try await client.pop(count: 100)
+        let batch = try await client.pop(count: 100)
+        let records = batch.records
 
         #expect(records.count == 1)
+        #expect(batch.receivedCount == 1)
         #expect(records[0].provider == "codex")
         #expect(records[0].authType == "oauth")
         #expect(records[0].tokens.total == 30)

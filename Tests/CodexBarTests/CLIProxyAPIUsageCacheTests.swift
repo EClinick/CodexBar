@@ -88,7 +88,7 @@ struct CLIProxyAPIUsageCacheTests {
                 releaseLock.wait()
             }
         }
-        #expect(lockAcquired.wait(timeout: .now() + 1) == .success)
+        #expect(await Self.waitForSignal(lockAcquired, timeout: .now() + 1))
 
         let loadTask = Task.detached {
             loadStarted.signal()
@@ -109,10 +109,16 @@ struct CLIProxyAPIUsageCacheTests {
             mergeFinished.signal()
             return result
         }
-        #expect(loadStarted.wait(timeout: .now() + 1) == .success)
-        #expect(mergeStarted.wait(timeout: .now() + 1) == .success)
-        #expect(loadFinished.wait(timeout: .now() + .milliseconds(50)) == .timedOut)
-        #expect(mergeFinished.wait(timeout: .now() + .milliseconds(50)) == .timedOut)
+        #expect(await Self.waitForSignal(loadStarted, timeout: .now() + 1))
+        #expect(await Self.waitForSignal(mergeStarted, timeout: .now() + 1))
+        let loadFinishedBeforeRelease = await Self.waitForSignal(
+            loadFinished,
+            timeout: .now() + .milliseconds(50))
+        let mergeFinishedBeforeRelease = await Self.waitForSignal(
+            mergeFinished,
+            timeout: .now() + .milliseconds(50))
+        #expect(!loadFinishedBeforeRelease)
+        #expect(!mergeFinishedBeforeRelease)
 
         releaseLock.signal()
         await lockHolder.value
@@ -142,7 +148,7 @@ struct CLIProxyAPIUsageCacheTests {
             cacheRoot: root,
             now: second) == 2)
         #expect(CLIProxyAPIUsageCacheIO.merge(
-            [],
+            records,
             cacheRoot: root,
             now: second) == 0)
 
@@ -150,7 +156,9 @@ struct CLIProxyAPIUsageCacheTests {
             cacheRoot: root,
             now: second)
         #expect(roundTripped.count == 2)
-        #expect(roundTripped.map(\.timestamp) == records.map(\.timestamp))
+        #expect(
+            roundTripped.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) }
+                == records.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) })
     }
 
     private static func record(id: String, timestamp: Date) -> CLIProxyAPIUsageRecord {
@@ -163,5 +171,16 @@ struct CLIProxyAPIUsageCacheTests {
             authType: "oauth",
             requestID: id,
             tokens: .init(input: 10, output: 20, total: 30))
+    }
+
+    private static func waitForSignal(
+        _ semaphore: DispatchSemaphore,
+        timeout: DispatchTime) async -> Bool
+    {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: semaphore.wait(timeout: timeout) == .success)
+            }
+        }
     }
 }
