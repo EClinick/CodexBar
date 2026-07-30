@@ -849,6 +849,12 @@ extension CostUsageFetcherTests {
         #expect(cachedCodex.daily.first?.totalTokens == 135)
         #expect(cachedCodex.daily.first?.modelBreakdowns?.first?.attribution == codexBreakdown.attribution)
 
+        var changedTimeZoneOptions = options
+        let changedOffset = options.calendar.timeZone.secondsFromGMT(for: day) == 0 ? 3600 : 0
+        changedTimeZoneOptions.calendar.timeZone = try #require(TimeZone(secondsFromGMT: changedOffset))
+        #expect(await CostUsageFetcher.loadCachedCodexTokenSnapshot(
+            now: day, scannerOptions: changedTimeZoneOptions) == nil)
+
         try FileManager.default.removeItem(at: cliProxyLogs)
         try FileManager.default.removeItem(at: cliProxyHome.appendingPathComponent("codex-auth.json"))
         let cachedAfterLogRotation = try #require(await CostUsageFetcher.loadCachedCodexTokenSnapshot(

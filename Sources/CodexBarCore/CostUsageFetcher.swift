@@ -689,7 +689,10 @@ public struct CostUsageFetcher: Sendable {
                 }
             }
 
-            let claudeCache = CostUsageCacheIO.load(provider: .claude, cacheRoot: options.cacheRoot)
+            let claudeCache = CostUsageCacheIO.load(
+                provider: .claude,
+                cacheRoot: options.cacheRoot,
+                calendar: options.calendar)
             if Self.isCLIProxyAPIAttributionEnabled(options: options),
                !claudeCache.days.isEmpty,
                !CostUsageScanner.requestedWindowExpandsCache(range: range, cache: claudeCache)
