@@ -356,6 +356,7 @@ struct SpendDashboardPane: View {
             self.cliProxyAPIManagementKey = ""
             self.cliProxyAPIHasSavedConfiguration = false
             self.cliProxyAPIStatus = "Configuration and local telemetry removed."
+            self.controller.refresh()
         case .configurationRemovalFailed:
             self.store.startCLIProxyAPIUsageCollector()
             self.cliProxyAPIStatus = "Could not remove the saved configuration. Local telemetry was preserved."

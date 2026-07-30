@@ -785,7 +785,11 @@ extension CostUsageScanner {
             || nowMs - cache.lastScanUnixMs > refreshMs
 
         let providerFilter = options.claudeLogProviderFilter
-        let attributionResolver: CLIProxyAPIAttributionResolver? = if let home = options.cliProxyAPIHome {
+        let cliProxyAPIAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: options.cacheRoot)
+        let attributionResolver: CLIProxyAPIAttributionResolver? = if cliProxyAPIAttributionEnabled,
+                                                                      let home = options.cliProxyAPIHome
+        {
             try CLIProxyAPIAttributionResolver.load(
                 home: home,
                 cacheRoot: options.cacheRoot,
@@ -848,7 +852,7 @@ extension CostUsageScanner {
         return Self.buildClaudeReportFromCache(
             cache: cache,
             range: range,
-            attributionFilter: options.claudeAttributionFilter,
+            attributionFilter: cliProxyAPIAttributionEnabled ? options.claudeAttributionFilter : .all,
             attributionResolver: attributionResolver,
             modelsDevCatalog: modelsDevCatalog,
             modelsDevCacheRoot: options.cacheRoot)

@@ -390,7 +390,12 @@ enum CLIProxyAPIUsagePendingIO {
 
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            var container = encoder.singleValueContainer()
+            try container.encode(formatter.string(from: date))
+        }
         encoder.outputFormatting = [.sortedKeys]
         return encoder
     }()
@@ -438,8 +443,27 @@ public enum CLIProxyAPIConnectionSettingsStore {
     @discardableResult
     public static func save(_ settings: CLIProxyAPIConnectionSettings) -> Bool {
         guard settings.isConfigured else { return false }
-        guard KeychainCacheStore.storeResult(key: self.key, entry: settings) else { return false }
-        return CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false)
+        return self.save(
+            settings,
+            store: { KeychainCacheStore.storeResult(key: self.key, entry: settings) },
+            clearDisconnectState: {
+                CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false)
+            },
+            rollback: { _ = KeychainCacheStore.clear(key: self.key) })
+    }
+
+    static func save(
+        _ settings: CLIProxyAPIConnectionSettings,
+        store: () -> Bool,
+        clearDisconnectState: () -> Bool,
+        rollback: () -> Void) -> Bool
+    {
+        guard settings.isConfigured, store() else { return false }
+        guard clearDisconnectState() else {
+            rollback()
+            return false
+        }
+        return true
     }
 
     @discardableResult
@@ -506,6 +530,9 @@ public enum CLIProxyAPIUsageCollector {
         shouldContinue: @escaping @Sendable () async -> Bool = { true }) async
         -> CLIProxyAPIUsageCollectionResult
     {
+        guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: cacheRoot) else {
+            return .notConfigured
+        }
         guard let settings, settings.isConfigured else { return .notConfigured }
         return await self.collect(
             cacheRoot: cacheRoot,

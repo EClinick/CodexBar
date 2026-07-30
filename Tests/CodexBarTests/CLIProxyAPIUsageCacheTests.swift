@@ -84,6 +84,44 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
+    func `failed reconnect marker clear rolls back saved settings`() {
+        let settings = CLIProxyAPIConnectionSettings(managementKey: "secret")
+        var didStore = false
+        var didRollback = false
+
+        let saved = CLIProxyAPIConnectionSettingsStore.save(
+            settings,
+            store: {
+                didStore = true
+                return true
+            },
+            clearDisconnectState: { false },
+            rollback: { didRollback = true })
+
+        #expect(!saved)
+        #expect(didStore)
+        #expect(didRollback)
+    }
+
+    @Test
+    func `explicit disconnect prevents collection with persisted settings`() async {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-disconnected-collection-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+            true,
+            stateRoot: root,
+            fileManager: fileManager))
+
+        let result = await CLIProxyAPIUsageCollector.collect(
+            cacheRoot: root,
+            settings: CLIProxyAPIConnectionSettings(managementKey: "secret"))
+
+        #expect(result == .notConfigured)
+    }
+
+    @Test
     func `cost cache locations include durable telemetry storage`() throws {
         let fileManager = FileManager.default
         let directories = CostUsageCacheLocations.directories(fileManager: fileManager)
@@ -257,6 +295,27 @@ struct CLIProxyAPIUsageCacheTests {
         let roundTripped = CLIProxyAPIUsageCacheIO.load(
             cacheRoot: root,
             now: second)
+        #expect(roundTripped.count == 2)
+        #expect(
+            roundTripped.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) }
+                == records.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) })
+    }
+
+    @Test
+    func `fallback record identity survives pending journal round trips within one second`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-pending-fractional-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let second = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let records = [
+            Self.record(id: "", timestamp: second.addingTimeInterval(0.1)),
+            Self.record(id: "", timestamp: second.addingTimeInterval(0.9)),
+        ]
+
+        #expect(CLIProxyAPIUsagePendingIO.save(records, pendingRoot: root))
+        let roundTripped = try #require(CLIProxyAPIUsagePendingIO.load(pendingRoot: root))
+
         #expect(roundTripped.count == 2)
         #expect(
             roundTripped.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) }

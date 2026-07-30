@@ -685,8 +685,11 @@ public struct CostUsageFetcher: Sendable {
                 }
             }
 
+            let cliProxyAPIAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+                stateRoot: options.cacheRoot)
             let claudeCache = CostUsageCacheIO.load(provider: .claude, cacheRoot: options.cacheRoot)
-            if !claudeCache.days.isEmpty,
+            if cliProxyAPIAttributionEnabled,
+               !claudeCache.days.isEmpty,
                !CostUsageScanner.requestedWindowExpandsCache(range: range, cache: claudeCache)
             {
                 let attributionResolver: CLIProxyAPIAttributionResolver? = if let home = options.cliProxyAPIHome {
