@@ -434,33 +434,43 @@ public enum CLIProxyAPIConnectionSettingsStore {
         identifier: "cliproxyapi-management")
 
     public static func load() -> CLIProxyAPIConnectionSettings? {
-        switch KeychainCacheStore.load(key: self.key, as: CLIProxyAPIConnectionSettings.self) {
-        case let .found(settings): settings
-        case .missing, .temporarilyUnavailable, .invalid: nil
-        }
+        self.load(
+            isDisconnected: { CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected() },
+            loadStored: {
+                switch KeychainCacheStore.load(key: self.key, as: CLIProxyAPIConnectionSettings.self) {
+                case let .found(settings): settings
+                case .missing, .temporarilyUnavailable, .invalid: nil
+                }
+            })
+    }
+
+    static func load(
+        isDisconnected: () -> Bool,
+        loadStored: () -> CLIProxyAPIConnectionSettings?) -> CLIProxyAPIConnectionSettings?
+    {
+        guard !isDisconnected() else { return nil }
+        return loadStored()
     }
 
     @discardableResult
     public static func save(_ settings: CLIProxyAPIConnectionSettings) -> Bool {
-        guard settings.isConfigured else { return false }
-        return self.save(
+        self.save(
             settings,
-            store: { KeychainCacheStore.storeResult(key: self.key, entry: settings) },
-            clearDisconnectState: {
-                CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false)
-            },
-            rollback: { _ = KeychainCacheStore.clear(key: self.key) })
+            store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
+            clearDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false) },
+            rollback: { KeychainCacheStore.clear(key: self.key) })
     }
 
     static func save(
         _ settings: CLIProxyAPIConnectionSettings,
-        store: () -> Bool,
-        clearDisconnectState: () -> Bool,
-        rollback: () -> Void) -> Bool
+        store: (CLIProxyAPIConnectionSettings) -> Bool,
+        clearDisconnectedState: () -> Bool,
+        rollback: () -> Bool) -> Bool
     {
-        guard settings.isConfigured, store() else { return false }
-        guard clearDisconnectState() else {
-            rollback()
+        guard settings.isConfigured else { return false }
+        guard store(settings) else { return false }
+        guard clearDisconnectedState() else {
+            _ = rollback()
             return false
         }
         return true

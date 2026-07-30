@@ -310,6 +310,10 @@ public struct CostUsageFetcher: Sendable {
             overrideScannerOptions,
             provider: provider,
             codexHomePath: codexHomePath)
+        let cliProxyAPIAttributionEnabled = Self.isCLIProxyAPIAttributionEnabled(options: options)
+        if !cliProxyAPIAttributionEnabled {
+            options.cliProxyAPIHome = nil
+        }
         // Rolling window is inclusive, so a 30-day display starts 29 days before `now`.
         let since = options.calendar.date(byAdding: .day, value: -(clampedHistoryDays - 1), to: now) ?? now
         let scopedCodexHomePath = codexHomePath?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -328,7 +332,7 @@ public struct CostUsageFetcher: Sendable {
             options.claudeLogProviderFilter = allowVertexClaudeFallback ? .all : .vertexAIOnly
         } else if provider == .claude {
             options.claudeLogProviderFilter = .excludeVertexAI
-            options.claudeAttributionFilter = .excludeCodexBackend
+            options.claudeAttributionFilter = cliProxyAPIAttributionEnabled ? .excludeCodexBackend : .all
         }
         if forceRefresh || bypassScannerDebounce {
             options.refreshMinIntervalSeconds = 0
@@ -685,10 +689,8 @@ public struct CostUsageFetcher: Sendable {
                 }
             }
 
-            let cliProxyAPIAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
-                stateRoot: options.cacheRoot)
             let claudeCache = CostUsageCacheIO.load(provider: .claude, cacheRoot: options.cacheRoot)
-            if cliProxyAPIAttributionEnabled,
+            if Self.isCLIProxyAPIAttributionEnabled(options: options),
                !claudeCache.days.isEmpty,
                !CostUsageScanner.requestedWindowExpandsCache(range: range, cache: claudeCache)
             {
@@ -1098,10 +1100,7 @@ extension CostUsageFetcher {
         options: CostUsageScanner.Options,
         fileManager: FileManager = .default) -> Bool
     {
-        guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
-            stateRoot: options.cacheRoot,
-            fileManager: fileManager)
-        else { return false }
+        guard self.isCLIProxyAPIAttributionEnabled(options: options, fileManager: fileManager) else { return false }
 
         if CLIProxyAPIUsageCacheIO.load(cacheRoot: options.cacheRoot).contains(where: {
             $0.provider.caseInsensitiveCompare("codex") == .orderedSame
@@ -1132,6 +1131,15 @@ extension CostUsageFetcher {
             else { return false }
             return values.isRegularFile == true
         }
+    }
+
+    private static func isCLIProxyAPIAttributionEnabled(
+        options: CostUsageScanner.Options,
+        fileManager: FileManager = .default) -> Bool
+    {
+        !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: options.cacheRoot,
+            fileManager: fileManager)
     }
 
     private static func finalizeCodexSupplementalScan(

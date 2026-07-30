@@ -324,7 +324,6 @@ struct SpendDashboardPane: View {
         }
         self.store.stopCLIProxyAPIUsageCollector()
         guard CLIProxyAPIConnectionSettingsStore.save(configuration) else {
-            self.store.startCLIProxyAPIUsageCollector()
             self.cliProxyAPIStatus = "Could not save the management key."
             return
         }
@@ -364,6 +363,7 @@ struct SpendDashboardPane: View {
             self.cliProxyAPIManagementKey = ""
             self.cliProxyAPIHasSavedConfiguration = false
             self.cliProxyAPIStatus = "Configuration removed, but some local telemetry could not be deleted."
+            self.controller.refresh()
         }
     }
 

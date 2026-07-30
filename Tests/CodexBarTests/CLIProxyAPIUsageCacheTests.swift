@@ -84,19 +84,38 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `failed reconnect marker clear rolls back saved settings`() {
-        let settings = CLIProxyAPIConnectionSettings(managementKey: "secret")
+    func `explicit disconnect prevents saved connection settings from loading`() {
+        var didReadStoredSettings = false
+        let loaded = CLIProxyAPIConnectionSettingsStore.load(
+            isDisconnected: { true },
+            loadStored: {
+                didReadStoredSettings = true
+                return CLIProxyAPIConnectionSettings(managementKey: "test-management-key")
+            })
+
+        #expect(loaded == nil)
+        #expect(!didReadStoredSettings)
+    }
+
+    @Test
+    func `reconnect rolls back saved credentials when disconnect state cannot be cleared`() {
+        let settings = CLIProxyAPIConnectionSettings(
+            baseURL: "http://127.0.0.1:8317",
+            managementKey: "test-management-key")
         var didStore = false
         var didRollback = false
 
         let saved = CLIProxyAPIConnectionSettingsStore.save(
             settings,
-            store: {
+            store: { _ in
                 didStore = true
                 return true
             },
-            clearDisconnectState: { false },
-            rollback: { didRollback = true })
+            clearDisconnectedState: { false },
+            rollback: {
+                didRollback = true
+                return true
+            })
 
         #expect(!saved)
         #expect(didStore)
