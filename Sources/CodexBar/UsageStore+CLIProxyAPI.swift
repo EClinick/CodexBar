@@ -35,14 +35,21 @@ extension UsageStore {
 
     @discardableResult
     func removeCLIProxyAPIConfiguration(
-        purgeTelemetry: () -> Bool = { CostUsageCacheLocations.clearCLIProxyAPIArtifacts() },
+        purgeTelemetry: (() -> Bool)? = nil,
         clear: () -> Bool = { CLIProxyAPIConnectionSettingsStore.clear() }) async
         -> CLIProxyAPIConfigurationRemovalResult
     {
         let collectorTask = self.stopCLIProxyAPIUsageCollector()
         await collectorTask?.value
         guard clear() else { return .configurationRemovalFailed }
-        guard purgeTelemetry() else { return .telemetryCleanupFailed }
+        let didPurgeTelemetry: Bool = if let purgeTelemetry {
+            purgeTelemetry()
+        } else {
+            await Task.detached(priority: .utility) {
+                CostUsageCacheLocations.clearCLIProxyAPIArtifacts()
+            }.value
+        }
+        guard didPurgeTelemetry else { return .telemetryCleanupFailed }
         return .removed
     }
 

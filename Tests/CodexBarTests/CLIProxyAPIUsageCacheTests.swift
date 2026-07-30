@@ -36,6 +36,7 @@ struct CLIProxyAPIUsageCacheTests {
 
         let cleared = CostUsageCacheLocations.clearCLIProxyAPIArtifacts(
             in: [legacy, durable],
+            stateRoot: root,
             fileManager: fileManager)
 
         #expect(cleared)
@@ -49,6 +50,49 @@ struct CLIProxyAPIUsageCacheTests {
                 cacheRoot: directory.deletingLastPathComponent()).path))
         }
         #expect(fileManager.fileExists(atPath: unrelated.path))
+    }
+
+    @Test
+    func `integration cleanup waits for the collector interprocess lock`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-cleanup-lock-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        try FileManager.default.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let lockAcquired = DispatchSemaphore(value: 0)
+        let releaseLock = DispatchSemaphore(value: 0)
+        let clearStarted = DispatchSemaphore(value: 0)
+        let clearFinished = DispatchSemaphore(value: 0)
+        let collector = Task.detached {
+            try await CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root) {
+                lockAcquired.signal()
+                _ = await Self.waitForSignal(releaseLock, timeout: .distantFuture)
+            }
+        }
+        #expect(await Self.waitForSignal(lockAcquired, timeout: .now() + 1))
+
+        let clear = Task.detached {
+            clearStarted.signal()
+            let result = CostUsageCacheLocations.clearCLIProxyAPIArtifacts(
+                in: [costUsage],
+                stateRoot: root,
+                fileManager: .default)
+            clearFinished.signal()
+            return result
+        }
+        #expect(await Self.waitForSignal(clearStarted, timeout: .now() + 1))
+        let finishedBeforeRelease = await Self.waitForSignal(
+            clearFinished,
+            timeout: .now() + .milliseconds(50))
+        #expect(!finishedBeforeRelease)
+
+        releaseLock.signal()
+        try await collector.value
+        #expect(await clear.value)
+        #expect(!FileManager.default.fileExists(atPath: usageFile.path))
     }
 
     @Test
@@ -69,6 +113,7 @@ struct CLIProxyAPIUsageCacheTests {
         try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
         #expect(CostUsageCacheLocations.clearCLIProxyAPIArtifacts(
             in: [costUsage],
+            stateRoot: root,
             fileManager: fileManager))
         #expect(CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
             stateRoot: root,

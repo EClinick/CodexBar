@@ -88,15 +88,36 @@ public enum CostUsageCacheLocations {
 
     @discardableResult
     public static func clearCLIProxyAPIArtifacts(fileManager: FileManager = .default) -> Bool {
-        self.clearCLIProxyAPIArtifacts(
-            in: self.directories(fileManager: fileManager),
+        let directories = self.directories(fileManager: fileManager)
+        return self.clearCLIProxyAPIArtifacts(
+            in: directories,
+            stateRoot: directories[1].deletingLastPathComponent(),
             fileManager: fileManager)
     }
 
     @discardableResult
     static func clearCLIProxyAPIArtifacts(
         in directories: [URL],
+        stateRoot: URL?,
         fileManager: FileManager = .default) -> Bool
+    {
+        do {
+            return try self.withCLIProxyAPIInterprocessLock(
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            {
+                self.clearCLIProxyAPIArtifactsUnserialized(
+                    in: directories,
+                    fileManager: fileManager)
+            }
+        } catch {
+            return false
+        }
+    }
+
+    private static func clearCLIProxyAPIArtifactsUnserialized(
+        in directories: [URL],
+        fileManager: FileManager) -> Bool
     {
         var succeeded = true
         for directory in directories {

@@ -742,7 +742,7 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
-    func `usage cache filters expired records during load`() {
+    func `usage cache prunes expired records from disk during load`() {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-load-retention-\(UUID().uuidString)", isDirectory: true)
@@ -764,6 +764,9 @@ struct CLIProxyAPIAttributionResolverTests {
         #expect(CLIProxyAPIUsageCacheIO.load(
             cacheRoot: cacheRoot,
             now: now).map(\.requestID) == [current.requestID])
+        #expect(CLIProxyAPIUsageCacheIO.load(
+            cacheRoot: cacheRoot,
+            now: expired.timestamp).map(\.requestID) == [current.requestID])
     }
 
     @Test

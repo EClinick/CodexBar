@@ -157,11 +157,36 @@ enum CLIProxyAPIUsageCacheIO {
         legacyCacheRoot: URL?,
         now: Date = Date()) -> [CLIProxyAPIUsageRecord]
     {
-        self.withExclusiveAccess {
-            let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
-            return self.loadCache(
+        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+        let initialSnapshot: (records: [CLIProxyAPIUsageRecord], needsPruning: Bool) = self.withExclusiveAccess {
+            guard let existingCache = self.loadCache(
                 cacheRoot: cacheRoot,
-                legacyCacheRoot: legacyCacheRoot)?.records.filter { $0.timestamp >= cutoff } ?? []
+                legacyCacheRoot: legacyCacheRoot)
+            else { return ([], false) }
+            let retainedRecords = existingCache.records.filter { $0.timestamp >= cutoff }
+            return (retainedRecords, retainedRecords.count != existingCache.records.count)
+        }
+        guard initialSnapshot.needsPruning else { return initialSnapshot.records }
+
+        do {
+            return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                stateRoot: cacheRoot?.deletingLastPathComponent())
+            {
+                self.withExclusiveAccess {
+                    guard let currentCache = self.loadCache(
+                        cacheRoot: cacheRoot,
+                        legacyCacheRoot: legacyCacheRoot)
+                    else { return [] }
+                    let retainedRecords = currentCache.records.filter { $0.timestamp >= cutoff }
+                    let retainedCache = Cache(records: retainedRecords)
+                    if retainedCache != currentCache {
+                        _ = self.save(retainedCache, cacheRoot: cacheRoot)
+                    }
+                    return retainedRecords
+                }
+            }
+        } catch {
+            return initialSnapshot.records
         }
     }
 
