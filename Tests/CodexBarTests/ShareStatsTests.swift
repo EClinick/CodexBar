@@ -19,7 +19,7 @@ struct ShareStatsTests {
     }
 
     @Test
-    func `proxy spend is not counted as an account or subscription`() {
+    func `proxy spend is not counted as an account or subscription`() throws {
         let rows = [
             SpendDashboardModel.ProviderRow(
                 id: "codex:managed-account",
@@ -49,6 +49,31 @@ struct ShareStatsTests {
 
         #expect(spendDashboardCodexAccountRowCount(rows) == 1)
         #expect(spendDashboardSubscriptionCount(rows) == 2)
+
+        let group = SpendDashboardModel.CurrencyGroup(
+            currencyCode: "USD",
+            providers: rows,
+            models: [
+                SpendDashboardModel.ModelRow(
+                    rank: 1,
+                    provider: .codex,
+                    providerName: "Codex · CLIProxyAPI",
+                    modelName: "gpt-5.4",
+                    totalTokens: 100,
+                    totalCost: 1),
+            ],
+            dailyPoints: [],
+            totalTokens: 300,
+            totalCost: 3,
+            coveredDayCount: 1,
+            chartDomain: Self.date...Self.date,
+            modelHistoryCompleteness: .complete)
+        let payload = try #require(ShareStatsBuilder.make(
+            model: SpendDashboardModel(requestedDays: 1, groups: [group])))
+
+        #expect(payload.providers.map(\.providerName) == ["Codex", "Cursor"])
+        #expect(payload.currencies.first?.estimatedCost == 3)
+        #expect(payload.topModels.first?.estimatedCost == 1)
     }
 
     @Test

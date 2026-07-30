@@ -318,8 +318,9 @@ enum ShareStatsBuilder {
         subscriptionNames: [String: ShareStatsSubscriptionName] = [:]) -> ShareStatsPayload?
     {
         let providers = model.groups.flatMap { group in
-            group.providers.map { row in
-                ShareStatsProviderPayload(
+            group.providers.compactMap { row -> ShareStatsProviderPayload? in
+                guard row.id != SpendDashboardSource.codexProxySourceID else { return nil }
+                return ShareStatsProviderPayload(
                     provider: row.provider,
                     providerName: row.displayName,
                     subscriptionName: subscriptionNames[row.id]?.displayName,
