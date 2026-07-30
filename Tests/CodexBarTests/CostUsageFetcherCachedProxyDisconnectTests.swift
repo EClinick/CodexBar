@@ -3,6 +3,93 @@ import Testing
 @testable import CodexBarCore
 
 struct CostUsageFetcherCachedProxyDisconnectTests {
+    @Test
+    func `disconnect during proxy scan excludes the stale Codex report`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let day = try env.makeLocalNoon(year: 2026, month: 7, day: 24)
+        _ = try env.writeClaudeProjectFile(
+            relativePath: "proxy-race/session.jsonl",
+            contents: env.jsonl([[
+                "type": "assistant",
+                "timestamp": env.isoString(for: day),
+                "sessionId": "session-proxy-race",
+                "requestId": "request-proxy-race",
+                "message": [
+                    "id": "message-proxy-race",
+                    "model": "claude-sonnet-4-6",
+                    "usage": ["input_tokens": 100, "output_tokens": 5],
+                ],
+            ]]))
+
+        let proxyHome = env.root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        let proxyLogs = proxyHome.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: proxyLogs, withIntermediateDirectories: true)
+        try Data(#"{"type":"codex"}"#.utf8)
+            .write(to: proxyHome.appendingPathComponent("codex-auth.json"))
+        let proxyLog = """
+        === REQUEST INFO ===
+        URL: /v1/messages
+        Timestamp: \(env.isoString(for: day))
+        === HEADERS ===
+        X-Claude-Code-Session-Id: session-proxy-race
+        === REQUEST BODY ===
+        {"model":"claude-sonnet-4-6"}
+        === API RESPONSE ===
+        """
+        try Data(proxyLog.utf8).write(to: proxyLogs.appendingPathComponent("request.log"))
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            [
+                CLIProxyAPIUsageRecord(
+                    timestamp: day,
+                    provider: "codex",
+                    executorType: "CodexExecutor",
+                    model: "gpt-5.5",
+                    alias: "claude-sonnet-4-6",
+                    endpoint: "/v1/messages",
+                    authType: "oauth",
+                    requestID: "request-proxy-race",
+                    tokens: .init(input: 100, output: 5, total: 105)),
+            ],
+            cacheRoot: env.cacheRoot,
+            now: day) == 1)
+
+        var options = CostUsageScanner.Options(
+            claudeProjectsRoots: [env.claudeProjectsRoot],
+            cacheRoot: env.cacheRoot,
+            claudeAttributionFilter: .codexBackendOnly,
+            cliProxyAPIHome: proxyHome)
+        options.forceRescan = true
+        var didDisconnect = false
+        let report = try CostUsageScanner.loadClaudeDaily(
+            provider: .claude,
+            range: CostUsageScanner.CostUsageDayRange(since: day, until: day),
+            now: day,
+            options: options,
+            checkCancellation: {
+                guard !didDisconnect else { return }
+                didDisconnect = true
+                #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+                    true,
+                    stateRoot: env.cacheRoot))
+            })
+
+        #expect(didDisconnect)
+        #expect(report.data.isEmpty)
+
+        options.forceRescan = false
+        options.claudeAttributionFilter = .excludeCodexBackend
+        let claudeReport = try CostUsageScanner.loadClaudeDaily(
+            provider: .claude,
+            range: CostUsageScanner.CostUsageDayRange(since: day, until: day),
+            now: day,
+            options: options,
+            checkCancellation: nil)
+        #expect(claudeReport.data.first?.totalTokens == 105)
+        #expect(claudeReport.data.first?.modelBreakdowns?.first?.attribution == nil)
+    }
+
     @Test(arguments: ["claude-sonnet-4-6", "gpt-5.5"])
     func `disconnect strips surviving cached proxy attribution`(model: String) async throws {
         let env = try CostUsageTestEnvironment()

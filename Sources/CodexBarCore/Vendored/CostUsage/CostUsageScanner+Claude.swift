@@ -967,12 +967,22 @@ extension CostUsageScanner {
         }
 
         let modelsDevCatalog = CostUsagePricing.modelsDevCatalog(now: now, cacheRoot: options.cacheRoot)
+        let reportAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: options.cacheRoot)
+        let reportAttributionFilter: ClaudeAttributionFilter = if reportAttributionEnabled {
+            options.claudeAttributionFilter
+        } else {
+            switch options.claudeAttributionFilter {
+            case .all, .excludeCodexBackend: .all
+            case .codexBackendOnly: .codexBackendOnly
+            }
+        }
         return Self.buildClaudeReportFromCache(
             cache: cache,
             range: range,
-            attributionFilter: cliProxyAPIAttributionEnabled ? options.claudeAttributionFilter : .all,
-            attributionResolver: attributionResolver,
-            allowCachedCLIProxyAPIAttribution: cliProxyAPIAttributionEnabled,
+            attributionFilter: reportAttributionFilter,
+            attributionResolver: reportAttributionEnabled ? attributionResolver : nil,
+            allowCachedCLIProxyAPIAttribution: reportAttributionEnabled,
             modelsDevCatalog: modelsDevCatalog,
             modelsDevCacheRoot: options.cacheRoot)
     }
