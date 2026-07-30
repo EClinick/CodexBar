@@ -582,7 +582,7 @@ public enum CLIProxyAPIUsageCollector {
         await self.collectionGate.perform {
             do {
                 return try await CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
-                    stateRoot: cacheRoot)
+                    stateRoot: cacheRoot?.deletingLastPathComponent())
                 {
                     await self.collectUnserialized(
                         cacheRoot: cacheRoot,
