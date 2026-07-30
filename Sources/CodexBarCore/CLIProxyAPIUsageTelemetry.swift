@@ -418,14 +418,27 @@ enum CLIProxyAPIUsagePendingIO {
         var records: [CLIProxyAPIUsageRecord] = []
     }
 
-    static func load(pendingRoot: URL? = nil) -> [CLIProxyAPIUsageRecord]? {
+    private static let maximumRecordAge: TimeInterval = 366 * 24 * 60 * 60
+
+    static func load(
+        pendingRoot: URL? = nil,
+        now: Date = Date()) -> [CLIProxyAPIUsageRecord]?
+    {
         let url = self.pendingFileURL(pendingRoot: pendingRoot)
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
         guard let data = try? Data(contentsOf: url),
               let pendingBatch = try? self.decoder.decode(PendingBatch.self, from: data),
               pendingBatch.version == 1
         else { return nil }
-        return pendingBatch.records
+        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+        let retainedRecords = pendingBatch.records.filter { $0.timestamp >= cutoff }
+        if retainedRecords.count != pendingBatch.records.count {
+            guard retainedRecords.isEmpty
+                ? self.clear(pendingRoot: pendingRoot)
+                : self.save(retainedRecords, pendingRoot: pendingRoot)
+            else { return nil }
+        }
+        return retainedRecords
     }
 
     static func save(_ records: [CLIProxyAPIUsageRecord], pendingRoot: URL? = nil) -> Bool {

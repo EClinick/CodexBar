@@ -396,6 +396,23 @@ struct CLIProxyAPIUsageCacheTests {
                 == records.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) })
     }
 
+    @Test
+    func `pending journal prunes expired records without collection`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-pending-retention-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let now = try #require(CostUsageDateParser.parse("2026-07-30T12:00:00Z"))
+        let records = [
+            Self.record(id: "expired", timestamp: now.addingTimeInterval(-367 * 24 * 60 * 60)),
+            Self.record(id: "retained", timestamp: now.addingTimeInterval(-365 * 24 * 60 * 60)),
+        ]
+
+        #expect(CLIProxyAPIUsagePendingIO.save(records, pendingRoot: root))
+        #expect(CLIProxyAPIUsagePendingIO.load(pendingRoot: root, now: now)?.map(\.requestID) == ["retained"])
+        #expect(CLIProxyAPIUsagePendingIO.load(pendingRoot: root, now: now)?.map(\.requestID) == ["retained"])
+    }
+
     private static func record(id: String, timestamp: Date) -> CLIProxyAPIUsageRecord {
         CLIProxyAPIUsageRecord(
             timestamp: timestamp,

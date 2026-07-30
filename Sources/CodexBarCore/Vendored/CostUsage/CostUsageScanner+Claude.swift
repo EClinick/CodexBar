@@ -927,11 +927,43 @@ extension CostUsageScanner {
             cache.scanUntilKey = range.scanUntilKey
             cache.lastScanUnixMs = nowMs
             try checkCancellation?()
-            CostUsageCacheIO.save(
-                provider: provider,
-                cache: cache,
-                cacheRoot: options.cacheRoot,
-                calendar: range.calendar)
+            try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                stateRoot: options.cacheRoot?.deletingLastPathComponent())
+            {
+                if CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+                    stateRoot: options.cacheRoot)
+                {
+                    for path in cache.files.keys {
+                        guard var file = cache.files[path], let rows = file.claudeRows else { continue }
+                        file.claudeRows = rows.map { row in
+                            guard row.attribution?.route == .cliProxyAPI else { return row }
+                            return ClaudeUsageRow(
+                                dayKey: row.dayKey,
+                                model: row.model,
+                                sessionId: row.sessionId,
+                                messageId: row.messageId,
+                                requestId: row.requestId,
+                                timestampUnixMs: row.timestampUnixMs,
+                                isSidechain: row.isSidechain,
+                                pathRole: row.pathRole,
+                                input: row.input,
+                                cacheRead: row.cacheRead,
+                                cacheCreate: row.cacheCreate,
+                                cacheCreate1h: row.cacheCreate1h,
+                                output: row.output,
+                                costNanos: row.costNanos,
+                                costPriced: row.costPriced,
+                                attribution: nil)
+                        }
+                        cache.files[path] = file
+                    }
+                }
+                CostUsageCacheIO.save(
+                    provider: provider,
+                    cache: cache,
+                    cacheRoot: options.cacheRoot,
+                    calendar: range.calendar)
+            }
         }
 
         let modelsDevCatalog = CostUsagePricing.modelsDevCatalog(now: now, cacheRoot: options.cacheRoot)
