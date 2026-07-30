@@ -70,8 +70,10 @@ struct CostUsageFetcherCachedProxyTimeZoneTests {
         let claudeCache = CostUsageCacheIO.load(provider: .claude, cacheRoot: env.cacheRoot)
         #expect(!claudeCache.days.isEmpty)
         var staleZoneCalendar = options.calendar
-        staleZoneCalendar.timeZone = try #require(TimeZone(
-            identifier: options.calendar.timeZone.identifier == "UTC" ? "Asia/Bangkok" : "UTC"))
+        staleZoneCalendar.timeZone = try #require(
+            ["UTC", "Asia/Bangkok"]
+                .compactMap(TimeZone.init(identifier:))
+                .first { $0.identifier != options.calendar.timeZone.identifier })
         CostUsageCacheIO.save(
             provider: .claude,
             cache: claudeCache,
