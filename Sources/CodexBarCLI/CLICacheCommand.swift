@@ -53,21 +53,12 @@ extension CodexBarCLI {
         }
 
         if clearCost {
-            let fm = FileManager.default
-            var cleared = 0
-            var costError: String?
-            for cacheDir in CostUsageCacheLocations.directories(fileManager: fm)
-                where fm.fileExists(atPath: cacheDir.path)
-            {
-                do {
-                    try fm.removeItem(at: cacheDir)
-                    cleared += 1
-                } catch {
-                    costError = error.localizedDescription
-                    break
-                }
-            }
-            results.append(CacheClearResult(cache: "cost", provider: nil, cleared: cleared, error: costError))
+            let result = CostUsageCacheLocations.clearAllCostUsageCaches()
+            results.append(CacheClearResult(
+                cache: "cost",
+                provider: nil,
+                cleared: result.cleared,
+                error: result.errorDescription))
         }
 
         switch output.format {

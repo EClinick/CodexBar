@@ -321,6 +321,29 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
+    func `corrupt durable cache is preserved instead of overwritten`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-corrupt-cache-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let cacheURL = CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: root)
+        try fileManager.createDirectory(
+            at: cacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        let corruptData = Data(#"{"version":2,"records":[]}"#.utf8)
+        try corruptData.write(to: cacheURL)
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+
+        let result = CLIProxyAPIUsageCacheIO.merge(
+            [Self.record(id: "new", timestamp: timestamp)],
+            cacheRoot: root,
+            now: timestamp)
+
+        #expect(result == nil)
+        #expect(try Data(contentsOf: cacheURL) == corruptData)
+    }
+
+    @Test
     func `fallback record identity survives pending journal round trips within one second`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory

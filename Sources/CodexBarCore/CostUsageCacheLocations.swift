@@ -1,4 +1,16 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+
+public struct CostUsageCacheClearResult: Equatable, Sendable {
+    public let cleared: Int
+    public let errorDescription: String?
+}
 
 public enum CostUsageCacheLocations {
     static let cliProxyAPIUsageFileName = "cliproxyapi-usage-v1.json"
@@ -15,6 +27,63 @@ public enum CostUsageCacheLocations {
                 .appendingPathComponent("CodexBar", isDirectory: true)
                 .appendingPathComponent("cost-usage", isDirectory: true)
         }
+    }
+
+    public static func clearAllCostUsageCaches(
+        fileManager: FileManager = .default) -> CostUsageCacheClearResult
+    {
+        self.clearAllCostUsageCaches(
+            in: self.directories(fileManager: fileManager),
+            stateRoot: nil,
+            fileManager: fileManager)
+    }
+
+    static func clearAllCostUsageCaches(
+        in directories: [URL],
+        stateRoot: URL?,
+        fileManager: FileManager = .default) -> CostUsageCacheClearResult
+    {
+        do {
+            return try self.withCLIProxyAPIInterprocessLock(
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            {
+                var cleared = 0
+                for directory in directories where fileManager.fileExists(atPath: directory.path) {
+                    do {
+                        try fileManager.removeItem(at: directory)
+                        cleared += 1
+                    } catch {
+                        return CostUsageCacheClearResult(
+                            cleared: cleared,
+                            errorDescription: error.localizedDescription)
+                    }
+                }
+                return CostUsageCacheClearResult(cleared: cleared, errorDescription: nil)
+            }
+        } catch {
+            return CostUsageCacheClearResult(cleared: 0, errorDescription: error.localizedDescription)
+        }
+    }
+
+    static func withCLIProxyAPIInterprocessLock<T>(
+        stateRoot: URL?,
+        fileManager: FileManager = .default,
+        operation: () throws -> T) throws -> T
+    {
+        let descriptor = try self.acquireCLIProxyAPILock(stateRoot: stateRoot, fileManager: fileManager)
+        defer { self.releaseCLIProxyAPILock(descriptor) }
+        return try operation()
+    }
+
+    static func withCLIProxyAPIInterprocessLock<T>(
+        stateRoot: URL?,
+        fileManager: FileManager = .default,
+        operation: () async throws -> T) async throws -> T
+    {
+        let descriptor = try self.acquireCLIProxyAPILock(stateRoot: stateRoot, fileManager: fileManager)
+        defer { self.releaseCLIProxyAPILock(descriptor) }
+        return try await operation()
     }
 
     @discardableResult
@@ -99,5 +168,33 @@ public enum CostUsageCacheLocations {
             in: .userDomainMask).first!
             .appendingPathComponent("CodexBar", isDirectory: true)
         return root.appendingPathComponent(self.cliProxyAPIDisconnectedFileName, isDirectory: false)
+    }
+
+    private static func acquireCLIProxyAPILock(
+        stateRoot: URL?,
+        fileManager: FileManager) throws -> Int32
+    {
+        let root = stateRoot ?? fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first!
+            .appendingPathComponent("CodexBar", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        let lockURL = root.appendingPathComponent("cliproxyapi-collection.lock", isDirectory: false)
+        let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        while flock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else {
+                close(descriptor)
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+        return descriptor
+    }
+
+    private static func releaseCLIProxyAPILock(_ descriptor: Int32) {
+        _ = flock(descriptor, LOCK_UN)
+        close(descriptor)
     }
 }

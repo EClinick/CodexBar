@@ -128,6 +128,12 @@ enum CLIProxyAPIUsageCacheIO {
         var records: [CLIProxyAPIUsageRecord] = []
     }
 
+    private enum CacheReadResult {
+        case missing
+        case valid(Cache)
+        case invalid
+    }
+
     private static let cacheLock = NSLock()
     private static let maximumRecordAge: TimeInterval = 366 * 24 * 60 * 60
 
@@ -155,7 +161,7 @@ enum CLIProxyAPIUsageCacheIO {
             let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
             return self.loadCache(
                 cacheRoot: cacheRoot,
-                legacyCacheRoot: legacyCacheRoot).records.filter { $0.timestamp >= cutoff }
+                legacyCacheRoot: legacyCacheRoot)?.records.filter { $0.timestamp >= cutoff } ?? []
         }
     }
 
@@ -182,9 +188,10 @@ enum CLIProxyAPIUsageCacheIO {
     {
         self.withExclusiveAccess {
             let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
-            let existingCache = self.loadCache(
+            guard let existingCache = self.loadCache(
                 cacheRoot: cacheRoot,
                 legacyCacheRoot: legacyCacheRoot)
+            else { return nil }
             var byKey: [String: CLIProxyAPIUsageRecord] = [:]
             for record in existingCache.records where record.timestamp >= cutoff {
                 byKey[self.recordKey(record)] = record
@@ -272,15 +279,30 @@ enum CLIProxyAPIUsageCacheIO {
             .appendingPathComponent("CodexBar", isDirectory: true)
     }
 
-    private static func loadCache(cacheRoot: URL?, legacyCacheRoot: URL?) -> Cache {
+    private static func loadCache(cacheRoot: URL?, legacyCacheRoot: URL?) -> Cache? {
         let durableURL = self.cacheFileURL(cacheRoot: cacheRoot)
-        let durableCache = self.decodeCache(at: durableURL)
+        let durableCache: Cache?
+        switch self.readCache(at: durableURL) {
+        case .missing:
+            durableCache = nil
+        case let .valid(cache):
+            durableCache = cache
+        case .invalid:
+            return nil
+        }
         guard let legacyCacheRoot else { return durableCache ?? Cache() }
 
         let legacyURL = self.legacyCacheFileURL(cacheRoot: legacyCacheRoot)
-        guard legacyURL.standardizedFileURL != durableURL.standardizedFileURL,
-              let legacyCache = self.decodeCache(at: legacyURL)
-        else { return durableCache ?? Cache() }
+        guard legacyURL.standardizedFileURL != durableURL.standardizedFileURL else {
+            return durableCache ?? Cache()
+        }
+        let legacyCache: Cache
+        switch self.readCache(at: legacyURL) {
+        case let .valid(cache):
+            legacyCache = cache
+        case .missing, .invalid:
+            return durableCache ?? Cache()
+        }
 
         let migratedCache = self.mergedCaches(legacy: legacyCache, durable: durableCache)
         if self.save(migratedCache, cacheRoot: cacheRoot) {
@@ -289,12 +311,13 @@ enum CLIProxyAPIUsageCacheIO {
         return migratedCache
     }
 
-    private static func decodeCache(at url: URL) -> Cache? {
+    private static func readCache(at url: URL, fileManager: FileManager = .default) -> CacheReadResult {
+        guard fileManager.fileExists(atPath: url.path) else { return .missing }
         guard let data = try? Data(contentsOf: url),
               let cache = try? self.decoder.decode(Cache.self, from: data),
               cache.version == 1
-        else { return nil }
-        return cache
+        else { return .invalid }
+        return .valid(cache)
     }
 
     private static func mergedCaches(legacy: Cache, durable: Cache?) -> Cache {
@@ -557,11 +580,19 @@ public enum CLIProxyAPIUsageCollector {
         client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
     {
         await self.collectionGate.perform {
-            await self.collectUnserialized(
-                cacheRoot: cacheRoot,
-                pendingRoot: pendingRoot,
-                shouldContinue: shouldContinue,
-                client: client)
+            do {
+                return try await CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                    stateRoot: cacheRoot)
+                {
+                    await self.collectUnserialized(
+                        cacheRoot: cacheRoot,
+                        pendingRoot: pendingRoot,
+                        shouldContinue: shouldContinue,
+                        client: client)
+                }
+            } catch {
+                return .failed("Could not lock CLIProxyAPI usage telemetry: \(error.localizedDescription)")
+            }
         }
     }
 

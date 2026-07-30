@@ -233,6 +233,38 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `telemetry plausible for two requests does not claim either upstream`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(
+                    sessionID: "session-2",
+                    model: "gpt-5.6-sol",
+                    timestamp: timestamp.addingTimeInterval(2)),
+            ],
+            usageRecords: [
+                Self.record(
+                    timestamp: timestamp.addingTimeInterval(1),
+                    provider: "codex",
+                    authType: "oauth"),
+            ])
+
+        for sessionID in ["session-1", "session-2"] {
+            let attribution = resolver.attribution(
+                model: "gpt-5.6-sol",
+                modelProvider: .openAI,
+                sessionID: sessionID,
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: Self.tokens)
+
+            #expect(attribution.route == .cliProxyAPI)
+            #expect(attribution.upstream == nil)
+            #expect(!attribution.evidence.contains(.cliProxyUsageTelemetry))
+        }
+    }
+
+    @Test
     func `failed and token mismatched telemetry are ignored`() {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(

@@ -27,6 +27,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     private static let observationCache = ObservationCache()
 
     private let observationsBySessionID: [String: [Observation]]
+    private let observationsByCanonicalModel: [String: [Observation]]
     private let usageRecordsByCanonicalModel: [String: [CLIProxyAPIUsageRecord]]
     private let authProviders: [AuthProvider]
     private let hasConfiguredOpenAIAPIUpstream: Bool
@@ -38,6 +39,9 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         hasConfiguredOpenAIAPIUpstream: Bool = false)
     {
         self.observationsBySessionID = Dictionary(grouping: observations, by: \.sessionID)
+        self.observationsByCanonicalModel = Dictionary(
+            grouping: observations,
+            by: { Self.canonicalModel($0.model) })
         self.usageRecordsByCanonicalModel = Self.indexUsageRecords(usageRecords)
         self.authProviders = authProviders
         self.hasConfiguredOpenAIAPIUpstream = hasConfiguredOpenAIAPIUpstream
@@ -157,7 +161,12 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 candidates.append(record)
             }
         }
-        return candidates.count == 1 ? candidates[0] : nil
+        guard candidates.count == 1, let candidate = candidates.first else { return nil }
+        let plausibleObservations = self.observationsByCanonicalModel[canonicalModel]?.filter {
+            guard let timestamp = $0.timestamp else { return false }
+            return abs(timestamp.timeIntervalSince(candidate.timestamp)) <= Self.maximumTelemetryMatchDistance
+        } ?? []
+        return plausibleObservations.count == 1 ? candidate : nil
     }
 
     private static func indexUsageRecords(
