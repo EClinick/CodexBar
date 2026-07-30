@@ -432,7 +432,8 @@ extension UsageStore {
     }
 
     func clearCostUsageCache(
-        clearDirectories: (@Sendable () async -> String?)? = nil) async -> String?
+        clearDirectories: (@Sendable () async -> String?)? = nil,
+        fileManager: FileManager = .default) async -> String?
     {
         let collectorTask = self.stopCLIProxyAPIUsageCollector()
         await collectorTask?.value
@@ -442,24 +443,15 @@ extension UsageStore {
             }
         }
 
+        let cacheDirectories = CostUsageCacheLocations.directories(fileManager: fileManager)
+        let cliProxyAPIStateRoot = cacheDirectories[1].deletingLastPathComponent()
         let errorMessage: String? = if let clearDirectories {
             await clearDirectories()
         } else {
             await Task.detached(priority: .utility) {
-                let fm = FileManager.default
-                let cacheDirs = CostUsageCacheLocations.directories(fileManager: fm)
-
-                for cacheDir in cacheDirs {
-                    do {
-                        try fm.removeItem(at: cacheDir)
-                    } catch let error as NSError {
-                        if error.domain == NSCocoaErrorDomain, error.code == NSFileNoSuchFileError {
-                            continue
-                        }
-                        return error.localizedDescription
-                    }
-                }
-                return nil
+                CostUsageCacheLocations.clearAllCostUsageCaches(
+                    in: cacheDirectories,
+                    stateRoot: cliProxyAPIStateRoot).errorDescription
             }.value
         }
 

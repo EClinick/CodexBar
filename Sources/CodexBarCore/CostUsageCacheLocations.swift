@@ -38,7 +38,7 @@ public enum CostUsageCacheLocations {
             fileManager: fileManager)
     }
 
-    static func clearAllCostUsageCaches(
+    public static func clearAllCostUsageCaches(
         in directories: [URL],
         stateRoot: URL?,
         fileManager: FileManager = .default) -> CostUsageCacheClearResult

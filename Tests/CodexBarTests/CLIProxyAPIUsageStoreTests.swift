@@ -199,4 +199,55 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(error == nil)
         #expect(deletionStartedAfterDrain.value)
     }
+
+    @Test
+    func `clearing cost cache uses the shared locked deletion path`() async throws {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
+        let fileManager = CLIProxyAPITestFileManager(root: root)
+        let cacheDirectory = CostUsageCacheLocations.directories(fileManager: fileManager)[0]
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let usageFile = cacheDirectory.appendingPathComponent("usage.json")
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let environment = [
+            "HOME": root.path,
+            "CODEX_HOME": root.appendingPathComponent(".codex", isDirectory: true).path,
+        ]
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: environment),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: environment)
+        let error = await store.clearCostUsageCache(fileManager: fileManager)
+
+        #expect(error == nil)
+        #expect(!FileManager.default.fileExists(atPath: cacheDirectory.path))
+    }
+}
+
+private final class CLIProxyAPITestFileManager: FileManager {
+    private let root: URL
+
+    init(root: URL) {
+        self.root = root
+        super.init()
+    }
+
+    override func urls(
+        for directory: FileManager.SearchPathDirectory,
+        in _: FileManager.SearchPathDomainMask) -> [URL]
+    {
+        switch directory {
+        case .cachesDirectory:
+            [self.root.appendingPathComponent("Caches", isDirectory: true)]
+        case .applicationSupportDirectory:
+            [self.root.appendingPathComponent("Application Support", isDirectory: true)]
+        default:
+            super.urls(for: directory, in: .userDomainMask)
+        }
+    }
 }
