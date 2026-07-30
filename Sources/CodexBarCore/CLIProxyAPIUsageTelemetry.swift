@@ -698,7 +698,9 @@ public enum CLIProxyAPIUsageCollector {
             for _ in 0..<self.maximumBatches {
                 guard configurationIsCurrent() else { return .notConfigured }
                 guard !Task.isCancelled, await shouldContinue() else { return .disabled }
-                let poppedBatch = try await client.pop(count: self.batchSize)
+                let poppedBatch = try await Task.detached(priority: .utility) {
+                    try await client.pop(count: self.batchSize)
+                }.value
                 if !poppedBatch.records.isEmpty {
                     guard CLIProxyAPIUsagePendingIO.save(
                         poppedBatch.records,

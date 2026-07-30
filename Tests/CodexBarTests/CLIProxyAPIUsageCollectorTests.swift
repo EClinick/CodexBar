@@ -317,6 +317,55 @@ struct CLIProxyAPIUsageCollectorTests {
         #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).count == 100)
     }
 
+    @Test
+    func `collector stages an in flight destructive pop before honoring cancellation`() async throws {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-cancelled-pop-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let record = CLIProxyAPIUsageRecord(
+            timestamp: timestamp,
+            provider: "codex",
+            model: "gpt-5.5",
+            alias: "gpt-5.5",
+            endpoint: "POST /v1/messages",
+            authType: "oauth",
+            requestID: "request-in-flight",
+            tokens: .init(input: 10, output: 20, total: 30))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode([record])
+        let popStarted = DispatchSemaphore(value: 0)
+        let releasePop = DispatchSemaphore(value: 0)
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                popStarted.signal()
+                _ = await Self.waitForSignal(releasePop, timeout: .distantFuture)
+                try Task.checkCancellation()
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (data, response)
+            })
+        let collection = Task {
+            await CLIProxyAPIUsageCollector.collect(
+                cacheRoot: cacheRoot,
+                client: client)
+        }
+        #expect(await Self.waitForSignal(popStarted, timeout: .now() + 1))
+
+        collection.cancel()
+        releasePop.signal()
+
+        #expect(await collection.value == .collected(1))
+        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID) == ["request-in-flight"])
+    }
+
     private static func waitForSignal(
         _ semaphore: DispatchSemaphore,
         timeout: DispatchTime) async -> Bool
