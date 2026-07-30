@@ -588,12 +588,14 @@ public enum CLIProxyAPIUsageCollector {
         shouldContinue: @escaping @Sendable () async -> Bool = { true }) async
         -> CLIProxyAPIUsageCollectionResult
     {
-        guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: cacheRoot) else {
-            return .notConfigured
-        }
         guard let settings, settings.isConfigured else { return .notConfigured }
         return await self.collect(
             cacheRoot: cacheRoot,
+            configurationIsCurrent: {
+                guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: cacheRoot)
+                else { return false }
+                return CLIProxyAPIConnectionSettingsStore.load() == settings
+            },
             shouldContinue: shouldContinue,
             client: CLIProxyAPIUsageQueueClient(settings: settings))
     }
@@ -601,15 +603,18 @@ public enum CLIProxyAPIUsageCollector {
     static func collect(
         cacheRoot: URL? = nil,
         pendingRoot: URL? = nil,
+        configurationIsCurrent: @escaping @Sendable () -> Bool = { true },
         shouldContinue: @escaping @Sendable () async -> Bool = { true },
         client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
     {
-        await self.collectionGate.perform {
+        guard configurationIsCurrent() else { return .notConfigured }
+        return await self.collectionGate.perform {
             do {
                 return try await CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
                     stateRoot: cacheRoot?.deletingLastPathComponent())
                 {
-                    await self.collectUnserialized(
+                    guard configurationIsCurrent() else { return .notConfigured }
+                    return await self.collectUnserialized(
                         cacheRoot: cacheRoot,
                         pendingRoot: pendingRoot,
                         shouldContinue: shouldContinue,

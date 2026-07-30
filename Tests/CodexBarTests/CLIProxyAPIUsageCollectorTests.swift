@@ -222,4 +222,62 @@ struct CLIProxyAPIUsageCollectorTests {
         #expect(await probe.popCount == 1)
         #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).count == 100)
     }
+
+    @Test
+    func `collector rechecks configuration after acquiring the interprocess lock`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-queued-disconnect-\(UUID().uuidString)", isDirectory: true)
+        let cacheRoot = root.appendingPathComponent("cost-usage", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lockAcquired = DispatchSemaphore(value: 0)
+        let releaseLock = DispatchSemaphore(value: 0)
+        let configurationChecked = DispatchSemaphore(value: 0)
+        let popProbe = CLIProxyAPICollectionContinuationProbe()
+        let lockHolder = Task.detached {
+            try await CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root) {
+                lockAcquired.signal()
+                _ = await Self.waitForSignal(releaseLock, timeout: .distantFuture)
+            }
+        }
+        #expect(await Self.waitForSignal(lockAcquired, timeout: .now() + 1))
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                await popProbe.recordPop()
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (Data("[]".utf8), response)
+            })
+        let collection = Task.detached {
+            await CLIProxyAPIUsageCollector.collect(
+                cacheRoot: cacheRoot,
+                configurationIsCurrent: {
+                    configurationChecked.signal()
+                    return !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: root)
+                },
+                client: client)
+        }
+        #expect(await Self.waitForSignal(configurationChecked, timeout: .now() + 1))
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(true, stateRoot: root))
+        releaseLock.signal()
+
+        try await lockHolder.value
+        #expect(await collection.value == .notConfigured)
+        #expect(await popProbe.popCount == 0)
+    }
+
+    private static func waitForSignal(
+        _ semaphore: DispatchSemaphore,
+        timeout: DispatchTime) async -> Bool
+    {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: semaphore.wait(timeout: timeout) == .success)
+            }
+        }
+    }
 }
