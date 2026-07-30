@@ -158,10 +158,40 @@ enum CLIProxyAPIUsageCacheIO {
         now: Date = Date()) -> [CLIProxyAPIUsageRecord]
     {
         let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+        if self.hasLegacyCacheToMigrate(
+            cacheRoot: cacheRoot,
+            legacyCacheRoot: legacyCacheRoot)
+        {
+            do {
+                return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                    stateRoot: cacheRoot?.deletingLastPathComponent())
+                {
+                    self.withExclusiveAccess {
+                        guard let currentCache = self.loadCache(
+                            cacheRoot: cacheRoot,
+                            legacyCacheRoot: legacyCacheRoot)
+                        else { return [] }
+                        let retainedRecords = currentCache.records.filter { $0.timestamp >= cutoff }
+                        let retainedCache = Cache(records: retainedRecords)
+                        if retainedCache != currentCache {
+                            _ = self.save(retainedCache, cacheRoot: cacheRoot)
+                        }
+                        return retainedRecords
+                    }
+                }
+            } catch {
+                return self.withExclusiveAccess {
+                    self.loadCache(
+                        cacheRoot: cacheRoot,
+                        legacyCacheRoot: nil)?.records.filter { $0.timestamp >= cutoff } ?? []
+                }
+            }
+        }
+
         let initialSnapshot: (records: [CLIProxyAPIUsageRecord], needsPruning: Bool) = self.withExclusiveAccess {
             guard let existingCache = self.loadCache(
                 cacheRoot: cacheRoot,
-                legacyCacheRoot: legacyCacheRoot)
+                legacyCacheRoot: nil)
             else { return ([], false) }
             let retainedRecords = existingCache.records.filter { $0.timestamp >= cutoff }
             return (retainedRecords, retainedRecords.count != existingCache.records.count)
@@ -175,7 +205,7 @@ enum CLIProxyAPIUsageCacheIO {
                 self.withExclusiveAccess {
                     guard let currentCache = self.loadCache(
                         cacheRoot: cacheRoot,
-                        legacyCacheRoot: legacyCacheRoot)
+                        legacyCacheRoot: nil)
                     else { return [] }
                     let retainedRecords = currentCache.records.filter { $0.timestamp >= cutoff }
                     let retainedCache = Cache(records: retainedRecords)
@@ -302,6 +332,18 @@ enum CLIProxyAPIUsageCacheIO {
     private static func defaultLegacyCacheRoot() -> URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("CodexBar", isDirectory: true)
+    }
+
+    private static func hasLegacyCacheToMigrate(
+        cacheRoot: URL?,
+        legacyCacheRoot: URL?,
+        fileManager: FileManager = .default) -> Bool
+    {
+        guard let legacyCacheRoot else { return false }
+        let durableURL = self.cacheFileURL(cacheRoot: cacheRoot)
+        let legacyURL = self.legacyCacheFileURL(cacheRoot: legacyCacheRoot)
+        return legacyURL.standardizedFileURL != durableURL.standardizedFileURL
+            && fileManager.fileExists(atPath: legacyURL.path)
     }
 
     private static func loadCache(cacheRoot: URL?, legacyCacheRoot: URL?) -> Cache? {

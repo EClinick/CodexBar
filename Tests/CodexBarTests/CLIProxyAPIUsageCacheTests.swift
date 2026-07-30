@@ -263,7 +263,7 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `migration and collection share exclusive cache access`() async throws {
+    func `legacy migration waits for the collector interprocess lock`() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-usage-lock-\(UUID().uuidString)", isDirectory: true)
@@ -284,12 +284,15 @@ struct CLIProxyAPIUsageCacheTests {
         let releaseLock = DispatchSemaphore(value: 0)
         let loadStarted = DispatchSemaphore(value: 0)
         let loadFinished = DispatchSemaphore(value: 0)
-        let mergeStarted = DispatchSemaphore(value: 0)
-        let mergeFinished = DispatchSemaphore(value: 0)
         let lockHolder = Task.detached {
-            CLIProxyAPIUsageCacheIO.withExclusiveAccess {
+            try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root) {
                 lockAcquired.signal()
                 releaseLock.wait()
+                #expect(CLIProxyAPIUsageCacheIO.merge(
+                    [collectedRecord],
+                    cacheRoot: durableRoot,
+                    legacyCacheRoot: nil,
+                    now: timestamp) == 1)
             }
         }
         #expect(await Self.waitForSignal(lockAcquired, timeout: .now() + 1))
@@ -303,31 +306,15 @@ struct CLIProxyAPIUsageCacheTests {
             loadFinished.signal()
             return records
         }
-        let mergeTask = Task.detached {
-            mergeStarted.signal()
-            let result = CLIProxyAPIUsageCacheIO.merge(
-                [collectedRecord],
-                cacheRoot: durableRoot,
-                legacyCacheRoot: legacyRoot,
-                now: timestamp)
-            mergeFinished.signal()
-            return result
-        }
         #expect(await Self.waitForSignal(loadStarted, timeout: .now() + 1))
-        #expect(await Self.waitForSignal(mergeStarted, timeout: .now() + 1))
         let loadFinishedBeforeRelease = await Self.waitForSignal(
             loadFinished,
             timeout: .now() + .milliseconds(50))
-        let mergeFinishedBeforeRelease = await Self.waitForSignal(
-            mergeFinished,
-            timeout: .now() + .milliseconds(50))
         #expect(!loadFinishedBeforeRelease)
-        #expect(!mergeFinishedBeforeRelease)
 
         releaseLock.signal()
-        await lockHolder.value
-        _ = await loadTask.value
-        #expect(await mergeTask.value == 1)
+        try await lockHolder.value
+        #expect(await Set(loadTask.value.map(\.requestID)) == ["legacy", "collected"])
         let finalRecords = CLIProxyAPIUsageCacheIO.load(
             cacheRoot: durableRoot,
             legacyCacheRoot: legacyRoot,
