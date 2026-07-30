@@ -450,6 +450,85 @@ extension CostUsageScanner {
         return rows
     }
 
+    private static func reconcileClaudeAttributions(
+        cache: inout CostUsageCache,
+        attributionResolver: CLIProxyAPIAttributionResolver,
+        modelsDevCatalog: ModelsDevCatalog?,
+        modelsDevCacheRoot: URL?)
+    {
+        let items = Self.reconciledClaudeRows(cache: cache).compactMap { row
+            -> ClaudeAttributionReconciliationItem? in
+            guard let key = Self.claudeCanonicalRowKey(row) else { return nil }
+            let modelProvider = if let cachedProvider = row.attribution?.modelProvider,
+                                   cachedProvider != .unknown
+            {
+                cachedProvider
+            } else {
+                CostUsagePricing.modelProvider(
+                    for: row.model,
+                    modelsDevCatalog: modelsDevCatalog,
+                    modelsDevCacheRoot: modelsDevCacheRoot)
+            }
+            return ClaudeAttributionReconciliationItem(
+                key: key,
+                request: CLIProxyAPIAttributionResolver.Request(
+                    model: row.model,
+                    modelProvider: modelProvider,
+                    sessionID: row.sessionId,
+                    timestampUnixMs: row.timestampUnixMs,
+                    tokens: .init(
+                        input: row.input,
+                        cacheRead: row.cacheRead,
+                        cacheCreate: row.cacheCreate,
+                        output: row.output)),
+                modelProvider: modelProvider)
+        }
+        let requests = items.map(\.request)
+        let liveAttributions = attributionResolver.attributions(for: requests)
+        var replacementKeys: Set<String> = []
+        var replacements: [String: CostUsageAttribution] = [:]
+        for (index, item) in items.enumerated()
+            where attributionResolver.hasMatchingObservation(for: item.request)
+        {
+            replacementKeys.insert(item.key)
+            let liveAttribution = liveAttributions[index]
+            let replacement: CostUsageAttribution? = if liveAttribution.route == .cliProxyAPI {
+                liveAttribution
+            } else if item.modelProvider != .anthropic {
+                liveAttribution
+            } else {
+                nil
+            }
+            replacements[item.key] = replacement
+        }
+        guard !replacementKeys.isEmpty else { return }
+
+        for path in cache.files.keys {
+            guard var file = cache.files[path], let rows = file.claudeRows else { continue }
+            file.claudeRows = rows.map { row in
+                guard let key = Self.claudeCanonicalRowKey(row), replacementKeys.contains(key) else { return row }
+                return ClaudeUsageRow(
+                    dayKey: row.dayKey,
+                    model: row.model,
+                    sessionId: row.sessionId,
+                    messageId: row.messageId,
+                    requestId: row.requestId,
+                    timestampUnixMs: row.timestampUnixMs,
+                    isSidechain: row.isSidechain,
+                    pathRole: row.pathRole,
+                    input: row.input,
+                    cacheRead: row.cacheRead,
+                    cacheCreate: row.cacheCreate,
+                    cacheCreate1h: row.cacheCreate1h,
+                    output: row.output,
+                    costNanos: row.costNanos,
+                    costPriced: row.costPriced,
+                    attribution: replacements[key])
+            }
+            cache.files[path] = file
+        }
+    }
+
     private static func rebuildClaudeDays(cache: inout CostUsageCache) {
         var days: [String: [String: [Int]]] = [:]
 
@@ -835,6 +914,13 @@ extension CostUsageScanner {
                 cache.files.removeValue(forKey: key)
             }
 
+            if let attributionResolver {
+                Self.reconcileClaudeAttributions(
+                    cache: &cache,
+                    attributionResolver: attributionResolver,
+                    modelsDevCatalog: modelsDevCatalog,
+                    modelsDevCacheRoot: options.cacheRoot)
+            }
             Self.rebuildClaudeDays(cache: &cache)
             Self.pruneDays(cache: &cache, sinceKey: range.scanSinceKey, untilKey: range.scanUntilKey)
             cache.scanSinceKey = range.scanSinceKey
@@ -864,6 +950,12 @@ extension CostUsageScanner {
         var repricedCosts: [ClaudeDayModelKey: ClaudeRepricedCost] = [:]
     }
 
+    private struct ClaudeAttributionReconciliationItem {
+        let key: String
+        let request: CLIProxyAPIAttributionResolver.Request
+        let modelProvider: CostUsageAttribution.ModelProvider
+    }
+
     private struct ClaudeAttributionAggregationContext {
         let filter: ClaudeAttributionFilter
         let resolver: CLIProxyAPIAttributionResolver?
@@ -890,19 +982,20 @@ extension CostUsageScanner {
             }
             return (row: row, modelProvider: modelProvider)
         }
+        let requests = rowsWithProviders.map { item in
+            CLIProxyAPIAttributionResolver.Request(
+                model: item.row.model,
+                modelProvider: item.modelProvider,
+                sessionID: item.row.sessionId,
+                timestampUnixMs: item.row.timestampUnixMs,
+                tokens: .init(
+                    input: item.row.input,
+                    cacheRead: item.row.cacheRead,
+                    cacheCreate: item.row.cacheCreate,
+                    output: item.row.output))
+        }
         let liveAttributions: [CostUsageAttribution?] = if let attributionResolver = attributionContext.resolver {
-            attributionResolver.attributions(for: rowsWithProviders.map { item in
-                CLIProxyAPIAttributionResolver.Request(
-                    model: item.row.model,
-                    modelProvider: item.modelProvider,
-                    sessionID: item.row.sessionId,
-                    timestampUnixMs: item.row.timestampUnixMs,
-                    tokens: .init(
-                        input: item.row.input,
-                        cacheRead: item.row.cacheRead,
-                        cacheCreate: item.row.cacheCreate,
-                        output: item.row.output))
-            }).map(Optional.some)
+            attributionResolver.attributions(for: requests).map(Optional.some)
         } else {
             Array(repeating: nil, count: rowsWithProviders.count)
         }
@@ -910,6 +1003,7 @@ extension CostUsageScanner {
         for (index, item) in rowsWithProviders.enumerated() {
             let row = item.row
             let modelProvider = item.modelProvider
+            let request = requests[index]
             let liveAttribution = liveAttributions[index]
             let cachedAttribution: CostUsageAttribution? =
                 if !attributionContext.allowCachedCLIProxyAPIAttribution,
@@ -921,7 +1015,8 @@ extension CostUsageScanner {
             let attribution: CostUsageAttribution? = if liveAttribution?.route == .cliProxyAPI {
                 liveAttribution
             } else if attributionContext.allowCachedCLIProxyAPIAttribution,
-                      row.attribution?.route == .cliProxyAPI
+                      row.attribution?.route == .cliProxyAPI,
+                      attributionContext.resolver?.hasMatchingObservation(for: request) != true
             {
                 row.attribution
             } else if modelProvider != .anthropic {

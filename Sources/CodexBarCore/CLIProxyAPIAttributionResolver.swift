@@ -203,6 +203,13 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         }
     }
 
+    func hasMatchingObservation(for request: Request) -> Bool {
+        self.matchingObservation(
+            model: request.model,
+            sessionID: request.sessionID,
+            timestampUnixMs: request.timestampUnixMs) != nil
+    }
+
     private func attribution(
         request: Request,
         routeObservation: Observation?,

@@ -734,6 +734,7 @@ extension CostUsageFetcherTests {
         let nativeClaudeAssistant: [String: Any] = [
             "type": "assistant",
             "timestamp": env.isoString(for: day.addingTimeInterval(1)),
+            "sessionId": "session-proxy",
             "requestId": "request-claude",
             "message": [
                 "id": "message-claude",
