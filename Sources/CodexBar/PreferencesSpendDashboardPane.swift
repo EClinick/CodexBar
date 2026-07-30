@@ -322,11 +322,11 @@ struct SpendDashboardPane: View {
             self.cliProxyAPIStatus = "Enter a loopback URL and management key."
             return
         }
-        self.store.stopCLIProxyAPIUsageCollector()
         guard CLIProxyAPIConnectionSettingsStore.save(configuration) else {
             self.cliProxyAPIStatus = "Could not save the management key."
             return
         }
+        self.store.stopCLIProxyAPIUsageCollector()
 
         self.cliProxyAPIManagementKey = ""
         self.cliProxyAPIHasSavedConfiguration = true

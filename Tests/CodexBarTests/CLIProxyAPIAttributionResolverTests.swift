@@ -250,14 +250,16 @@ struct CLIProxyAPIAttributionResolverTests {
                     authType: "oauth"),
             ])
 
-        for sessionID in ["session-1", "session-2"] {
-            let attribution = resolver.attribution(
+        let attributions = resolver.attributions(for: ["session-1", "session-2"].map { sessionID in
+            CLIProxyAPIAttributionResolver.Request(
                 model: "gpt-5.6-sol",
                 modelProvider: .openAI,
                 sessionID: sessionID,
                 timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
                 tokens: Self.tokens)
+        })
 
+        for attribution in attributions {
             #expect(attribution.route == .cliProxyAPI)
             #expect(attribution.upstream == nil)
             #expect(!attribution.evidence.contains(.cliProxyUsageTelemetry))

@@ -1,0 +1,118 @@
+import Foundation
+import Testing
+@testable import CodexBarCore
+
+struct CLIProxyAPIAttributionBatchTests {
+    @Test
+    func `batch attribution preserves uniquely matched concurrent proxy requests`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let otherTokens = CLIProxyAPIAttributionResolver.TokenSignature(
+            input: 100,
+            cacheRead: 300,
+            cacheCreate: 400,
+            output: 200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(
+                    sessionID: "session-2",
+                    model: "gpt-5.6-sol",
+                    timestamp: timestamp.addingTimeInterval(2)),
+            ],
+            usageRecords: [
+                Self.record(
+                    timestamp: timestamp.addingTimeInterval(1),
+                    provider: "codex",
+                    authType: "oauth"),
+                Self.record(
+                    timestamp: timestamp.addingTimeInterval(3),
+                    provider: "openrouter",
+                    authType: "api_key",
+                    tokens: otherTokens),
+            ])
+        let requests = [
+            CLIProxyAPIAttributionResolver.Request(
+                model: "gpt-5.6-sol",
+                modelProvider: .openAI,
+                sessionID: "session-1",
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: Self.tokens),
+            CLIProxyAPIAttributionResolver.Request(
+                model: "gpt-5.6-sol",
+                modelProvider: .openAI,
+                sessionID: "session-2",
+                timestampUnixMs: Int64(timestamp.addingTimeInterval(2).timeIntervalSince1970 * 1000),
+                tokens: otherTokens),
+        ]
+
+        let attributions = resolver.attributions(for: requests)
+
+        #expect(attributions.map(\.upstream?.provider) == ["codex", "openrouter"])
+        #expect(attributions.allSatisfy { $0.evidence.contains(.cliProxyUsageTelemetry) })
+    }
+
+    @Test
+    func `batch attribution uses unique timestamps for concurrent requests with equal tokens`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(
+                    sessionID: "session-2",
+                    model: "gpt-5.6-sol",
+                    timestamp: timestamp.addingTimeInterval(4)),
+            ],
+            usageRecords: [
+                Self.record(timestamp: timestamp, provider: "codex", authType: "oauth"),
+                Self.record(
+                    timestamp: timestamp.addingTimeInterval(4),
+                    provider: "openrouter",
+                    authType: "api_key"),
+            ])
+        let attributions = resolver.attributions(for: [
+            .init(
+                model: "gpt-5.6-sol",
+                modelProvider: .openAI,
+                sessionID: "session-1",
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: Self.tokens),
+            .init(
+                model: "gpt-5.6-sol",
+                modelProvider: .openAI,
+                sessionID: "session-2",
+                timestampUnixMs: Int64(timestamp.addingTimeInterval(4).timeIntervalSince1970 * 1000),
+                tokens: Self.tokens),
+        ])
+
+        #expect(attributions.map(\.upstream?.provider) == ["codex", "openrouter"])
+    }
+
+    private static let tokens = CLIProxyAPIAttributionResolver.TokenSignature(
+        input: 10,
+        cacheRead: 30,
+        cacheCreate: 40,
+        output: 20)
+
+    private static func record(
+        timestamp: Date,
+        provider: String,
+        authType: String,
+        tokens: CLIProxyAPIAttributionResolver.TokenSignature = Self.tokens) -> CLIProxyAPIUsageRecord
+    {
+        CLIProxyAPIUsageRecord(
+            timestamp: timestamp,
+            provider: provider,
+            executorType: provider == "codex" ? "CodexExecutor" : "OpenAICompatExecutor",
+            model: "gpt-5.6-sol",
+            alias: "gpt-5.6-sol",
+            endpoint: "POST /v1/messages",
+            authType: authType,
+            requestID: "request-\(provider)-\(timestamp.timeIntervalSince1970)",
+            tokens: .init(
+                input: tokens.input,
+                output: tokens.output,
+                cacheRead: tokens.cacheRead,
+                cacheCreation: tokens.cacheCreate,
+                total: tokens.input + tokens.output + tokens.cacheRead + tokens.cacheCreate))
+    }
+}

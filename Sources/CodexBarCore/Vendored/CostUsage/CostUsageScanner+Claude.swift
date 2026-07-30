@@ -871,7 +871,7 @@ extension CostUsageScanner {
         modelsDevCacheRoot: URL?) -> ClaudeReportAggregation
     {
         var result = ClaudeReportAggregation()
-        for row in Self.reconciledClaudeRows(cache: cache) {
+        let rowsWithProviders = Self.reconciledClaudeRows(cache: cache).map { row in
             let modelProvider = if let cachedProvider = row.attribution?.modelProvider,
                                    cachedProvider != .unknown
             {
@@ -882,16 +882,29 @@ extension CostUsageScanner {
                     modelsDevCatalog: modelsDevCatalog,
                     modelsDevCacheRoot: modelsDevCacheRoot)
             }
-            let liveAttribution = attributionResolver?.attribution(
-                model: row.model,
-                modelProvider: modelProvider,
-                sessionID: row.sessionId,
-                timestampUnixMs: row.timestampUnixMs,
-                tokens: .init(
-                    input: row.input,
-                    cacheRead: row.cacheRead,
-                    cacheCreate: row.cacheCreate,
-                    output: row.output))
+            return (row: row, modelProvider: modelProvider)
+        }
+        let liveAttributions: [CostUsageAttribution?] = if let attributionResolver {
+            attributionResolver.attributions(for: rowsWithProviders.map { item in
+                CLIProxyAPIAttributionResolver.Request(
+                    model: item.row.model,
+                    modelProvider: item.modelProvider,
+                    sessionID: item.row.sessionId,
+                    timestampUnixMs: item.row.timestampUnixMs,
+                    tokens: .init(
+                        input: item.row.input,
+                        cacheRead: item.row.cacheRead,
+                        cacheCreate: item.row.cacheCreate,
+                        output: item.row.output))
+            }).map(Optional.some)
+        } else {
+            Array(repeating: nil, count: rowsWithProviders.count)
+        }
+
+        for (index, item) in rowsWithProviders.enumerated() {
+            let row = item.row
+            let modelProvider = item.modelProvider
+            let liveAttribution = liveAttributions[index]
             let attribution: CostUsageAttribution? = if liveAttribution?.route == .cliProxyAPI {
                 liveAttribution
             } else if row.attribution?.route == .cliProxyAPI {
