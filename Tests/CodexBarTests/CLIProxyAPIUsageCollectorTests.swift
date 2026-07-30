@@ -24,8 +24,8 @@ struct CLIProxyAPIUsageCollectorTests {
             CLIProxyAPIUsageRecord(
                 timestamp: timestamp,
                 provider: "codex",
-                model: "gpt-5.6-sol",
-                alias: "gpt-5.6-sol",
+                model: "gpt-5.5",
+                alias: "gpt-5.5",
                 endpoint: "POST /v1/messages",
                 authType: "oauth",
                 requestID: requestID,
@@ -75,8 +75,8 @@ struct CLIProxyAPIUsageCollectorTests {
         let record = CLIProxyAPIUsageRecord(
             timestamp: timestamp,
             provider: "codex",
-            model: "gpt-5.6-sol",
-            alias: "gpt-5.6-sol",
+            model: "gpt-5.5",
+            alias: "gpt-5.5",
             endpoint: "POST /v1/messages",
             authType: "oauth",
             requestID: "request-1",
@@ -144,8 +144,8 @@ struct CLIProxyAPIUsageCollectorTests {
         let record = CLIProxyAPIUsageRecord(
             timestamp: timestamp,
             provider: "codex",
-            model: "gpt-5.6-sol",
-            alias: "gpt-5.6-sol",
+            model: "gpt-5.5",
+            alias: "gpt-5.5",
             endpoint: "POST /v1/messages",
             authType: "oauth",
             requestID: "request-1",
@@ -187,8 +187,8 @@ struct CLIProxyAPIUsageCollectorTests {
             CLIProxyAPIUsageRecord(
                 timestamp: timestamp.addingTimeInterval(TimeInterval(index)),
                 provider: "codex",
-                model: "gpt-5.6-sol",
-                alias: "gpt-5.6-sol",
+                model: "gpt-5.5",
+                alias: "gpt-5.5",
                 endpoint: "POST /v1/messages",
                 authType: "oauth",
                 requestID: "request-\(index)",

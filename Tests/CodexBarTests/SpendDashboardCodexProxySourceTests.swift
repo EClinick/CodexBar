@@ -87,7 +87,7 @@ struct SpendDashboardCodexProxySourceTests {
             outputTokens: nil,
             totalTokens: 10,
             costUSD: cost,
-            modelsUsed: ["gpt-5.6-sol"],
+            modelsUsed: ["gpt-5.5"],
             modelBreakdowns: nil)
         return CostUsageTokenSnapshot(
             sessionTokens: 10,

@@ -13,10 +13,10 @@ struct CostUsageDailyReportMergeTests {
                     outputTokens: 10,
                     totalTokens: 110,
                     costUSD: 1,
-                    modelsUsed: ["gpt-5.6-sol"],
+                    modelsUsed: ["gpt-5.5"],
                     modelBreakdowns: [
                         CostUsageDailyReport.ModelBreakdown(
-                            modelName: "gpt-5.6-sol",
+                            modelName: "gpt-5.5",
                             costUSD: 1,
                             totalTokens: 110),
                     ]),
@@ -36,10 +36,10 @@ struct CostUsageDailyReportMergeTests {
                     outputTokens: 5,
                     totalTokens: 55,
                     costUSD: 0.5,
-                    modelsUsed: ["gpt-5.6-sol"],
+                    modelsUsed: ["gpt-5.5"],
                     modelBreakdowns: [
                         CostUsageDailyReport.ModelBreakdown(
-                            modelName: "gpt-5.6-sol",
+                            modelName: "gpt-5.5",
                             costUSD: 0.5,
                             totalTokens: 55,
                             attribution: proxyAttribution),

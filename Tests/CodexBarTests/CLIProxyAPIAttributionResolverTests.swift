@@ -8,11 +8,11 @@ struct CLIProxyAPIAttributionResolverTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -28,11 +28,11 @@ struct CLIProxyAPIAttributionResolverTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.addingTimeInterval(3 * 60 * 60).timeIntervalSince1970 * 1000),
@@ -47,14 +47,14 @@ struct CLIProxyAPIAttributionResolverTests {
     func `codex auth inventory identifies upstream after this session route is proven`() {
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "logged-session", model: "gpt-5.6-sol", timestamp: nil),
+                .init(sessionID: "logged-session", model: "gpt-5.5", timestamp: nil),
             ],
             authProviders: [
                 .init(provider: "codex", authType: .oauth),
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "logged-session",
             timestampUnixMs: nil,
@@ -64,7 +64,7 @@ struct CLIProxyAPIAttributionResolverTests {
         #expect(attribution.upstream == .init(
             provider: "codex",
             authType: .oauth,
-            model: "gpt-5.6-sol"))
+            model: "gpt-5.5"))
         #expect(attribution.evidence == [
             .cliProxyAuthInventory,
             .cliProxyRequestLog,
@@ -76,14 +76,14 @@ struct CLIProxyAPIAttributionResolverTests {
     func `codex auth inventory does not transfer route proof between sessions`() {
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "logged-session", model: "gpt-5.6-sol", timestamp: nil),
+                .init(sessionID: "logged-session", model: "gpt-5.5", timestamp: nil),
             ],
             authProviders: [
                 .init(provider: "codex", authType: .oauth),
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "unrelated-session",
             timestampUnixMs: nil,
@@ -114,7 +114,7 @@ struct CLIProxyAPIAttributionResolverTests {
 
         let resolver = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -130,7 +130,7 @@ struct CLIProxyAPIAttributionResolverTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
             ],
             usageRecords: [
                 Self.record(
@@ -140,7 +140,7 @@ struct CLIProxyAPIAttributionResolverTests {
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -149,7 +149,7 @@ struct CLIProxyAPIAttributionResolverTests {
         #expect(attribution.route == .cliProxyAPI)
         #expect(attribution.upstream?.provider == "codex")
         #expect(attribution.upstream?.authType == .oauth)
-        #expect(attribution.upstream?.model == "gpt-5.6-sol")
+        #expect(attribution.upstream?.model == "gpt-5.5")
         #expect(attribution.evidence == [
             .cliProxyRequestLog,
             .cliProxyUsageTelemetry,
@@ -162,8 +162,8 @@ struct CLIProxyAPIAttributionResolverTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: nil),
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: nil),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
             ],
             usageRecords: [
                 Self.record(timestamp: timestamp, provider: "openrouter", authType: "api_key"),
@@ -173,7 +173,7 @@ struct CLIProxyAPIAttributionResolverTests {
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -190,14 +190,14 @@ struct CLIProxyAPIAttributionResolverTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
             ],
             usageRecords: [
                 Self.record(timestamp: timestamp, provider: "openrouter", authType: "apikey"),
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -213,7 +213,7 @@ struct CLIProxyAPIAttributionResolverTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
             ],
             usageRecords: [
                 Self.record(timestamp: timestamp, provider: "codex", authType: "oauth"),
@@ -221,7 +221,7 @@ struct CLIProxyAPIAttributionResolverTests {
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -237,10 +237,10 @@ struct CLIProxyAPIAttributionResolverTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
                 .init(
                     sessionID: "session-2",
-                    model: "gpt-5.6-sol",
+                    model: "gpt-5.5",
                     timestamp: timestamp.addingTimeInterval(2)),
             ],
             usageRecords: [
@@ -252,7 +252,7 @@ struct CLIProxyAPIAttributionResolverTests {
 
         let attributions = resolver.attributions(for: ["session-1", "session-2"].map { sessionID in
             CLIProxyAPIAttributionResolver.Request(
-                model: "gpt-5.6-sol",
+                model: "gpt-5.5",
                 modelProvider: .openAI,
                 sessionID: sessionID,
                 timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -271,7 +271,7 @@ struct CLIProxyAPIAttributionResolverTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
             ],
             usageRecords: [
                 Self.record(
@@ -282,8 +282,8 @@ struct CLIProxyAPIAttributionResolverTests {
                 CLIProxyAPIUsageRecord(
                     timestamp: timestamp.addingTimeInterval(1),
                     provider: "codex",
-                    model: "gpt-5.6-sol",
-                    alias: "gpt-5.6-sol",
+                    model: "gpt-5.5",
+                    alias: "gpt-5.5",
                     endpoint: "POST /v1/messages",
                     authType: "oauth",
                     requestID: "request-mismatch",
@@ -291,7 +291,7 @@ struct CLIProxyAPIAttributionResolverTests {
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -321,19 +321,19 @@ struct CLIProxyAPIAttributionResolverTests {
             authType: "oauth")
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
             ],
             usageRecords: unrelated + [matching])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
             tokens: Self.tokens)
 
         #expect(attribution.upstream?.provider == "codex")
-        #expect(attribution.upstream?.model == "gpt-5.6-sol")
+        #expect(attribution.upstream?.model == "gpt-5.5")
         #expect(attribution.evidence.contains(.cliProxyUsageTelemetry))
     }
 
@@ -341,14 +341,14 @@ struct CLIProxyAPIAttributionResolverTests {
     func `model without correlated request does not claim cliproxyapi`() {
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "other-session", model: "gpt-5.6-sol", timestamp: nil),
+                .init(sessionID: "other-session", model: "gpt-5.5", timestamp: nil),
             ],
             usageRecords: [
                 Self.record(timestamp: Date(), provider: "codex", authType: "oauth"),
             ])
 
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: nil,
@@ -378,7 +378,7 @@ struct CLIProxyAPIAttributionResolverTests {
         === HEADERS ===
         X-Claude-Code-Session-Id: session-1
         === REQUEST BODY ===
-        {"model":"gpt-5.6-sol"}
+        {"model":"gpt-5.5"}
         === RESPONSE ===
         Status: 200
         """
@@ -394,7 +394,7 @@ struct CLIProxyAPIAttributionResolverTests {
             cacheRoot: cacheRoot,
             fileManager: fileManager)
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "session-1",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -433,7 +433,7 @@ struct CLIProxyAPIAttributionResolverTests {
 
         let resolver = try CLIProxyAPIAttributionResolver.load(home: home, fileManager: fileManager)
         let attribution = resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: "target-session",
             timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
@@ -537,8 +537,8 @@ struct CLIProxyAPIAttributionResolverTests {
           "api_key":"secret-client-key",
           "provider":"codex",
           "executor_type":"CodexExecutor",
-          "model":"gpt-5.6-sol",
-          "alias":"gpt-5.6-sol",
+          "model":"gpt-5.5",
+          "alias":"gpt-5.5",
           "endpoint":"POST /v1/messages",
           "auth_type":"oauth",
           "request_id":"request-1",
@@ -576,8 +576,8 @@ struct CLIProxyAPIAttributionResolverTests {
           "api_key":"secret-client-key",
           "provider":"codex",
           "executor_type":"CodexExecutor",
-          "model":"gpt-5.6-sol",
-          "alias":"gpt-5.6-sol",
+          "model":"gpt-5.5",
+          "alias":"gpt-5.5",
           "endpoint":"POST /v1/messages",
           "auth_type":"oauth",
           "request_id":"request-1",
@@ -625,8 +625,8 @@ struct CLIProxyAPIAttributionResolverTests {
             let record = CLIProxyAPIUsageRecord(
                 timestamp: timestamp.addingTimeInterval(seconds),
                 provider: "codex",
-                model: "gpt-5.6-sol",
-                alias: "gpt-5.6-sol",
+                model: "gpt-5.5",
+                alias: "gpt-5.5",
                 endpoint: "POST /v1/messages",
                 authType: "oauth",
                 requestID: requestID,
@@ -682,8 +682,8 @@ struct CLIProxyAPIAttributionResolverTests {
             CLIProxyAPIUsageRecord(
                 timestamp: timestamp.addingTimeInterval(TimeInterval(index)),
                 provider: "codex",
-                model: "gpt-5.6-sol",
-                alias: "gpt-5.6-sol",
+                model: "gpt-5.5",
+                alias: "gpt-5.5",
                 endpoint: "POST /v1/messages",
                 authType: "oauth",
                 requestID: "request-\(index)",
@@ -832,7 +832,7 @@ struct CLIProxyAPIAttributionResolverTests {
         resolver: CLIProxyAPIAttributionResolver) -> CostUsageAttribution.Route
     {
         resolver.attribution(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             modelProvider: .openAI,
             sessionID: sessionID,
             timestampUnixMs: nil,
@@ -848,7 +848,7 @@ struct CLIProxyAPIAttributionResolverTests {
         === HEADERS ===
         X-Claude-Code-Session-Id: \(sessionID)
         === REQUEST BODY ===
-        {"model":"gpt-5.6-sol"}
+        {"model":"gpt-5.5"}
         === RESPONSE ===
         Status: 200
         """
@@ -864,8 +864,8 @@ struct CLIProxyAPIAttributionResolverTests {
             timestamp: timestamp,
             provider: provider,
             executorType: provider == "codex" ? "CodexExecutor" : "OpenAICompatExecutor",
-            model: "gpt-5.6-sol",
-            alias: "gpt-5.6-sol",
+            model: "gpt-5.5",
+            alias: "gpt-5.5",
             endpoint: "POST /v1/messages",
             authType: authType,
             requestID: "request-\(provider)-\(authType)-\(timestamp.timeIntervalSince1970)",

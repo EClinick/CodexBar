@@ -44,10 +44,10 @@ struct SpendDashboardProxyAttributionTests {
             outputTokens: 10,
             totalTokens: 100,
             costUSD: 1,
-            modelsUsed: ["gpt-5.6-sol"],
+            modelsUsed: ["gpt-5.5"],
             modelBreakdowns: [
                 .init(
-                    modelName: "gpt-5.6-sol",
+                    modelName: "gpt-5.5",
                     costUSD: 1,
                     totalTokens: 100,
                     attribution: attribution),
@@ -91,7 +91,7 @@ struct SpendDashboardProxyAttributionTests {
             upstream: .init(
                 provider: "codex",
                 authType: .oauth,
-                model: "gpt-5.6-sol"),
+                model: "gpt-5.5"),
             evidence: [.cliProxyAuthInventory, .cliProxyRequestLog, .modelProvider])
         let telemetryAttribution = CostUsageAttribution(
             client: .claudeCode,
@@ -100,7 +100,7 @@ struct SpendDashboardProxyAttributionTests {
             upstream: .init(
                 provider: "codex",
                 authType: .oauth,
-                model: "openai/gpt-5.6-sol",
+                model: "openai/gpt-5.5",
                 executorType: "CodexExecutor"),
             evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider])
         let entry = CostUsageDailyReport.Entry(
@@ -109,15 +109,15 @@ struct SpendDashboardProxyAttributionTests {
             outputTokens: 100,
             totalTokens: 200,
             costUSD: 2,
-            modelsUsed: ["gpt-5.6-sol"],
+            modelsUsed: ["gpt-5.5"],
             modelBreakdowns: [
                 .init(
-                    modelName: "gpt-5.6-sol",
+                    modelName: "gpt-5.5",
                     costUSD: 1,
                     totalTokens: 100,
                     attribution: inventoryAttribution),
                 .init(
-                    modelName: "gpt-5.6-sol",
+                    modelName: "gpt-5.5",
                     costUSD: 1,
                     totalTokens: 100,
                     attribution: telemetryAttribution),
@@ -148,7 +148,7 @@ struct SpendDashboardProxyAttributionTests {
         let rows = group.models
         #expect(rows.count == 2)
         #expect(Set(rows.map(\.id)).count == 2)
-        #expect(rows.map(\.attribution) == [inventoryAttribution, telemetryAttribution])
+        #expect(rows.map(\.attribution) == [telemetryAttribution, inventoryAttribution])
         #expect(rows.map(\.rank) == [1, 2])
     }
 }

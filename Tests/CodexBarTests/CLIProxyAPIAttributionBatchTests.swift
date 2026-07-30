@@ -13,10 +13,10 @@ struct CLIProxyAPIAttributionBatchTests {
             output: 200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
                 .init(
                     sessionID: "session-2",
-                    model: "gpt-5.6-sol",
+                    model: "gpt-5.5",
                     timestamp: timestamp.addingTimeInterval(2)),
             ],
             usageRecords: [
@@ -32,13 +32,13 @@ struct CLIProxyAPIAttributionBatchTests {
             ])
         let requests = [
             CLIProxyAPIAttributionResolver.Request(
-                model: "gpt-5.6-sol",
+                model: "gpt-5.5",
                 modelProvider: .openAI,
                 sessionID: "session-1",
                 timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
                 tokens: Self.tokens),
             CLIProxyAPIAttributionResolver.Request(
-                model: "gpt-5.6-sol",
+                model: "gpt-5.5",
                 modelProvider: .openAI,
                 sessionID: "session-2",
                 timestampUnixMs: Int64(timestamp.addingTimeInterval(2).timeIntervalSince1970 * 1000),
@@ -56,10 +56,10 @@ struct CLIProxyAPIAttributionBatchTests {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
-                .init(sessionID: "session-1", model: "gpt-5.6-sol", timestamp: timestamp),
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
                 .init(
                     sessionID: "session-2",
-                    model: "gpt-5.6-sol",
+                    model: "gpt-5.5",
                     timestamp: timestamp.addingTimeInterval(4)),
             ],
             usageRecords: [
@@ -71,13 +71,13 @@ struct CLIProxyAPIAttributionBatchTests {
             ])
         let attributions = resolver.attributions(for: [
             .init(
-                model: "gpt-5.6-sol",
+                model: "gpt-5.5",
                 modelProvider: .openAI,
                 sessionID: "session-1",
                 timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
                 tokens: Self.tokens),
             .init(
-                model: "gpt-5.6-sol",
+                model: "gpt-5.5",
                 modelProvider: .openAI,
                 sessionID: "session-2",
                 timestampUnixMs: Int64(timestamp.addingTimeInterval(4).timeIntervalSince1970 * 1000),
@@ -103,8 +103,8 @@ struct CLIProxyAPIAttributionBatchTests {
             timestamp: timestamp,
             provider: provider,
             executorType: provider == "codex" ? "CodexExecutor" : "OpenAICompatExecutor",
-            model: "gpt-5.6-sol",
-            alias: "gpt-5.6-sol",
+            model: "gpt-5.5",
+            alias: "gpt-5.5",
             endpoint: "POST /v1/messages",
             authType: authType,
             requestID: "request-\(provider)-\(timestamp.timeIntervalSince1970)",

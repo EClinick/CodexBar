@@ -23,7 +23,7 @@ struct CostUsageFetcherCLIProxyConcurrencyTests {
                 "requestId": requestID,
                 "message": [
                     "id": "message-\(requestID)",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-5.5",
                     "usage": ["input_tokens": input, "output_tokens": output],
                 ],
             ]
@@ -59,7 +59,7 @@ struct CostUsageFetcherCLIProxyConcurrencyTests {
             === HEADERS ===
             X-Claude-Code-Session-Id: \(sessionID)
             === REQUEST BODY ===
-            {"model":"gpt-5.6-sol"}
+            {"model":"gpt-5.5"}
             === API RESPONSE ===
             """
             try Data(log.utf8).write(to: logs.appendingPathComponent("\(name).log"))
@@ -70,8 +70,8 @@ struct CostUsageFetcherCLIProxyConcurrencyTests {
                     timestamp: day,
                     provider: "codex",
                     executorType: "CodexExecutor",
-                    model: "gpt-5.6-sol",
-                    alias: "gpt-5.6-sol",
+                    model: "gpt-5.5",
+                    alias: "gpt-5.5",
                     endpoint: "/v1/messages",
                     authType: "oauth",
                     requestID: "cliproxy-codex",
@@ -80,8 +80,8 @@ struct CostUsageFetcherCLIProxyConcurrencyTests {
                     timestamp: day.addingTimeInterval(2),
                     provider: "openrouter",
                     executorType: "OpenAICompatExecutor",
-                    model: "gpt-5.6-sol",
-                    alias: "gpt-5.6-sol",
+                    model: "gpt-5.5",
+                    alias: "gpt-5.5",
                     endpoint: "/v1/messages",
                     authType: "api_key",
                     requestID: "cliproxy-openrouter",

@@ -45,7 +45,7 @@ struct CostUsageFetcherCachedProxyTimeZoneTests {
                     timestamp: day,
                     provider: "codex",
                     executorType: "CodexExecutor",
-                    model: "gpt-5.6-sol",
+                    model: "gpt-5.5",
                     alias: "claude-sonnet-4-6",
                     endpoint: "/v1/messages",
                     authType: "oauth",

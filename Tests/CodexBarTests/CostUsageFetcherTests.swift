@@ -771,7 +771,7 @@ extension CostUsageFetcherTests {
                     timestamp: day,
                     provider: "codex",
                     executorType: "CodexExecutor",
-                    model: "gpt-5.6-sol",
+                    model: "gpt-5.5",
                     alias: "claude-sonnet-4-6",
                     endpoint: "/v1/messages",
                     authType: "oauth",
@@ -819,7 +819,7 @@ extension CostUsageFetcherTests {
             scannerOptions: options))
 
         let expectedCodexCost = try #require(CostUsagePricing.claudeProxyCodexCostUSD(
-            model: "gpt-5.6-sol",
+            model: "gpt-5.5",
             inputTokens: 100,
             cacheReadInputTokens: 20,
             cacheCreationInputTokens: 10,
@@ -835,7 +835,7 @@ extension CostUsageFetcherTests {
             upstream: .init(
                 provider: "codex",
                 authType: .oauth,
-                model: "gpt-5.6-sol",
+                model: "gpt-5.5",
                 executorType: "CodexExecutor"),
             evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider]))
         #expect(codex.projects.map(\.name) == ["Claude Code via CLIProxyAPI"])
@@ -873,7 +873,7 @@ extension CostUsageFetcherTests {
                 "requestId": "request-proxy",
                 "message": [
                     "id": "message-proxy",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-5.5",
                     "usage": ["input_tokens": 100, "output_tokens": 5],
                 ],
             ]]))
@@ -902,7 +902,7 @@ extension CostUsageFetcherTests {
         === HEADERS ===
         X-Claude-Code-Session-Id: session-proxy
         === REQUEST BODY ===
-        {"model":"gpt-5.6-sol"}
+        {"model":"gpt-5.5"}
         === API RESPONSE ===
         """
         try Data(proxyLog.utf8).write(to: cliProxyLogs.appendingPathComponent("request.log"))
@@ -1049,7 +1049,7 @@ extension CostUsageFetcherTests {
                 "requestId": "request-unresolved",
                 "message": [
                     "id": "message-unresolved",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-5.5",
                     "usage": ["input_tokens": 100, "output_tokens": 5],
                 ],
             ]]))
@@ -1097,7 +1097,7 @@ extension CostUsageFetcherTests {
                 "requestId": "unresolved-proxy-request",
                 "message": [
                     "id": "unresolved-proxy-message",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-5.5",
                     "usage": ["input_tokens": 100, "output_tokens": 5],
                 ],
             ]]))
@@ -1111,7 +1111,7 @@ extension CostUsageFetcherTests {
         === HEADERS ===
         X-Claude-Code-Session-Id: unresolved-proxy-session
         === REQUEST BODY ===
-        {"model":"gpt-5.6-sol"}
+        {"model":"gpt-5.5"}
         === API RESPONSE ===
         """
         try Data(proxyLog.utf8).write(to: logs.appendingPathComponent("request.log"))
@@ -1152,7 +1152,7 @@ extension CostUsageFetcherTests {
                 "requestId": requestID,
                 "message": [
                     "id": "message-\(requestID)",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-5.5",
                     "usage": ["input_tokens": 100, "output_tokens": 5],
                 ],
             ]
@@ -1175,7 +1175,7 @@ extension CostUsageFetcherTests {
         === HEADERS ===
         X-Claude-Code-Session-Id: session-proxy
         === REQUEST BODY ===
-        {"model":"gpt-5.6-sol"}
+        {"model":"gpt-5.5"}
         === API RESPONSE ===
         """
         try Data(proxyLog.utf8).write(to: cliProxyLogs.appendingPathComponent("request.log"))
@@ -1201,12 +1201,12 @@ extension CostUsageFetcherTests {
         let breakdown = try #require(codex.daily.first?.modelBreakdowns?.first)
         #expect(codex.daily.first?.totalTokens == 210)
         #expect(codex.daily.first?.modelBreakdowns?.count == 1)
-        #expect(breakdown.modelName == "gpt-5.6-sol")
+        #expect(breakdown.modelName == "gpt-5.5")
         #expect(breakdown.attribution?.route == .cliProxyAPI)
         #expect(breakdown.attribution?.upstream == .init(
             provider: "codex",
             authType: .oauth,
-            model: "gpt-5.6-sol"))
+            model: "gpt-5.5"))
         #expect(breakdown.attribution?.evidence.contains(.cliProxyAuthInventory) == true)
         #expect(claude.daily.isEmpty)
     }
