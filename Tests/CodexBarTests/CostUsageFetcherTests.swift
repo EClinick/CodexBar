@@ -970,6 +970,66 @@ extension CostUsageFetcherTests {
     }
 
     @Test
+    func `explicit disconnect keeps proxy shaped rows in Claude totals`() async throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+        let day = try env.makeLocalNoon(year: 2026, month: 7, day: 24)
+        _ = try env.writeClaudeProjectFile(
+            relativePath: "disconnected-proxy/session.jsonl",
+            contents: env.jsonl([[
+                "type": "assistant",
+                "timestamp": env.isoString(for: day),
+                "sessionId": "disconnected-proxy-session",
+                "requestId": "disconnected-proxy-request",
+                "message": [
+                    "id": "disconnected-proxy-message",
+                    "model": "gpt-5.6-sol",
+                    "usage": ["input_tokens": 100, "output_tokens": 5],
+                ],
+            ]]))
+        let cliProxyHome = env.root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        let logs = cliProxyHome.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        try Data(#"{"type":"codex","disabled":false}"#.utf8)
+            .write(to: cliProxyHome.appendingPathComponent("codex-auth.json"))
+        let proxyLog = """
+        === REQUEST INFO ===
+        URL: /v1/messages
+        Timestamp: \(env.isoString(for: day))
+        === HEADERS ===
+        X-Claude-Code-Session-Id: disconnected-proxy-session
+        === REQUEST BODY ===
+        {"model":"gpt-5.6-sol"}
+        === API RESPONSE ===
+        """
+        try Data(proxyLog.utf8).write(to: logs.appendingPathComponent("request.log"))
+        let options = CostUsageScanner.Options(
+            codexSessionsRoot: env.codexSessionsRoot,
+            claudeProjectsRoots: [env.claudeProjectsRoot],
+            cacheRoot: env.cacheRoot,
+            cliProxyAPIHome: cliProxyHome)
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+            true,
+            stateRoot: env.cacheRoot))
+
+        let claude = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .claude,
+            now: day,
+            allowPricingRefresh: false,
+            includePiSessions: false,
+            scannerOptions: options)
+        let codex = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .codex,
+            now: day,
+            allowPricingRefresh: false,
+            includePiSessions: false,
+            scannerOptions: options)
+
+        #expect(claude.daily.first?.totalTokens == 105)
+        #expect(codex.daily.isEmpty)
+    }
+
+    @Test
     func `openai model without proxy evidence stays out of codex totals`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
