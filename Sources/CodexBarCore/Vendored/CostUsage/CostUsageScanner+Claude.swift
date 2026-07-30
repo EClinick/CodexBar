@@ -854,6 +854,7 @@ extension CostUsageScanner {
             range: range,
             attributionFilter: cliProxyAPIAttributionEnabled ? options.claudeAttributionFilter : .all,
             attributionResolver: attributionResolver,
+            allowCachedCLIProxyAPIAttribution: cliProxyAPIAttributionEnabled,
             modelsDevCatalog: modelsDevCatalog,
             modelsDevCacheRoot: options.cacheRoot)
     }
@@ -863,10 +864,15 @@ extension CostUsageScanner {
         var repricedCosts: [ClaudeDayModelKey: ClaudeRepricedCost] = [:]
     }
 
+    private struct ClaudeAttributionAggregationContext {
+        let filter: ClaudeAttributionFilter
+        let resolver: CLIProxyAPIAttributionResolver?
+        let allowCachedCLIProxyAPIAttribution: Bool
+    }
+
     private static func aggregateClaudeRows(
         cache: CostUsageCache,
-        attributionFilter: ClaudeAttributionFilter,
-        attributionResolver: CLIProxyAPIAttributionResolver?,
+        attributionContext: ClaudeAttributionAggregationContext,
         modelsDevCatalog: ModelsDevCatalog?,
         modelsDevCacheRoot: URL?) -> ClaudeReportAggregation
     {
@@ -884,7 +890,7 @@ extension CostUsageScanner {
             }
             return (row: row, modelProvider: modelProvider)
         }
-        let liveAttributions: [CostUsageAttribution?] = if let attributionResolver {
+        let liveAttributions: [CostUsageAttribution?] = if let attributionResolver = attributionContext.resolver {
             attributionResolver.attributions(for: rowsWithProviders.map { item in
                 CLIProxyAPIAttributionResolver.Request(
                     model: item.row.model,
@@ -907,7 +913,9 @@ extension CostUsageScanner {
             let liveAttribution = liveAttributions[index]
             let attribution: CostUsageAttribution? = if liveAttribution?.route == .cliProxyAPI {
                 liveAttribution
-            } else if row.attribution?.route == .cliProxyAPI {
+            } else if attributionContext.allowCachedCLIProxyAPIAttribution,
+                      row.attribution?.route == .cliProxyAPI
+            {
                 row.attribution
             } else if modelProvider != .anthropic {
                 liveAttribution ?? row.attribution
@@ -921,7 +929,7 @@ extension CostUsageScanner {
             } else {
                 modelProvider != .anthropic && modelProvider != .unknown
             }
-            let includeRow = switch attributionFilter {
+            let includeRow = switch attributionContext.filter {
             case .all: true
             case .codexBackendOnly: isCodexBackend
             case .excludeCodexBackend: !isCodexBackend && !isUnresolvedAttribution
@@ -1034,6 +1042,7 @@ extension CostUsageScanner {
         range: CostUsageDayRange,
         attributionFilter: ClaudeAttributionFilter = .all,
         attributionResolver: CLIProxyAPIAttributionResolver? = nil,
+        allowCachedCLIProxyAPIAttribution: Bool = true,
         modelsDevCatalog: ModelsDevCatalog? = nil,
         modelsDevCacheRoot: URL? = nil) -> CostUsageDailyReport
     {
@@ -1047,8 +1056,10 @@ extension CostUsageScanner {
         var costSeen = false
         let aggregation = Self.aggregateClaudeRows(
             cache: cache,
-            attributionFilter: attributionFilter,
-            attributionResolver: attributionResolver,
+            attributionContext: .init(
+                filter: attributionFilter,
+                resolver: attributionResolver,
+                allowCachedCLIProxyAPIAttribution: allowCachedCLIProxyAPIAttribution),
             modelsDevCatalog: modelsDevCatalog,
             modelsDevCacheRoot: modelsDevCacheRoot)
         let dayModels = aggregation.dayModels
