@@ -659,6 +659,7 @@ public enum CLIProxyAPIUsageCollector {
                     return await self.collectUnserialized(
                         cacheRoot: cacheRoot,
                         pendingRoot: pendingRoot,
+                        configurationIsCurrent: configurationIsCurrent,
                         shouldContinue: shouldContinue,
                         client: client)
                 }
@@ -671,6 +672,7 @@ public enum CLIProxyAPIUsageCollector {
     private static func collectUnserialized(
         cacheRoot: URL?,
         pendingRoot: URL?,
+        configurationIsCurrent: @escaping @Sendable () -> Bool,
         shouldContinue: @escaping @Sendable () async -> Bool,
         client: CLIProxyAPIUsageQueueClient) async -> CLIProxyAPIUsageCollectionResult
     {
@@ -694,6 +696,7 @@ public enum CLIProxyAPIUsageCollector {
             }
 
             for _ in 0..<self.maximumBatches {
+                guard configurationIsCurrent() else { return .notConfigured }
                 guard !Task.isCancelled, await shouldContinue() else { return .disabled }
                 let poppedBatch = try await client.pop(count: self.batchSize)
                 if !poppedBatch.records.isEmpty {

@@ -911,6 +911,13 @@ extension CostUsageScanner {
             let row = item.row
             let modelProvider = item.modelProvider
             let liveAttribution = liveAttributions[index]
+            let cachedAttribution: CostUsageAttribution? =
+                if !attributionContext.allowCachedCLIProxyAPIAttribution,
+                row.attribution?.route == .cliProxyAPI {
+                    nil
+                } else {
+                    row.attribution
+                }
             let attribution: CostUsageAttribution? = if liveAttribution?.route == .cliProxyAPI {
                 liveAttribution
             } else if attributionContext.allowCachedCLIProxyAPIAttribution,
@@ -918,7 +925,7 @@ extension CostUsageScanner {
             {
                 row.attribution
             } else if modelProvider != .anthropic {
-                liveAttribution ?? row.attribution
+                liveAttribution ?? cachedAttribution
             } else {
                 nil
             }

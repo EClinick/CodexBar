@@ -1139,7 +1139,7 @@ extension CostUsageFetcherTests {
     }
 
     @Test
-    func `cliproxy codex inventory keeps a session stable beyond the request log window`() async throws {
+    func `cliproxy request log does not cover a distant resumed turn`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
 
@@ -1199,7 +1199,7 @@ extension CostUsageFetcherTests {
             scannerOptions: options)
 
         let breakdown = try #require(codex.daily.first?.modelBreakdowns?.first)
-        #expect(codex.daily.first?.totalTokens == 210)
+        #expect(codex.daily.first?.totalTokens == 105)
         #expect(codex.daily.first?.modelBreakdowns?.count == 1)
         #expect(breakdown.modelName == "gpt-5.5")
         #expect(breakdown.attribution?.route == .cliProxyAPI)

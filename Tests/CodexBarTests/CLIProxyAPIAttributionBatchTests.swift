@@ -87,6 +87,33 @@ struct CLIProxyAPIAttributionBatchTests {
         #expect(attributions.map(\.upstream?.provider) == ["codex", "openrouter"])
     }
 
+    @Test
+    func `batch route evidence belongs only to the closest request in a resumed session`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "resumed-session", model: "gpt-5.5", timestamp: timestamp),
+            ])
+        let attributions = resolver.attributions(for: [
+            .init(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "resumed-session",
+                timestampUnixMs: Int64(timestamp.addingTimeInterval(1).timeIntervalSince1970 * 1000),
+                tokens: Self.tokens),
+            .init(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "resumed-session",
+                timestampUnixMs: Int64(timestamp.addingTimeInterval(30).timeIntervalSince1970 * 1000),
+                tokens: Self.tokens),
+        ])
+
+        #expect(attributions.map(\.route) == [.cliProxyAPI, .unknown])
+        #expect(attributions[0].evidence.contains(.cliProxyRequestLog))
+        #expect(!attributions[1].evidence.contains(.cliProxyRequestLog))
+    }
+
     private static let tokens = CLIProxyAPIAttributionResolver.TokenSignature(
         input: 10,
         cacheRead: 30,

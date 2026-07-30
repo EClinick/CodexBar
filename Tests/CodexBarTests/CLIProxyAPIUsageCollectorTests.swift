@@ -270,6 +270,53 @@ struct CLIProxyAPIUsageCollectorTests {
         #expect(await popProbe.popCount == 0)
     }
 
+    @Test
+    func `collector rechecks configuration before every destructive pop`() async throws {
+        let fileManager = FileManager.default
+        let cacheRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-mid-collection-disconnect-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: cacheRoot) }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
+        let records = (0..<100).map { index in
+            CLIProxyAPIUsageRecord(
+                timestamp: timestamp.addingTimeInterval(TimeInterval(index)),
+                provider: "codex",
+                model: "gpt-5.5",
+                alias: "gpt-5.5",
+                endpoint: "POST /v1/messages",
+                authType: "oauth",
+                requestID: "request-\(index)",
+                tokens: .init(input: 10, output: 20, total: 30))
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(records)
+        let configurationIsCurrent = LockIsolated(true)
+        let popCount = LockIsolated(0)
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                popCount.setValue(popCount.value + 1)
+                configurationIsCurrent.setValue(false)
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (data, response)
+            })
+
+        let result = await CLIProxyAPIUsageCollector.collect(
+            cacheRoot: cacheRoot,
+            configurationIsCurrent: { configurationIsCurrent.value },
+            client: client)
+
+        #expect(result == .notConfigured)
+        #expect(popCount.value == 1)
+        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).count == 100)
+    }
+
     private static func waitForSignal(
         _ semaphore: DispatchSemaphore,
         timeout: DispatchTime) async -> Bool

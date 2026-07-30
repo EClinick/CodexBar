@@ -24,7 +24,7 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
-    func `request log confirms the entire claude code session route`() {
+    func `request log does not confirm a distant request in the same session`() {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
             observations: [
@@ -38,9 +38,9 @@ struct CLIProxyAPIAttributionResolverTests {
             timestampUnixMs: Int64(timestamp.addingTimeInterval(3 * 60 * 60).timeIntervalSince1970 * 1000),
             tokens: Self.tokens)
 
-        #expect(attribution.route == .cliProxyAPI)
+        #expect(attribution.route == .unknown)
         #expect(attribution.upstream == nil)
-        #expect(attribution.evidence == [.cliProxyRequestLog, .modelProvider])
+        #expect(attribution.evidence == [.modelProvider])
     }
 
     @Test

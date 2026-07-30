@@ -3,8 +3,8 @@ import Testing
 @testable import CodexBarCore
 
 struct CostUsageFetcherCachedProxyDisconnectTests {
-    @Test
-    func `disconnect strips surviving cached proxy attribution`() async throws {
+    @Test(arguments: ["claude-sonnet-4-6", "gpt-5.5"])
+    func `disconnect strips surviving cached proxy attribution`(model: String) async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
 
@@ -18,7 +18,7 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
                 "requestId": "request-proxy",
                 "message": [
                     "id": "message-proxy",
-                    "model": "claude-sonnet-4-6",
+                    "model": model,
                     "usage": ["input_tokens": 100, "output_tokens": 5],
                 ],
             ]]))
@@ -35,7 +35,7 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
         === HEADERS ===
         X-Claude-Code-Session-Id: session-proxy
         === REQUEST BODY ===
-        {"model":"claude-sonnet-4-6"}
+        {"model":"\(model)"}
         === API RESPONSE ===
         """
         try Data(proxyLog.utf8).write(to: proxyLogs.appendingPathComponent("request.log"))
@@ -46,7 +46,7 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
                     provider: "codex",
                     executorType: "CodexExecutor",
                     model: "gpt-5.5",
-                    alias: "claude-sonnet-4-6",
+                    alias: model,
                     endpoint: "/v1/messages",
                     authType: "oauth",
                     requestID: "proxy-request",

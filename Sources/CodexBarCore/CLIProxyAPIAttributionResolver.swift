@@ -109,7 +109,10 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             sessionID: sessionID,
             timestampUnixMs: timestampUnixMs,
             tokens: tokens)
-        let routeObservation = self.sessionObservation(sessionID: sessionID)
+        let routeObservation = self.matchingObservation(
+            model: model,
+            sessionID: sessionID,
+            timestampUnixMs: timestampUnixMs)
         let telemetryObservation = self.matchingObservation(
             model: model,
             sessionID: sessionID,
@@ -128,7 +131,10 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 
     func attributions(for requests: [Request]) -> [CostUsageAttribution] {
         let prepared = requests.map { request in
-            let routeObservation = self.sessionObservation(sessionID: request.sessionID)
+            let routeObservation = self.matchingObservation(
+                model: request.model,
+                sessionID: request.sessionID,
+                timestampUnixMs: request.timestampUnixMs)
             let telemetryObservation = self.matchingObservation(
                 model: request.model,
                 sessionID: request.sessionID,
@@ -145,6 +151,26 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 telemetryObservation: telemetryObservation,
                 usageRecordMatch: usageRecordMatch)
         }
+        var routeCandidatesByObservation:
+            [ObservationKey: [(index: Int, request: Request, observation: Observation)]] = [:]
+        for (index, item) in prepared.enumerated() {
+            guard let observation = item.routeObservation else { continue }
+            routeCandidatesByObservation[Self.observationKey(observation), default: []].append(
+                (index: index, request: item.request, observation: observation))
+        }
+        var routeOwnerByObservation: [ObservationKey: Int] = [:]
+        for (key, candidates) in routeCandidatesByObservation {
+            if candidates.count == 1, let candidate = candidates.first {
+                routeOwnerByObservation[key] = candidate.index
+            } else if let observationTimestamp = candidates.first?.observation.timestamp,
+                      let candidate = Self.uniqueClosest(
+                          candidates,
+                          target: observationTimestamp,
+                          timestamp: { Self.timestamp(for: $0.request) })
+            {
+                routeOwnerByObservation[key] = candidate.index
+            }
+        }
         let matchCounts = Dictionary(
             grouping: prepared.compactMap(\.usageRecordMatch?.key),
             by: { $0 }).mapValues(\.count)
@@ -155,7 +181,12 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             return Self.observationKey(observation)
         })
 
-        return prepared.map { item in
+        return prepared.enumerated().map { index, item in
+            let routeObservation = item.routeObservation.flatMap { observation in
+                routeOwnerByObservation[Self.observationKey(observation)] == index
+                    ? observation
+                    : nil
+            }
             let usageRecord = item.usageRecordMatch.flatMap { match -> CLIProxyAPIUsageRecord? in
                 guard matchCounts[match.key] == 1,
                       self.allPlausibleObservationsRepresented(
@@ -167,7 +198,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             }
             return self.attribution(
                 request: item.request,
-                routeObservation: item.routeObservation,
+                routeObservation: routeObservation,
                 usageRecord: usageRecord)
         }
     }
@@ -200,13 +231,6 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             evidence: evidence.sorted { $0.rawValue < $1.rawValue })
     }
 
-    private func sessionObservation(sessionID: String?) -> Observation? {
-        guard let sessionID = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !sessionID.isEmpty
-        else { return nil }
-        return self.observationsBySessionID[sessionID]?.first
-    }
-
     private func matchingObservation(
         model: String,
         sessionID: String?,
@@ -232,6 +256,12 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             candidates,
             target: timestamp,
             timestamp: \.timestamp)
+    }
+
+    private static func timestamp(for request: Request) -> Date? {
+        request.timestampUnixMs.map {
+            Date(timeIntervalSince1970: Double($0) / 1000)
+        }
     }
 
     private func matchingUsageRecord(
