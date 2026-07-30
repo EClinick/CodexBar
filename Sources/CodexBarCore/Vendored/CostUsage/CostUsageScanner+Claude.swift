@@ -450,15 +450,44 @@ extension CostUsageScanner {
         return rows
     }
 
+    private static func claudeAttributionReconciliationRows(
+        cache: CostUsageCache) -> [(key: ClaudeAttributionReconciliationKey, row: ClaudeUsageRow)]
+    {
+        var rows: [(key: ClaudeAttributionReconciliationKey, row: ClaudeUsageRow)] = []
+        var winners: [String: (path: String, row: ClaudeUsageRow)] = [:]
+
+        for path in cache.files.keys.sorted() {
+            guard let fileRows = cache.files[path]?.claudeRows else { continue }
+            for (index, row) in fileRows.enumerated() {
+                guard let canonicalKey = Self.claudeCanonicalRowKey(row) else {
+                    rows.append((key: .unkeyed(path: path, index: index), row: row))
+                    continue
+                }
+                let candidate = (path: path, row: row)
+                if let existing = winners[canonicalKey] {
+                    if Self.claudeRowWins(lhs: candidate, rhs: existing) {
+                        winners[canonicalKey] = candidate
+                    }
+                } else {
+                    winners[canonicalKey] = candidate
+                }
+            }
+        }
+
+        rows.append(contentsOf: winners.keys.sorted().compactMap { key in
+            winners[key].map { (key: .canonical(key), row: $0.row) }
+        })
+        return rows
+    }
+
     private static func reconcileClaudeAttributions(
         cache: inout CostUsageCache,
         attributionResolver: CLIProxyAPIAttributionResolver,
         modelsDevCatalog: ModelsDevCatalog?,
         modelsDevCacheRoot: URL?)
     {
-        let items = Self.reconciledClaudeRows(cache: cache).compactMap { row
-            -> ClaudeAttributionReconciliationItem? in
-            guard let key = Self.claudeCanonicalRowKey(row) else { return nil }
+        let items = Self.claudeAttributionReconciliationRows(cache: cache).map { item in
+            let row = item.row
             let modelProvider = if let cachedProvider = row.attribution?.modelProvider,
                                    cachedProvider != .unknown
             {
@@ -470,7 +499,7 @@ extension CostUsageScanner {
                     modelsDevCacheRoot: modelsDevCacheRoot)
             }
             return ClaudeAttributionReconciliationItem(
-                key: key,
+                key: item.key,
                 request: CLIProxyAPIAttributionResolver.Request(
                     model: row.model,
                     modelProvider: modelProvider,
@@ -485,8 +514,8 @@ extension CostUsageScanner {
         }
         let requests = items.map(\.request)
         let liveAttributions = attributionResolver.attributions(for: requests)
-        var replacementKeys: Set<String> = []
-        var replacements: [String: CostUsageAttribution] = [:]
+        var replacementKeys: Set<ClaudeAttributionReconciliationKey> = []
+        var replacements: [ClaudeAttributionReconciliationKey: CostUsageAttribution] = [:]
         for (index, item) in items.enumerated()
             where attributionResolver.hasMatchingObservation(for: item.request)
         {
@@ -505,8 +534,10 @@ extension CostUsageScanner {
 
         for path in cache.files.keys {
             guard var file = cache.files[path], let rows = file.claudeRows else { continue }
-            file.claudeRows = rows.map { row in
-                guard let key = Self.claudeCanonicalRowKey(row), replacementKeys.contains(key) else { return row }
+            file.claudeRows = rows.enumerated().map { index, row in
+                let key = Self.claudeCanonicalRowKey(row).map(ClaudeAttributionReconciliationKey.canonical)
+                    ?? .unkeyed(path: path, index: index)
+                guard replacementKeys.contains(key) else { return row }
                 return ClaudeUsageRow(
                     dayKey: row.dayKey,
                     model: row.model,
@@ -992,8 +1023,13 @@ extension CostUsageScanner {
         var repricedCosts: [ClaudeDayModelKey: ClaudeRepricedCost] = [:]
     }
 
+    private enum ClaudeAttributionReconciliationKey: Hashable {
+        case canonical(String)
+        case unkeyed(path: String, index: Int)
+    }
+
     private struct ClaudeAttributionReconciliationItem {
-        let key: String
+        let key: ClaudeAttributionReconciliationKey
         let request: CLIProxyAPIAttributionResolver.Request
         let modelProvider: CostUsageAttribution.ModelProvider
     }
