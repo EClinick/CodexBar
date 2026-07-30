@@ -951,6 +951,25 @@ extension CostUsageFetcherTests {
     }
 
     @Test
+    func `explicit disconnect suppresses surviving proxy logs`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+        let cliProxyHome = env.root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        let options = CostUsageScanner.Options(
+            cacheRoot: env.cacheRoot,
+            cliProxyAPIHome: cliProxyHome)
+        let logs = cliProxyHome.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        try Data().write(to: logs.appendingPathComponent("request.log"))
+        #expect(CostUsageFetcher.hasCodexProxyEvidence(options: options))
+
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+            true,
+            stateRoot: env.cacheRoot))
+        #expect(!CostUsageFetcher.hasCodexProxyEvidence(options: options))
+    }
+
+    @Test
     func `openai model without proxy evidence stays out of codex totals`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

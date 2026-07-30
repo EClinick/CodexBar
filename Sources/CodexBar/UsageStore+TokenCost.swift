@@ -431,23 +431,37 @@ extension UsageStore {
         CostUsageCacheLocations.directories(fileManager: fileManager)[0]
     }
 
-    func clearCostUsageCache() async -> String? {
-        let errorMessage: String? = await Task.detached(priority: .utility) {
-            let fm = FileManager.default
-            let cacheDirs = CostUsageCacheLocations.directories(fileManager: fm)
-
-            for cacheDir in cacheDirs {
-                do {
-                    try fm.removeItem(at: cacheDir)
-                } catch let error as NSError {
-                    if error.domain == NSCocoaErrorDomain, error.code == NSFileNoSuchFileError {
-                        continue
-                    }
-                    return error.localizedDescription
-                }
+    func clearCostUsageCache(
+        clearDirectories: (@Sendable () async -> String?)? = nil) async -> String?
+    {
+        let collectorTask = self.stopCLIProxyAPIUsageCollector()
+        await collectorTask?.value
+        defer {
+            if collectorTask != nil {
+                self.startCLIProxyAPIUsageCollector()
             }
-            return nil
-        }.value
+        }
+
+        let errorMessage: String? = if let clearDirectories {
+            await clearDirectories()
+        } else {
+            await Task.detached(priority: .utility) {
+                let fm = FileManager.default
+                let cacheDirs = CostUsageCacheLocations.directories(fileManager: fm)
+
+                for cacheDir in cacheDirs {
+                    do {
+                        try fm.removeItem(at: cacheDir)
+                    } catch let error as NSError {
+                        if error.domain == NSCocoaErrorDomain, error.code == NSFileNoSuchFileError {
+                            continue
+                        }
+                        return error.localizedDescription
+                    }
+                }
+                return nil
+            }.value
+        }
 
         guard errorMessage == nil else { return errorMessage }
 

@@ -3,6 +3,7 @@ import Foundation
 public enum CostUsageCacheLocations {
     static let cliProxyAPIUsageFileName = "cliproxyapi-usage-v1.json"
     static let cliProxyAPIPendingFileName = "cliproxyapi-pending-v1.json"
+    private static let cliProxyAPIDisconnectedFileName = "cliproxyapi-disconnected-v1"
 
     public static func directories(fileManager: FileManager = .default) -> [URL] {
         let cacheRoot = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -47,5 +48,56 @@ public enum CostUsageCacheLocations {
             }
         }
         return succeeded
+    }
+
+    static func isCLIProxyAPIExplicitlyDisconnected(
+        stateRoot: URL? = nil,
+        fileManager: FileManager = .default) -> Bool
+    {
+        fileManager.fileExists(atPath: self.cliProxyAPIDisconnectedURL(
+            stateRoot: stateRoot,
+            fileManager: fileManager).path)
+    }
+
+    @discardableResult
+    static func setCLIProxyAPIExplicitlyDisconnected(
+        _ disconnected: Bool,
+        stateRoot: URL? = nil,
+        fileManager: FileManager = .default) -> Bool
+    {
+        let url = self.cliProxyAPIDisconnectedURL(
+            stateRoot: stateRoot,
+            fileManager: fileManager)
+        if disconnected {
+            guard !fileManager.fileExists(atPath: url.path) else { return true }
+            do {
+                try fileManager.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
+                try Data().write(to: url, options: [.atomic])
+                return true
+            } catch {
+                return false
+            }
+        }
+
+        guard fileManager.fileExists(atPath: url.path) else { return true }
+        do {
+            try fileManager.removeItem(at: url)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func cliProxyAPIDisconnectedURL(
+        stateRoot: URL?,
+        fileManager: FileManager) -> URL
+    {
+        let root = stateRoot ?? fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first!
+            .appendingPathComponent("CodexBar", isDirectory: true)
+        return root.appendingPathComponent(self.cliProxyAPIDisconnectedFileName, isDirectory: false)
     }
 }

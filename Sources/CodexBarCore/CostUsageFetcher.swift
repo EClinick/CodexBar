@@ -1095,6 +1095,11 @@ extension CostUsageFetcher {
         options: CostUsageScanner.Options,
         fileManager: FileManager = .default) -> Bool
     {
+        guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: options.cacheRoot,
+            fileManager: fileManager)
+        else { return false }
+
         if CLIProxyAPIUsageCacheIO.load(cacheRoot: options.cacheRoot).contains(where: {
             $0.provider.caseInsensitiveCompare("codex") == .orderedSame
         }) {

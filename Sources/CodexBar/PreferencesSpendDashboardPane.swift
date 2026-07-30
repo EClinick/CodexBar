@@ -351,14 +351,19 @@ struct SpendDashboardPane: View {
         self.cliProxyAPIIsSaving = true
         defer { self.cliProxyAPIIsSaving = false }
 
-        guard await self.store.removeCLIProxyAPIConfiguration() else {
+        switch await self.store.removeCLIProxyAPIConfiguration() {
+        case .removed:
+            self.cliProxyAPIManagementKey = ""
+            self.cliProxyAPIHasSavedConfiguration = false
+            self.cliProxyAPIStatus = "Configuration and local telemetry removed."
+        case .configurationRemovalFailed:
             self.store.startCLIProxyAPIUsageCollector()
-            self.cliProxyAPIStatus = "Could not remove the saved configuration and local telemetry."
-            return
+            self.cliProxyAPIStatus = "Could not remove the saved configuration. Local telemetry was preserved."
+        case .telemetryCleanupFailed:
+            self.cliProxyAPIManagementKey = ""
+            self.cliProxyAPIHasSavedConfiguration = false
+            self.cliProxyAPIStatus = "Configuration removed, but some local telemetry could not be deleted."
         }
-        self.cliProxyAPIManagementKey = ""
-        self.cliProxyAPIHasSavedConfiguration = false
-        self.cliProxyAPIStatus = "Configuration and local telemetry removed."
     }
 
     private var shareAction: some View {

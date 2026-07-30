@@ -52,6 +52,38 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
+    func `explicit disconnect state survives artifact cleanup and can be cleared on reconnect`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-disconnect-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+            true,
+            stateRoot: root,
+            fileManager: fileManager))
+        #expect(CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        #expect(CostUsageCacheLocations.clearCLIProxyAPIArtifacts(
+            in: [costUsage],
+            fileManager: fileManager))
+        #expect(CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+            false,
+            stateRoot: root,
+            fileManager: fileManager))
+        #expect(!CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+    }
+
+    @Test
     func `cost cache locations include durable telemetry storage`() throws {
         let fileManager = FileManager.default
         let directories = CostUsageCacheLocations.directories(fileManager: fileManager)

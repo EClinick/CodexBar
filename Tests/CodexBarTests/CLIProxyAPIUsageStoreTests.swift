@@ -101,7 +101,7 @@ struct CLIProxyAPIUsageStoreTests {
             })
         await task.value
 
-        #expect(removed)
+        #expect(removed == .removed)
         #expect(didClearConfiguration)
         #expect(collectorFinishedBeforePurge)
         #expect(store.cliProxyAPIUsageCollectorTask == nil)
@@ -109,7 +109,7 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
-    func `removing the integration preserves configuration when telemetry cleanup fails`() async {
+    func `removing the integration preserves telemetry when configuration removal fails`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
@@ -124,16 +124,79 @@ struct CLIProxyAPIUsageStoreTests {
             settings: settings,
             startupBehavior: .testing,
             environmentBase: environment)
-        var didClearConfiguration = false
+        var didPurgeTelemetry = false
+
+        let removed = await store.removeCLIProxyAPIConfiguration(
+            purgeTelemetry: {
+                didPurgeTelemetry = true
+                return true
+            },
+            clear: { false })
+
+        #expect(removed == .configurationRemovalFailed)
+        #expect(!didPurgeTelemetry)
+    }
+
+    @Test
+    func `removing the integration reports telemetry cleanup failure after configuration removal`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = [
+            "HOME": root.path,
+            "CODEX_HOME": root.appendingPathComponent(".codex", isDirectory: true).path,
+        ]
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: environment),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: environment)
 
         let removed = await store.removeCLIProxyAPIConfiguration(
             purgeTelemetry: { false },
-            clear: {
-                didClearConfiguration = true
-                return true
-            })
+            clear: { true })
 
-        #expect(!removed)
-        #expect(!didClearConfiguration)
+        #expect(removed == .telemetryCleanupFailed)
+    }
+
+    @Test
+    func `clearing cost cache drains the active proxy collector before deletion`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = [
+            "HOME": root.path,
+            "CODEX_HOME": root.appendingPathComponent(".codex", isDirectory: true).path,
+        ]
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: environment),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: environment)
+        let collectorFinished = LockIsolated(false)
+        let deletionStartedAfterDrain = LockIsolated(false)
+        store.cliProxyAPIUsageCollectorTask = Task {
+            while !Task.isCancelled {
+                await Task.yield()
+            }
+            let drainDelay = Task.detached {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            await drainDelay.value
+            collectorFinished.setValue(true)
+        }
+
+        let error = await store.clearCostUsageCache(clearDirectories: {
+            deletionStartedAfterDrain.setValue(collectorFinished.value)
+            return nil
+        })
+        store.stopCLIProxyAPIUsageCollector()
+
+        #expect(error == nil)
+        #expect(deletionStartedAfterDrain.value)
     }
 }

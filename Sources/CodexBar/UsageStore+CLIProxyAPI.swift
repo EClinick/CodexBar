@@ -1,6 +1,12 @@
 import CodexBarCore
 import Foundation
 
+enum CLIProxyAPIConfigurationRemovalResult: Equatable {
+    case removed
+    case configurationRemovalFailed
+    case telemetryCleanupFailed
+}
+
 @MainActor
 extension UsageStore {
     private static let cliProxyAPIUsageCollectionInterval: Duration = .seconds(30)
@@ -30,12 +36,14 @@ extension UsageStore {
     @discardableResult
     func removeCLIProxyAPIConfiguration(
         purgeTelemetry: () -> Bool = { CostUsageCacheLocations.clearCLIProxyAPIArtifacts() },
-        clear: () -> Bool = { CLIProxyAPIConnectionSettingsStore.clear() }) async -> Bool
+        clear: () -> Bool = { CLIProxyAPIConnectionSettingsStore.clear() }) async
+        -> CLIProxyAPIConfigurationRemovalResult
     {
         let collectorTask = self.stopCLIProxyAPIUsageCollector()
         await collectorTask?.value
-        guard purgeTelemetry() else { return false }
-        return clear()
+        guard clear() else { return .configurationRemovalFailed }
+        guard purgeTelemetry() else { return .telemetryCleanupFailed }
+        return .removed
     }
 
     func collectCLIProxyAPIUsageNow(

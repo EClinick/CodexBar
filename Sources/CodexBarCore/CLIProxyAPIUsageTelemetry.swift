@@ -438,12 +438,23 @@ public enum CLIProxyAPIConnectionSettingsStore {
     @discardableResult
     public static func save(_ settings: CLIProxyAPIConnectionSettings) -> Bool {
         guard settings.isConfigured else { return false }
-        return KeychainCacheStore.storeResult(key: self.key, entry: settings)
+        guard KeychainCacheStore.storeResult(key: self.key, entry: settings) else { return false }
+        return CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false)
     }
 
     @discardableResult
     public static func clear() -> Bool {
-        KeychainCacheStore.clear(key: self.key)
+        let wasDisconnected = CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected()
+        guard wasDisconnected || CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(true) else {
+            return false
+        }
+        guard KeychainCacheStore.clear(key: self.key) else {
+            if !wasDisconnected {
+                _ = CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false)
+            }
+            return false
+        }
+        return true
     }
 }
 
