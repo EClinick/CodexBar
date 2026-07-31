@@ -103,6 +103,26 @@ extension SettingsStore {
         }
     }
 
+    var codexResetExpiryNotificationsEnabled: Bool {
+        get { self.defaultsState.codexResetExpiryNotificationsEnabled }
+        set {
+            self.defaultsState.codexResetExpiryNotificationsEnabled = newValue
+            self.userDefaults.set(newValue, forKey: "codexResetExpiryNotificationsEnabled")
+        }
+    }
+
+    var codexResetAutoRedeemEnabled: Bool {
+        get { self.defaultsState.codexResetAutoRedeemEnabled }
+        set {
+            self.defaultsState.codexResetAutoRedeemEnabled = newValue
+            self.userDefaults.set(newValue, forKey: "codexResetAutoRedeemEnabled")
+        }
+    }
+
+    var codexResetCreditAutomationEnabled: Bool {
+        self.codexResetExpiryNotificationsEnabled || self.codexResetAutoRedeemEnabled
+    }
+
     var quotaWarningNotificationsEnabled: Bool {
         get { self.defaultsState.quotaWarningNotificationsEnabled }
         set {

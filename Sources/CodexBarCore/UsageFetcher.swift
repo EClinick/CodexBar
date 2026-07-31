@@ -639,6 +639,31 @@ private enum RPCAccountDetails: Decodable {
 
 private struct RPCRateLimitsResponse: Decodable, Encodable {
     let rateLimits: RPCRateLimitSnapshot
+    let rateLimitResetCredits: RPCRateLimitResetCreditsSummary?
+
+    private enum CodingKeys: String, CodingKey {
+        case rateLimits
+        case rateLimitResetCredits
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.rateLimits = try container.decode(RPCRateLimitSnapshot.self, forKey: .rateLimits)
+        do {
+            self.rateLimitResetCredits = try container.decodeIfPresent(
+                RPCRateLimitResetCreditsSummary.self,
+                forKey: .rateLimitResetCredits)
+        } catch {
+            // Reset credits are optional enrichment; schema drift must not hide core rate limits.
+            self.rateLimitResetCredits = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.rateLimits, forKey: .rateLimits)
+        try container.encodeIfPresent(self.rateLimitResetCredits, forKey: .rateLimitResetCredits)
+    }
 }
 
 private struct RPCRateLimitSnapshot: Decodable, Encodable {
@@ -660,6 +685,25 @@ private struct RPCCreditsSnapshot: Decodable, Encodable {
     let balance: String?
 }
 
+private struct RPCRateLimitResetCreditsSummary: Decodable, Encodable {
+    let availableCount: Int
+    let credits: [RPCRateLimitResetCredit]?
+}
+
+private struct RPCRateLimitResetCredit: Decodable, Encodable {
+    let id: String
+    let resetType: String
+    let status: String
+    let grantedAt: Int64
+    let expiresAt: Int64?
+    let title: String?
+    let description: String?
+}
+
+private struct RPCRateLimitResetCreditConsumeResponse: Decodable {
+    let outcome: CodexRateLimitResetCreditConsumeOutcome
+}
+
 private struct RPCRateLimitsErrorBody: Decodable {
     let email: String?
     let planType: String?
@@ -679,6 +723,7 @@ enum RPCWireError: Error, LocalizedError {
     case requestFailed(String)
     case malformed(String)
     case timeout(method: String)
+    case accountMismatch
 
     var errorDescription: String? {
         switch self {
@@ -690,6 +735,8 @@ enum RPCWireError: Error, LocalizedError {
             "Codex returned invalid data: \(message)"
         case let .timeout(method):
             "Codex RPC timed out waiting for `\(method)` reply."
+        case .accountMismatch:
+            "The active Codex account changed before the reset could be used."
         }
     }
 }
@@ -840,6 +887,20 @@ private final class CodexRPCClient: @unchecked Sendable {
     func fetchRateLimits() async throws -> RPCRateLimitsResponse {
         let message = try await self.request(method: "account/rateLimits/read")
         return try self.decodeResult(from: message)
+    }
+
+    func consumeRateLimitResetCredit(
+        creditID: String,
+        idempotencyKey: UUID) async throws -> CodexRateLimitResetCreditConsumeOutcome
+    {
+        let message = try await self.request(
+            method: "account/rateLimitResetCredit/consume",
+            params: [
+                "creditId": creditID,
+                "idempotencyKey": idempotencyKey.uuidString,
+            ])
+        let response: RPCRateLimitResetCreditConsumeResponse = try self.decodeResult(from: message)
+        return response.outcome
     }
 
     func shutdown() {
@@ -1022,7 +1083,8 @@ public struct UsageFetcher: Sendable {
             // The app-server answers on a single stdout stream, so keep requests
             // serialized to avoid starving one reader when multiple awaiters race
             // for the same pipe.
-            let limits = try await rpc.fetchRateLimits().rateLimits
+            let response = try await rpc.fetchRateLimits()
+            let limits = response.rateLimits
             let account = try? await rpc.fetchAccount()
             let rateLimitsPlan = Self.normalizedCodexAccountField(limits.planType)
             let identity = ProviderIdentitySnapshot(
@@ -1035,13 +1097,25 @@ public struct UsageFetcher: Sendable {
                     if case let .chatgpt(_, plan) = details { plan } else { nil }
                 } ?? rateLimitsPlan)
             let credits = Self.makeCredits(from: limits.credits)
+            let resetCredits = Self.makeResetCredits(from: response.rateLimitResetCredits)
             let shouldReturnUnavailableUsage = credits == nil || rateLimitsPlan != nil
-            let usage = CodexReconciledState.fromCLI(
+            let baseUsage = CodexReconciledState.fromCLI(
                 primary: Self.makeWindow(from: limits.primary),
                 secondary: Self.makeWindow(from: limits.secondary),
                 identity: identity)?
                 .toUsageSnapshot()
                 ?? (shouldReturnUnavailableUsage ? Self.emptyCodexUsageSnapshotIfIdentified(identity: identity) : nil)
+            let usage = baseUsage?
+                .withCodexResetCredits(resetCredits)
+                ?? resetCredits.map {
+                    UsageSnapshot(
+                        primary: nil,
+                        secondary: nil,
+                        tertiary: nil,
+                        codexResetCredits: $0,
+                        updatedAt: $0.updatedAt,
+                        identity: identity)
+                }
             guard usage != nil || credits != nil else {
                 throw UsageError.noRateLimitsFound
             }
@@ -1066,6 +1140,41 @@ public struct UsageFetcher: Sendable {
             throw UsageError.noRateLimitsFound
         }
         return credits
+    }
+
+    public func consumeRateLimitResetCredit(
+        creditID: String,
+        idempotencyKey: UUID,
+        expectedAccountEmail: String) async throws -> CodexRateLimitResetCreditConsumeOutcome
+    {
+        let trimmedCreditID = creditID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCreditID.isEmpty else {
+            throw RPCWireError.malformed("reset credit ID is empty")
+        }
+        guard let expectedAccountEmail = Self.normalizedCodexAccountEmail(expectedAccountEmail) else {
+            throw RPCWireError.malformed("expected reset credit account email is empty")
+        }
+
+        let rpc = try CodexRPCClient(
+            arguments: self.codexArguments,
+            environment: self.environment,
+            initializeTimeoutSeconds: self.initializeTimeoutSeconds,
+            requestTimeoutSeconds: self.requestTimeoutSeconds,
+            resolveExecutable: self.codexExecutableResolver)
+        defer { rpc.shutdown() }
+        try await rpc.initialize(clientName: "codexbar", clientVersion: "0.5.4")
+        let account = try await rpc.fetchAccount()
+        let currentAccountEmail: String? = if case let .chatgpt(email, _) = account.account {
+            Self.normalizedCodexAccountEmail(email)
+        } else {
+            nil
+        }
+        guard currentAccountEmail == expectedAccountEmail else {
+            throw RPCWireError.accountMismatch
+        }
+        return try await rpc.consumeRateLimitResetCredit(
+            creditID: trimmedCreditID,
+            idempotencyKey: idempotencyKey)
     }
 
     public func debugRawRateLimits() async -> String {
@@ -1160,6 +1269,39 @@ public struct UsageFetcher: Sendable {
         return CreditsSnapshot(remaining: self.parseCredits(rpc.balance), events: [], updatedAt: Date())
     }
 
+    private static func makeResetCredits(
+        from rpc: RPCRateLimitResetCreditsSummary?) -> CodexRateLimitResetCreditsSnapshot?
+    {
+        guard let rpc, rpc.availableCount >= 0 else { return nil }
+        let updatedAt = Date()
+        let credits = (rpc.credits ?? []).map { credit in
+            CodexRateLimitResetCredit(
+                id: credit.id,
+                resetType: credit.resetType,
+                status: Self.makeResetCreditStatus(credit.status),
+                grantedAt: Date(timeIntervalSince1970: TimeInterval(credit.grantedAt)),
+                expiresAt: credit.expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                redeemStartedAt: nil,
+                redeemedAt: nil,
+                title: credit.title,
+                description: credit.description)
+        }
+        return CodexRateLimitResetCreditsSnapshot(
+            credits: credits,
+            availableCount: rpc.availableCount,
+            updatedAt: updatedAt)
+    }
+
+    private static func makeResetCreditStatus(_ status: String) -> CodexRateLimitResetCreditStatus {
+        switch status {
+        case "available": .available
+        case "redeeming": .redeeming
+        case "redeemed": .redeemed
+        case "expired": .expired
+        default: .unknown(status)
+        }
+    }
+
     private static func emptyCodexUsageSnapshotIfIdentified(identity: ProviderIdentitySnapshot) -> UsageSnapshot? {
         guard identity.accountEmail != nil || identity.loginMethod != nil else { return nil }
         return UsageSnapshot(
@@ -1251,6 +1393,10 @@ public struct UsageFetcher: Sendable {
             return nil
         }
         return value
+    }
+
+    private static func normalizedCodexAccountEmail(_ value: String?) -> String? {
+        self.normalizedCodexAccountField(value)?.lowercased()
     }
 
     public static func parseJWT(_ token: String) -> [String: Any]? {

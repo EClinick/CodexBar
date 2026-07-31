@@ -88,6 +88,7 @@ extension UsageStore {
         self.lastKnownSessionRemaining.removeValue(forKey: .codex)
         self.lastKnownSessionWindowSource.removeValue(forKey: .codex)
         self.lastKnownResetSnapshots.removeValue(forKey: .codex)
+        self.codexResetCreditAutomationController.stop()
 
         self.credits = nil
         self.lastCreditsError = nil

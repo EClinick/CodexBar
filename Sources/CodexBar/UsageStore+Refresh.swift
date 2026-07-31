@@ -267,6 +267,9 @@ extension UsageStore {
                 return backfilled
             }
             guard let backfilled else { return }
+            if provider == .codex {
+                self.reconcileCodexResetCreditAutomation(snapshot: backfilled)
+            }
             if context.shouldConsumeClaudeKeychainFingerprint {
                 _ = await Self.consumeClaudeKeychainFingerprintChangeWithoutPrompt()
             }
@@ -314,6 +317,7 @@ extension UsageStore {
             self.lastFetchAttempts.removeValue(forKey: provider)
             self.accountSnapshots.removeValue(forKey: provider)
             if provider == .codex {
+                self.codexResetCreditAutomationController.stop()
                 self.codexAccountSnapshots = []
             }
             if provider == .kilo {

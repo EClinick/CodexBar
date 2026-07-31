@@ -2,6 +2,14 @@ import CodexBarCore
 import Foundation
 @preconcurrency import UserNotifications
 
+struct ScheduledAppNotification: Equatable, Sendable {
+    let id: String
+    let title: String
+    let body: String
+    let fireDate: Date
+    let soundEnabled: Bool
+}
+
 @MainActor
 final class AppNotifications {
     static let shared = AppNotifications()
@@ -9,6 +17,7 @@ final class AppNotifications {
     private let centerProvider: @Sendable () -> UNUserNotificationCenter
     private let logger = CodexBarLog.logger(LogCategories.notifications)
     private var authorizationTask: Task<Bool, Never>?
+    private var scheduledReplacementGenerations: [String: UUID] = [:]
 
     init(centerProvider: @escaping @Sendable () -> UNUserNotificationCenter = { UNUserNotificationCenter.current() }) {
         self.centerProvider = centerProvider
@@ -58,6 +67,70 @@ final class AppNotifications {
         }
     }
 
+    func replaceScheduled(
+        idPrefix: String,
+        notifications: [ScheduledAppNotification])
+    {
+        guard !Self.isRunningUnderTests else { return }
+        let center = self.centerProvider()
+        let requestPrefix = "codexbar-\(idPrefix)-"
+        let logger = self.logger
+        let generation = UUID()
+        self.scheduledReplacementGenerations[idPrefix] = generation
+
+        Task { @MainActor in
+            let existingIDs = await self.pendingNotificationIdentifiers(center: center)
+                .filter { $0.hasPrefix(requestPrefix) }
+            guard self.scheduledReplacementGenerations[idPrefix] == generation else { return }
+            if !existingIDs.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: existingIDs)
+            }
+
+            guard !notifications.isEmpty else {
+                self.scheduledReplacementGenerations.removeValue(forKey: idPrefix)
+                return
+            }
+            let granted = await self.ensureAuthorized()
+            guard self.scheduledReplacementGenerations[idPrefix] == generation else { return }
+            guard granted else {
+                logger.debug("not authorized; skipping schedule", metadata: ["prefix": idPrefix])
+                self.scheduledReplacementGenerations.removeValue(forKey: idPrefix)
+                return
+            }
+
+            let now = Date()
+            for notification in notifications where notification.fireDate > now {
+                guard self.scheduledReplacementGenerations[idPrefix] == generation else { return }
+                let content = UNMutableNotificationContent()
+                content.title = notification.title
+                content.body = notification.body
+                content.sound = notification.soundEnabled ? .default : nil
+
+                let trigger = UNTimeIntervalNotificationTrigger(
+                    timeInterval: max(1, notification.fireDate.timeIntervalSince(now)),
+                    repeats: false)
+                let request = UNNotificationRequest(
+                    identifier: "\(requestPrefix)\(generation.uuidString)-\(notification.id)",
+                    content: content,
+                    trigger: trigger)
+                do {
+                    try await center.add(request)
+                    guard self.scheduledReplacementGenerations[idPrefix] == generation else {
+                        center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
+                        return
+                    }
+                } catch {
+                    logger.error(
+                        "failed to schedule",
+                        metadata: ["prefix": idPrefix, "error": String(describing: error)])
+                }
+            }
+            if self.scheduledReplacementGenerations[idPrefix] == generation {
+                self.scheduledReplacementGenerations.removeValue(forKey: idPrefix)
+            }
+        }
+    }
+
     // MARK: - Private
 
     private func ensureAuthorizationTask() -> Task<Bool, Never> {
@@ -96,6 +169,14 @@ final class AppNotifications {
         return await withCheckedContinuation { continuation in
             center.getNotificationSettings { settings in
                 continuation.resume(returning: settings.authorizationStatus)
+            }
+        }
+    }
+
+    private func pendingNotificationIdentifiers(center: UNUserNotificationCenter) async -> [String] {
+        await withCheckedContinuation { continuation in
+            center.getPendingNotificationRequests { requests in
+                continuation.resume(returning: requests.map(\.identifier))
             }
         }
     }

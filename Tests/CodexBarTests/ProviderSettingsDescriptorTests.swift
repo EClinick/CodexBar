@@ -60,6 +60,24 @@ struct ProviderSettingsDescriptorTests {
         #expect(pickers.contains(where: { $0.id == "codex-usage-source" }))
         #expect(pickers.contains(where: { $0.id == "codex-cookie-source" }))
         #expect(toggles.contains(where: { $0.id == "codex-historical-tracking" }))
+        #expect(toggles.contains(where: { $0.id == "codex-reset-expiry-alerts" }))
+        #expect(toggles.contains(where: { $0.id == "codex-reset-auto-redeem" }))
+    }
+
+    @Test
+    func `codex reset automation toggles are explicit default off opt ins`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-codex-reset-toggles")
+        let context = fixture.settingsContext(provider: .codex)
+        let toggles = CodexProviderImplementation().settingsToggles(context: context)
+
+        let alertToggle = try #require(toggles.first(where: { $0.id == "codex-reset-expiry-alerts" }))
+        #expect(alertToggle.binding.wrappedValue == false)
+        #expect(alertToggle.subtitle.contains("five minutes"))
+
+        let autoRedeemToggle = try #require(toggles.first(where: { $0.id == "codex-reset-auto-redeem" }))
+        #expect(autoRedeemToggle.binding.wrappedValue == false)
+        #expect(autoRedeemToggle.subtitle.contains("One minute"))
+        #expect(autoRedeemToggle.subtitle.contains("Codex CLI App Server"))
     }
 
     @Test

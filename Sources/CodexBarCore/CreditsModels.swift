@@ -163,3 +163,48 @@ public enum CodexRateLimitResetCreditStatus: Equatable, Codable, Sendable {
         }
     }
 }
+
+public enum CodexRateLimitResetCreditConsumeOutcome: Equatable, Codable, Sendable {
+    case reset
+    case nothingToReset
+    case noCredit
+    case alreadyRedeemed
+    case unknown(String)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        switch value {
+        case "reset":
+            self = .reset
+        case "nothingToReset":
+            self = .nothingToReset
+        case "noCredit":
+            self = .noCredit
+        case "alreadyRedeemed":
+            self = .alreadyRedeemed
+        default:
+            self = .unknown(value)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(self.rawValue)
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .reset:
+            "reset"
+        case .nothingToReset:
+            "nothingToReset"
+        case .noCredit:
+            "noCredit"
+        case .alreadyRedeemed:
+            "alreadyRedeemed"
+        case let .unknown(value):
+            value
+        }
+    }
+}

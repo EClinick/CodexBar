@@ -45,4 +45,20 @@ struct ProviderRegistryTests {
 
         #expect(zaiIndex < minimaxIndex)
     }
+
+    @Test
+    func `codex reset automation requests optional credit details without changing other providers`() {
+        #expect(ProviderRegistry.shouldIncludeOptionalUsage(
+            provider: .codex,
+            showOptionalUsage: false,
+            codexResetCreditAutomationEnabled: true))
+        #expect(!ProviderRegistry.shouldIncludeOptionalUsage(
+            provider: .claude,
+            showOptionalUsage: false,
+            codexResetCreditAutomationEnabled: true))
+        #expect(ProviderRegistry.shouldIncludeOptionalUsage(
+            provider: .claude,
+            showOptionalUsage: true,
+            codexResetCreditAutomationEnabled: false))
+    }
 }

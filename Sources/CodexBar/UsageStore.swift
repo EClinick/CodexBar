@@ -217,6 +217,7 @@ final class UsageStore {
     @ObservationIgnored let settings: SettingsStore
     @ObservationIgnored let environmentBase: [String: String]
     @ObservationIgnored private let sessionQuotaNotifier: any SessionQuotaNotifying
+    @ObservationIgnored let codexResetCreditAutomationController: CodexResetCreditAutomationController
     @ObservationIgnored private let sessionQuotaLogger = CodexBarLog.logger(LogCategories.sessionQuota)
     @ObservationIgnored let openAIWebLogger = CodexBarLog.logger(LogCategories.openAIWeb)
     @ObservationIgnored private let tokenCostLogger = CodexBarLog.logger(LogCategories.tokenCost)
@@ -282,6 +283,8 @@ final class UsageStore {
         planUtilizationHistoryStore: PlanUtilizationHistoryStore = .defaultAppSupport(),
         codexAccountUsageSnapshotStore: (any CodexAccountUsageSnapshotStoring)? = nil,
         sessionQuotaNotifier: any SessionQuotaNotifying = SessionQuotaNotifier(),
+        codexResetCreditAutomationController: CodexResetCreditAutomationController =
+            CodexResetCreditAutomationController(),
         startupBehavior: StartupBehavior = .automatic,
         environmentBase: [String: String] = ProcessInfo.processInfo.environment)
     {
@@ -295,6 +298,7 @@ final class UsageStore {
         self.historicalUsageHistoryStore = historicalUsageHistoryStore
         self.planUtilizationHistoryStore = planUtilizationHistoryStore
         self.sessionQuotaNotifier = sessionQuotaNotifier
+        self.codexResetCreditAutomationController = codexResetCreditAutomationController
         self.startupBehavior = startupBehavior.resolved(isRunningTests: Self.isRunningTestsProcess())
         self.codexAccountUsageSnapshotStore = codexAccountUsageSnapshotStore ??
             (self.startupBehavior.automaticallyStartsBackgroundWork ? FileCodexAccountUsageSnapshotStore() : nil)

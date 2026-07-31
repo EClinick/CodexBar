@@ -56,7 +56,10 @@ struct ProviderRegistry {
                         runtime: .app,
                         sourceMode: sourceMode,
                         includeCredits: false,
-                        includeOptionalUsage: settings.showOptionalCreditsAndExtraUsage,
+                        includeOptionalUsage: Self.shouldIncludeOptionalUsage(
+                            provider: provider,
+                            showOptionalUsage: settings.showOptionalCreditsAndExtraUsage,
+                            codexResetCreditAutomationEnabled: settings.codexResetCreditAutomationEnabled),
                         webTimeout: 60,
                         webDebugDumpHTML: false,
                         verbose: verbose,
@@ -94,6 +97,14 @@ struct ProviderRegistry {
 
     static func persistentCLISessionIdleWindow(refreshInterval: TimeInterval?) -> TimeInterval {
         max(180, (refreshInterval ?? 120) + 60)
+    }
+
+    static func shouldIncludeOptionalUsage(
+        provider: UsageProvider,
+        showOptionalUsage: Bool,
+        codexResetCreditAutomationEnabled: Bool) -> Bool
+    {
+        showOptionalUsage || (provider == .codex && codexResetCreditAutomationEnabled)
     }
 
     @MainActor

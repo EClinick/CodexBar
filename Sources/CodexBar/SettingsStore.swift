@@ -351,6 +351,10 @@ extension SettingsStore {
         if Self.isRunningTests, sessionQuotaDefault == nil {
             userDefaults.set(true, forKey: "sessionQuotaNotificationsEnabled")
         }
+        let codexResetExpiryNotificationsEnabled = userDefaults.object(
+            forKey: "codexResetExpiryNotificationsEnabled") as? Bool ?? false
+        let codexResetAutoRedeemEnabled = userDefaults.object(
+            forKey: "codexResetAutoRedeemEnabled") as? Bool ?? false
         let quotaWarnings = Self.loadQuotaWarningDefaults(userDefaults: userDefaults)
         let quotaWarningMarkersVisibleDefault = userDefaults.object(forKey: "quotaWarningMarkersVisible") as? Bool
         let quotaWarningMarkersVisible = quotaWarningMarkersVisibleDefault ?? true
@@ -428,6 +432,8 @@ extension SettingsStore {
             debugKeepCLISessionsAlive: debugKeepCLISessionsAlive,
             statusChecksEnabled: statusChecksEnabled,
             sessionQuotaNotificationsEnabled: sessionQuotaNotificationsEnabled,
+            codexResetExpiryNotificationsEnabled: codexResetExpiryNotificationsEnabled,
+            codexResetAutoRedeemEnabled: codexResetAutoRedeemEnabled,
             quotaWarningNotificationsEnabled: quotaWarnings.notificationsEnabled,
             quotaWarningThresholdsRaw: quotaWarnings.thresholdsRaw,
             quotaWarningSessionThresholdsRaw: quotaWarnings.sessionThresholdsRaw,

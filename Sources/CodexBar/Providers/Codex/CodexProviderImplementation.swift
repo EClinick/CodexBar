@@ -18,6 +18,8 @@ struct CodexProviderImplementation: ProviderImplementation {
         _ = settings.codexUsageDataSource
         _ = settings.codexCookieSource
         _ = settings.codexCookieHeader
+        _ = settings.codexResetExpiryNotificationsEnabled
+        _ = settings.codexResetAutoRedeemEnabled
     }
 
     @MainActor
@@ -72,6 +74,43 @@ struct CodexProviderImplementation: ProviderImplementation {
         let batterySaverBinding = context.boolBinding(\.openAIWebBatterySaverEnabled)
 
         return [
+            ProviderSettingsToggleDescriptor(
+                id: "codex-reset-expiry-alerts",
+                title: "Reset expiry alerts",
+                subtitle: "Schedules a macOS alert five minutes before each available earned reset expires.",
+                binding: context.boolBinding(\.codexResetExpiryNotificationsEnabled),
+                statusText: nil,
+                actions: [],
+                isVisible: nil,
+                onChange: { enabled in
+                    context.store.reconcileCodexResetCreditAutomation(
+                        snapshot: context.store.snapshot(for: .codex))
+                    if enabled {
+                        await context.store.refreshProvider(.codex, coalesceIfRefreshing: true)
+                    }
+                },
+                onAppDidBecomeActive: nil,
+                onAppearWhenEnabled: nil),
+            ProviderSettingsToggleDescriptor(
+                id: "codex-reset-auto-redeem",
+                title: "Auto-use expiring resets",
+                subtitle: [
+                    "One minute before expiry, asks the Codex CLI App Server to use the reset",
+                    "on an eligible rate-limit window. CodexBar must be running.",
+                ].joined(separator: " "),
+                binding: context.boolBinding(\.codexResetAutoRedeemEnabled),
+                statusText: nil,
+                actions: [],
+                isVisible: nil,
+                onChange: { enabled in
+                    context.store.reconcileCodexResetCreditAutomation(
+                        snapshot: context.store.snapshot(for: .codex))
+                    if enabled {
+                        await context.store.refreshProvider(.codex, coalesceIfRefreshing: true)
+                    }
+                },
+                onAppDidBecomeActive: nil,
+                onAppearWhenEnabled: nil),
             ProviderSettingsToggleDescriptor(
                 id: "codex-historical-tracking",
                 title: "Historical tracking",

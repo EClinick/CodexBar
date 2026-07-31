@@ -11,6 +11,8 @@ struct SettingsDefaultsState {
     var debugKeepCLISessionsAlive: Bool
     var statusChecksEnabled: Bool
     var sessionQuotaNotificationsEnabled: Bool
+    var codexResetExpiryNotificationsEnabled: Bool
+    var codexResetAutoRedeemEnabled: Bool
     var quotaWarningNotificationsEnabled: Bool
     var quotaWarningThresholdsRaw: [Int]
     var quotaWarningSessionThresholdsRaw: [Int]

@@ -679,7 +679,10 @@ extension UsageStore {
             runtime: .app,
             sourceMode: sourceMode,
             includeCredits: includeCredits,
-            includeOptionalUsage: self.settings.showOptionalCreditsAndExtraUsage,
+            includeOptionalUsage: ProviderRegistry.shouldIncludeOptionalUsage(
+                provider: provider,
+                showOptionalUsage: self.settings.showOptionalCreditsAndExtraUsage,
+                codexResetCreditAutomationEnabled: self.settings.codexResetCreditAutomationEnabled),
             webTimeout: 60,
             webDebugDumpHTML: false,
             verbose: verbose,
@@ -1196,6 +1199,7 @@ extension UsageStore {
             self.failureGates[.codex]?.recordSuccess()
             self.rememberLiveSystemCodexEmailIfNeeded(snapshot.accountEmail(for: .codex))
             self.seedCodexAccountScopedRefreshGuard(accountEmail: account.email)
+            self.reconcileCodexResetCreditAutomation(snapshot: snapshot)
             await self.recordPlanUtilizationHistorySample(provider: .codex, snapshot: snapshot)
             guard self.isCurrentProviderRefreshGeneration(.codex, generation: generation) else { return }
             self.recordCodexHistoricalSampleIfNeeded(snapshot: snapshot)

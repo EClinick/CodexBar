@@ -660,6 +660,28 @@ struct SettingsStoreCoverageTests {
     }
 
     @Test
+    func `codex reset automation settings default off and persist across store reload`() throws {
+        let suite = "SettingsStoreCoverageTests-codex-reset-automation"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(false, forKey: "debugDisableKeychainAccess")
+        let configStore = testConfigStore(suiteName: suite)
+
+        let fresh = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
+        #expect(fresh.codexResetExpiryNotificationsEnabled == false)
+        #expect(fresh.codexResetAutoRedeemEnabled == false)
+        #expect(fresh.codexResetCreditAutomationEnabled == false)
+
+        fresh.codexResetExpiryNotificationsEnabled = true
+        #expect(fresh.codexResetCreditAutomationEnabled == true)
+        fresh.codexResetAutoRedeemEnabled = true
+
+        let reloaded = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
+        #expect(reloaded.codexResetExpiryNotificationsEnabled == true)
+        #expect(reloaded.codexResetAutoRedeemEnabled == true)
+    }
+
+    @Test
     func `weekly progress work days defaults to nil and persists across store reload`() throws {
         let suite = "SettingsStoreCoverageTests-weekly-progress-work-days"
         let defaults = try #require(UserDefaults(suiteName: suite))
