@@ -11,9 +11,12 @@ struct StatusMenuMergedOverviewRefreshTests {
         let settings = self.makeSettings()
         settings.refreshFrequency = .manual
         settings.mergeIcons = true
-        let activeProviders: Set<UsageProvider> = [.claude, .codex, .cursor, .opencode]
-        self.enableOnly(activeProviders, settings: settings)
-        settings.mergedOverviewSelectedProviders = [.claude, .codex, .cursor]
+        let activeProviders: [UsageProvider] = [.claude, .codex, .cursor, .opencode]
+        self.enableOnly(Set(activeProviders), settings: settings)
+        settings.setMergedOverviewProviderSelection(
+            provider: .opencode,
+            isSelected: false,
+            activeProviders: activeProviders)
         settings.mergedMenuLastSelectedWasOverview = true
 
         let controller = self.makeController(settings: settings)
@@ -42,8 +45,7 @@ struct StatusMenuMergedOverviewRefreshTests {
         }
 
         #expect(requestCount == 0)
-        #expect(controller.manualRefreshTask == nil)
-        #expect(controller.manualRefreshProvider == nil)
+        #expect(controller.manualRefreshTasks.isEmpty)
     }
 
     private func makeSettings() -> SettingsStore {

@@ -9,7 +9,7 @@ public enum CrofProviderDescriptor {
             metadata: ProviderMetadata(
                 id: .crof,
                 displayName: "Crof",
-                sessionLabel: "Requests",
+                sessionLabel: "Credits",
                 weeklyLabel: "Credits",
                 opusLabel: nil,
                 supportsOpus: false,
@@ -27,7 +27,12 @@ public enum CrofProviderDescriptor {
             branding: ProviderBranding(
                 iconStyle: .crof,
                 iconResourceName: "ProviderIcon-crof",
-                color: ProviderColor(red: 0.18, green: 0.67, blue: 0.58)),
+                color: ProviderColor(red: 0.18, green: 0.67, blue: 0.58),
+                confettiPalette: [
+                    ProviderColor(hex: 0x0A0A0A),
+                    ProviderColor(hex: 0x8B7CFF),
+                    ProviderColor(hex: 0xA99FFF),
+                ]),
             tokenCost: ProviderTokenCostConfig(
                 supportsTokenCost: false,
                 noDataMessage: { "Crof cost summary is not available via API." }),
@@ -42,5 +47,9 @@ public enum CrofProviderDescriptor {
                 name: "crof",
                 aliases: ["crofai"],
                 versionDetector: nil))
+    }
+
+    public static func primaryLabel(snapshot: UsageSnapshot) -> String {
+        snapshot.secondary == nil ? "Credits" : "Requests"
     }
 }

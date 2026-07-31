@@ -53,9 +53,11 @@ struct AlibabaCodingPlanCookieImporterTests {
                 return .allowed
             } operation: {
                 #expect(throws: BrowserCookieStoreAccessSuppressedError.self) {
-                    _ = try AlibabaChromiumCookieFallbackImporter.importSession(
+                    _ = try AliyunOneConsoleChromiumCookieFallbackImporter.importSession(
                         browser: .chrome,
-                        domains: ["example.com"])
+                        domains: ["example.com"],
+                        isAuthenticatedSession: { _ in false },
+                        sessionLabel: "Test")
                 }
             }
         }
@@ -90,7 +92,12 @@ struct AlibabaCodingPlanCookieImporterTests {
             atPath: firefoxProfile.appendingPathComponent("cookies.sqlite").path,
             contents: Data())
 
-        let detection = BrowserDetection(homeDirectory: temp.path, cacheTTL: 0)
+        let detection = BrowserDetection(
+            homeDirectory: temp.path,
+            cacheTTL: 0,
+            fileExists: { path in
+                path == "/Applications/Firefox.app" || FileManager.default.fileExists(atPath: path)
+            })
         let importOrder: BrowserCookieImportOrder = [.firefox, .safari, .chrome]
 
         let candidates = AlibabaCodingPlanCookieImporter.cookieImportCandidates(

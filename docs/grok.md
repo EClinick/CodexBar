@@ -15,16 +15,21 @@ browser session when the CLI surface does not expose billing.
 
 ## Data sources + fallback order
 
-1) **`~/.grok/auth.json` (primary; always works for SuperGrok subscribers)**
-   - Reads `email`, `team_id`, `first_name`/`last_name`, plan-hint (`auth_mode`)
-     for the identity row in the menu.
+1) **`~/.grok/auth.json` (primary identity source)**
+   - Reads `email`, `team_id`, `first_name`/`last_name`, plan-hint (`auth_mode`),
+     and the optional `principal_type` for the identity row in the menu.
+   - Team principals are recognized on the CLI and web billing paths. Until Grok
+     exposes a supported team usage surface, CodexBar keeps the identity row and
+     reports that team usage is unavailable instead of exposing the personal-team
+     rejection verbatim.
 2) **`grok agent stdio` ACP JSON-RPC** (best-effort, currently disabled in grok 0.1.210)
    - We spawn `grok agent stdio` and call `initialize` + `x.ai/billing` (no params).
    - **Known limitation:** in grok 0.1.210 the `x.ai/billing` extension method
      is only wired in the interactive TUI; the agent-stdio surface returns
-     `-32601 Method not found`. The provider degrades silently to identity-only
-     when this happens. When xAI exposes billing on the agent protocol, no
-     code change is required.
+     `-32601 Method not found`. Personal/unknown principals continue to the web
+     fallback, while a team principal degrades to identity-only with an explicit
+     unsupported-team-usage diagnostic. When xAI exposes billing on the agent
+     protocol, no code change is required.
    - One non-obvious quirk: grok's ACP parser does not unescape `\/` in method
      names. `Foundation.JSONSerialization.data` defaults to escaping forward
      slashes, so payloads must be re-encoded with `\/` → `/` before being
@@ -38,8 +43,14 @@ browser session when the CLI surface does not expose billing.
      browser session, then retries that session with cookies only.
    - CodexBar imports Chrome only by default to avoid unrelated browser
      Keychain prompts.
-   - CLI/test runtime does not import browser cookies unless
-     `CODEXBAR_ALLOW_BROWSER_COOKIE_IMPORT=1` is set.
+   - Ordinary CLI/test runtime does not import browser cookies unless
+     `CODEXBAR_ALLOW_BROWSER_COOKIE_IMPORT=1` is set. An explicit
+     `codexbar cookie refresh --provider grok` also opts in for that refresh.
+   - Validated sessions are stored in the Keychain-backed cookie cache and are
+     reused first by later app and CLI fetches, so background work does not
+     re-open the Chromium Keychain gate. The cached cookie is evicted only on
+     authentication failures (HTTP 401/403 or gRPC auth statuses); a cached
+     team-limited session keeps degrading to identity-only data.
    - `~/.grok/auth.json` is still used for identity and as a last best-effort
      bearer-only probe after browser sessions fail. Expired tokens are not sent.
    - Parses the returned protobuf enough to recover used percent and
@@ -60,6 +71,7 @@ browser session when the CLI surface does not expose billing.
   `https://accounts.x.ai/sign-in` (legacy session).
 - Required fields per entry: `key` (bearer token), `refresh_token`, `expires_at`,
   `auth_mode`, `email`, `team_id`, `user_id`, `first_name`/`last_name`.
+  `principal_type` is optional because older auth files do not include it.
 - Tokens are issued by `grok login` and expire after ~7 days; refresh is handled by
   the CLI itself (CodexBar does not refresh; it just reads the cached credential).
 

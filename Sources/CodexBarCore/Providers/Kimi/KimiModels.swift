@@ -9,6 +9,24 @@ struct KimiCodeAPIUsageResponse: Codable {
     let limits: [KimiRateLimit]?
 }
 
+struct KimiSubscriptionStatsResponse: Codable {
+    let subscriptionBalance: KimiSubscriptionBalance?
+    let ratelimitCode7d: KimiSubscriptionRateLimit?
+}
+
+struct KimiSubscriptionBalance: Codable, Sendable {
+    let feature: String?
+    let type: String?
+    let amountUsedRatio: Double?
+    let expireTime: String?
+}
+
+struct KimiSubscriptionRateLimit: Codable, Sendable {
+    let ratio: Double?
+    let enabled: Bool?
+    let resetTime: String?
+}
+
 struct KimiUsage: Codable {
     let scope: String
     let detail: KimiUsageDetail
@@ -89,12 +107,29 @@ public struct KimiUsageDetail: Codable, Sendable {
     }
 }
 
-struct KimiRateLimit: Codable {
+struct KimiRateLimit: Codable, Sendable {
     let window: KimiWindow
     let detail: KimiUsageDetail
 }
 
-struct KimiWindow: Codable {
+struct KimiWindow: Codable, Sendable {
     let duration: Int
     let timeUnit: String
+
+    var durationMinutes: Int? {
+        guard self.duration > 0 else { return nil }
+        let multiplier: Int
+        switch self.timeUnit {
+        case "TIME_UNIT_MINUTE":
+            multiplier = 1
+        case "TIME_UNIT_HOUR":
+            multiplier = 60
+        case "TIME_UNIT_DAY":
+            multiplier = 24 * 60
+        default:
+            return nil
+        }
+        let result = self.duration.multipliedReportingOverflow(by: multiplier)
+        return result.overflow ? nil : result.partialValue
+    }
 }

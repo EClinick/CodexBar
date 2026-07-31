@@ -19,8 +19,7 @@ extension UsageMenuCardView.Model {
             "creditsRemaining=\(self.creditsRemaining.map(String.init(describing:)) ?? "nil")",
             MenuCardHeightFingerprint.field("creditsHint", self.creditsHintText),
             MenuCardHeightFingerprint.field("creditsCopy", self.creditsHintCopyText),
-            MenuCardHeightFingerprint.field("codexResetCredits", self.codexResetCreditsText),
-            MenuCardHeightFingerprint.field("codexResetCreditsDetail", self.codexResetCreditsDetailText),
+            "codexResetCredits=\(self.codexResetCredits?.heightFingerprint ?? "")",
             "metrics=\(MenuCardHeightFingerprint.join(self.metrics.map(\.heightFingerprint)))",
             "notes=\(notesFingerprint)",
             "dashboard=\(self.inlineUsageDashboard?.heightFingerprint ?? "")",
@@ -87,10 +86,17 @@ extension UsageMenuCardView.Model.Metric {
             MenuCardHeightFingerprint.field("detail", self.detailText),
             MenuCardHeightFingerprint.field("detailLeft", self.detailLeftText),
             MenuCardHeightFingerprint.field("detailRight", self.detailRightText),
+            MenuCardHeightFingerprint.field(
+                "sessionEquivalentLeft",
+                self.sessionEquivalentDetail?.leftText),
+            MenuCardHeightFingerprint.field(
+                "sessionEquivalentRight",
+                self.sessionEquivalentDetail?.rightText),
             self.pacePercent == nil ? "pace=0" : "pace=1",
             self.paceOnTop ? "paceTop=1" : "paceTop=0",
             self.cardStyle ? "card=1" : "card=0",
-            "markers=\(self.warningMarkerPercents.count)",
+            "warningMarkers=\(self.warningMarkerPercents.count)",
+            "workdayMarkers=\(self.workdayMarkerPercents.count)",
         ])
     }
 }
@@ -112,9 +118,20 @@ extension UsageMenuCardView.Model.TokenUsageSection {
         MenuCardHeightFingerprint.join([
             MenuCardHeightFingerprint.field("session", self.sessionLine),
             MenuCardHeightFingerprint.field("month", self.monthLine),
+            MenuCardHeightFingerprint.field("metered", self.meteredLine),
+            MenuCardHeightFingerprint.field("comparisons", self.comparisonLines.joined(separator: "|")),
             MenuCardHeightFingerprint.field("hint", self.hintLine),
             MenuCardHeightFingerprint.field("error", self.errorLine),
             MenuCardHeightFingerprint.field("errorCopy", self.errorCopyText),
+        ])
+    }
+}
+
+extension CodexResetCreditsPresentation {
+    fileprivate var heightFingerprint: String {
+        MenuCardHeightFingerprint.join([
+            MenuCardHeightFingerprint.field("text", self.text),
+            MenuCardHeightFingerprint.field("expirySummary", self.expirySummaryText),
         ])
     }
 }

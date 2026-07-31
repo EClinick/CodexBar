@@ -118,4 +118,18 @@ struct DevinProviderImplementation: ProviderImplementation {
         }
         return URL(string: urlString) ?? URL(string: "https://app.devin.ai")!
     }
+
+    @MainActor
+    func appendUsageMenuEntries(context: ProviderMenuUsageContext, entries: inout [ProviderMenuEntry]) {
+        guard context.settings.showOptionalCreditsAndExtraUsage,
+              let cost = context.snapshot?.providerCost,
+              cost.period == "Extra usage balance"
+        else { return }
+
+        let balance = UsageFormatter.convertedCostString(
+            cost.used,
+            preferredCurrency: context.settings.preferredCurrencyCode,
+            providerCurrency: cost.currencyCode)
+        entries.append(.text(L("Extra usage balance: %@", balance), .primary))
+    }
 }

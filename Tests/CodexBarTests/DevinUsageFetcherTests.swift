@@ -54,6 +54,80 @@ struct DevinUsageFetcherTests {
     }
 
     @Test
+    func `parses overage balance into extra usage provider cost`() throws {
+        let response: [String: Any] = [
+            "daily_percentage": 12,
+            "weekly_percentage": 42,
+            "overage_balance": 70.87,
+        ]
+
+        let snapshot = try DevinUsageParser.parse(response, organization: nil, now: Self.now)
+
+        #expect(snapshot.overageBalance == 70.87)
+        let cost = try #require(snapshot.toUsageSnapshot().providerCost)
+        #expect(cost.used == 70.87)
+        #expect(cost.limit == 0)
+        #expect(cost.currencyCode == "USD")
+        #expect(cost.period == "Extra usage balance")
+        #expect(cost.updatedAt == Self.now)
+    }
+
+    @Test
+    func `parses overage balance cents into extra usage provider cost`() throws {
+        let response: [String: Any] = [
+            "daily_percentage": 12,
+            "weekly_percentage": 42,
+            "overage_balance_cents": 7087,
+        ]
+
+        let snapshot = try DevinUsageParser.parse(response, organization: nil, now: Self.now)
+
+        #expect(snapshot.overageBalance == 70.87)
+        #expect(snapshot.toUsageSnapshot().providerCost?.period == "Extra usage balance")
+    }
+
+    @Test
+    func `omits provider cost when overage balance is absent`() throws {
+        let response: [String: Any] = [
+            "daily_percentage": 12,
+            "weekly_percentage": 42,
+        ]
+
+        let snapshot = try DevinUsageParser.parse(response, organization: nil, now: Self.now)
+
+        #expect(snapshot.overageBalance == nil)
+        #expect(snapshot.toUsageSnapshot().providerCost == nil)
+    }
+
+    @Test(arguments: ["-1", "Infinity", "NaN"])
+    func `omits invalid overage balances`(_ balance: String) throws {
+        let response: [String: Any] = [
+            "daily_percentage": 12,
+            "weekly_percentage": 42,
+            "overage_balance": balance,
+        ]
+
+        let snapshot = try DevinUsageParser.parse(response, organization: nil, now: Self.now)
+
+        #expect(snapshot.overageBalance == nil)
+        #expect(snapshot.toUsageSnapshot().providerCost == nil)
+    }
+
+    @Test(arguments: ["-1", "Infinity", "NaN"])
+    func `omits invalid overage balance cents`(_ balance: String) throws {
+        let response: [String: Any] = [
+            "daily_percentage": 12,
+            "weekly_percentage": 42,
+            "overage_balance_cents": balance,
+        ]
+
+        let snapshot = try DevinUsageParser.parse(response, organization: nil, now: Self.now)
+
+        #expect(snapshot.overageBalance == nil)
+        #expect(snapshot.toUsageSnapshot().providerCost == nil)
+    }
+
+    @Test
     func `keeps weekly quota when current plan hides daily quota`() throws {
         let response: [String: Any] = [
             "weekly_percentage": 25,
@@ -65,6 +139,47 @@ struct DevinUsageFetcherTests {
 
         #expect(usage.primary == nil)
         #expect(usage.secondary?.usedPercent == 25)
+    }
+
+    @Test
+    func `normalizes mixed-scale current percentages at the one-percent boundary`() throws {
+        let cases: [(input: Double, expected: Double)] = [
+            (0.5, 50),
+            (1, 1),
+            (1.5, 1.5),
+        ]
+
+        for value in cases {
+            let response: [String: Any] = [
+                "daily_percentage": value.input,
+                "weekly_percentage": value.input,
+            ]
+            let snapshot = try DevinUsageParser.parse(response, organization: nil, now: Self.now)
+
+            #expect(snapshot.daily?.usedPercent == value.expected)
+            #expect(snapshot.weekly?.usedPercent == value.expected)
+        }
+    }
+
+    @Test
+    func `preserves fractional boundaries for fallback quota percentages`() throws {
+        let response: [String: Any] = [
+            "quota_usage": [
+                "daily_quota": [
+                    "used_percent": 1,
+                    "reset_at": "2026-06-01T08:00:00Z",
+                ],
+                "weekly_quota": [
+                    "remaining_percent": 1,
+                    "next_reset_at": 1_780_560_000,
+                ],
+            ],
+        ]
+
+        let snapshot = try DevinUsageParser.parse(response, organization: nil, now: Self.now)
+
+        #expect(snapshot.daily?.usedPercent == 100)
+        #expect(snapshot.weekly?.usedPercent == 0)
     }
 
     @Test
@@ -199,33 +314,33 @@ struct DevinUsageFetcherTests {
     #if os(macOS)
     @Test
     func `empty app organization setting preserves imported organization`() async throws {
-        defer { DevinSessionImporter.importSessionOverrideForTesting = nil }
-        DevinSessionImporter.importSessionOverrideForTesting = { _, organizationOverride, _ in
+        try await DevinSessionImporter.withImportSessionOverrideForTesting { _, organizationOverride, _ in
             #expect(organizationOverride == nil)
             return DevinSessionImporter.SessionInfo(
-                accessToken: "auth1_abcdefghijklmnopqrstuvwxyz0123456789",
+                accessToken: "test-access-token",
                 organization: "org/example-org",
                 internalOrganizationID: "org_GQ6LhcfkW1TSinM6",
                 sourceLabel: "Chrome Default")
-        }
-        let stub = ProviderHTTPTransportStub { request in
-            #expect(request.url?.path == "/api/org_GQ6LhcfkW1TSinM6/billing/quota/usage")
-            let response = HTTPURLResponse(
-                url: request.url!,
-                statusCode: 200,
-                httpVersion: nil,
-                headerFields: nil)!
-            return (Data(#"{"daily_percentage":0,"weekly_percentage":0}"#.utf8), response)
-        }
+        } operation: {
+            let stub = ProviderHTTPTransportStub { request in
+                #expect(request.url?.path == "/api/org_GQ6LhcfkW1TSinM6/billing/quota/usage")
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil)!
+                return (Data(#"{"daily_percentage":0,"weekly_percentage":0}"#.utf8), response)
+            }
 
-        let snapshot = try await DevinUsageFetcher(browserDetection: BrowserDetection(cacheTTL: 0)).fetch(
-            organizationOverride: "",
-            now: Self.now,
-            transport: stub)
+            let snapshot = try await DevinUsageFetcher(browserDetection: BrowserDetection(cacheTTL: 0)).fetch(
+                organizationOverride: "",
+                now: Self.now,
+                transport: stub)
 
-        #expect(snapshot.organization == "example-org")
-        #expect(snapshot.daily?.usedPercent == 0)
-        #expect(snapshot.weekly?.usedPercent == 0)
+            #expect(snapshot.organization == "example-org")
+            #expect(snapshot.daily?.usedPercent == 0)
+            #expect(snapshot.weekly?.usedPercent == 0)
+        }
     }
 
     @Test

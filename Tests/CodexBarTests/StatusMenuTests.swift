@@ -1214,12 +1214,13 @@ extension StatusMenuTests {
         controller.menuWillOpen(menu)
         let usageItem = menu.items.first { ($0.representedObject as? String) == "menuCardUsage" }
         let creditsItem = menu.items.first { ($0.representedObject as? String) == "menuCardCredits" }
+        let creditsHistoryItem = menu.items.first { item in
+            item.submenu?.items.contains { ($0.representedObject as? String) == "creditsHistoryChart" } == true
+        }
         #expect(
             usageItem?.submenu?.items
                 .contains { ($0.representedObject as? String) == "usageBreakdownChart" } == true)
-        #expect(
-            creditsItem?.submenu?.items
-                .contains { ($0.representedObject as? String) == "creditsHistoryChart" } == true)
+        #expect(creditsItem == nil && creditsHistoryItem != nil)
     }
 
     @Test
@@ -1230,6 +1231,8 @@ extension StatusMenuTests {
         settings.refreshFrequency = .manual
         settings.mergeIcons = false
         settings.selectedMenuProvider = .openai
+        settings.costUsageEnabled = true
+        settings.costSummaryDisplayStyle = .both
 
         let registry = ProviderRegistry.shared
         let metadata = try #require(registry.metadata[.openai])
@@ -1284,17 +1287,13 @@ extension StatusMenuTests {
         settings.mergeIcons = true
         settings.selectedMenuProvider = .codex
         settings.costUsageEnabled = true
+        settings.costSummaryDisplayStyle = .both
 
         let registry = ProviderRegistry.shared
-        if let codexMeta = registry.metadata[.codex] {
-            settings.setProviderEnabled(provider: .codex, metadata: codexMeta, enabled: true)
-        }
-        if let claudeMeta = registry.metadata[.claude] {
-            settings.setProviderEnabled(provider: .claude, metadata: claudeMeta, enabled: false)
-        }
-        if let geminiMeta = registry.metadata[.gemini] {
-            settings.setProviderEnabled(provider: .gemini, metadata: geminiMeta, enabled: false)
-        }
+        let metadata = registry.metadata
+        try settings.setProviderEnabled(provider: .codex, metadata: #require(metadata[.codex]), enabled: true)
+        try settings.setProviderEnabled(provider: .claude, metadata: #require(metadata[.claude]), enabled: false)
+        try settings.setProviderEnabled(provider: .gemini, metadata: #require(metadata[.gemini]), enabled: false)
 
         let fetcher = UsageFetcher()
         let store = UsageStore(fetcher: fetcher, browserDetection: BrowserDetection(cacheTTL: 0), settings: settings)
@@ -1413,6 +1412,7 @@ extension StatusMenuTests {
         settings.mergeIcons = true
         settings.selectedMenuProvider = .claude
         settings.costUsageEnabled = true
+        settings.costSummaryDisplayStyle = .both
         settings.claudeWebExtrasEnabled = true
 
         let registry = ProviderRegistry.shared
@@ -1488,6 +1488,7 @@ extension StatusMenuTests {
         settings.mergeIcons = true
         settings.selectedMenuProvider = .vertexai
         settings.costUsageEnabled = true
+        settings.costSummaryDisplayStyle = .both
 
         let registry = ProviderRegistry.shared
         if let vertexMeta = registry.metadata[.vertexai] {
@@ -1538,7 +1539,7 @@ extension StatusMenuTests {
 
 extension StatusMenuTests {
     @Test
-    func `overview tab renders overview rows for all active providers when three or fewer`() {
+    func `overview tab renders overview rows for six active providers`() {
         self.disableMenuCardsForTesting()
         let settings = self.makeSettings()
         settings.statusChecksEnabled = false
@@ -1547,11 +1548,14 @@ extension StatusMenuTests {
         settings.selectedMenuProvider = .claude
         settings.mergedMenuLastSelectedWasOverview = true
 
+        let enabledProviders: Set<UsageProvider> = [.codex, .claude, .cursor, .opencode, .warp, .gemini]
         let registry = ProviderRegistry.shared
         for provider in UsageProvider.allCases {
             guard let metadata = registry.metadata[provider] else { continue }
-            let shouldEnable = provider == .codex || provider == .claude || provider == .cursor
-            settings.setProviderEnabled(provider: provider, metadata: metadata, enabled: shouldEnable)
+            settings.setProviderEnabled(
+                provider: provider,
+                metadata: metadata,
+                enabled: enabledProviders.contains(provider))
         }
 
         let fetcher = UsageFetcher()
@@ -1566,18 +1570,14 @@ extension StatusMenuTests {
 
         let menu = controller.makeMenu()
         controller.menuWillOpen(menu)
-
         let ids = self.representedIDs(in: menu)
         let overviewRows = ids.filter { $0.hasPrefix("overviewRow-") }
-        #expect(overviewRows.count == 3)
-        #expect(overviewRows.contains("overviewRow-codex"))
-        #expect(overviewRows.contains("overviewRow-claude"))
-        #expect(overviewRows.contains("overviewRow-cursor"))
-        #expect(ids.contains("menuCard") == false)
+        #expect(Set(overviewRows) == Set(enabledProviders.map { "overviewRow-\($0.rawValue)" }))
+        #expect(menu.items.count(where: \.isSeparatorItem) == overviewRows.count + 1)
     }
 
     @Test
-    func `overview tab honors stored subset when three or fewer`() {
+    func `overview tab honors stored subset when within the provider limit`() {
         self.disableMenuCardsForTesting()
         let settings = self.makeSettings()
         settings.statusChecksEnabled = false
@@ -1629,15 +1629,14 @@ extension StatusMenuTests {
         settings.selectedMenuProvider = .codex
         settings.mergedMenuLastSelectedWasOverview = true
         settings.mergedOverviewSelectedProviders = []
-
+        let enabledProviders: Set<UsageProvider> = [.codex, .claude, .cursor, .opencode, .warp, .gemini, .grok]
         let registry = ProviderRegistry.shared
         for provider in UsageProvider.allCases {
             guard let metadata = registry.metadata[provider] else { continue }
-            let shouldEnable = provider == .codex ||
-                provider == .claude ||
-                provider == .cursor ||
-                provider == .opencode
-            settings.setProviderEnabled(provider: provider, metadata: metadata, enabled: shouldEnable)
+            settings.setProviderEnabled(
+                provider: provider,
+                metadata: metadata,
+                enabled: enabledProviders.contains(provider))
         }
 
         let fetcher = UsageFetcher()

@@ -96,6 +96,8 @@ struct CodexResetCreditAutomationTests {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let firstExpiry = now.addingTimeInterval(10 * 60)
         let secondExpiry = now.addingTimeInterval(15 * 60)
+        let firstID = Self.credit(id: "first", expiresAt: firstExpiry).id
+        let secondID = Self.credit(id: "second", expiresAt: secondExpiry).id
         let snapshot = Self.snapshot([
             Self.credit(id: "second", expiresAt: secondExpiry),
             Self.credit(id: "first", expiresAt: firstExpiry),
@@ -108,21 +110,21 @@ struct CodexResetCreditAutomationTests {
 
         #expect(plan.expiryAlerts == [
             CodexResetCreditExpiryAlert(
-                creditID: "first",
+                creditID: firstID,
                 fireDate: firstExpiry.addingTimeInterval(-5 * 60),
                 expiresAt: firstExpiry),
             CodexResetCreditExpiryAlert(
-                creditID: "second",
+                creditID: secondID,
                 fireDate: secondExpiry.addingTimeInterval(-5 * 60),
                 expiresAt: secondExpiry),
         ])
         #expect(plan.autoRedemptions == [
             CodexResetCreditAutoRedemption(
-                creditID: "first",
+                creditID: firstID,
                 fireDate: firstExpiry.addingTimeInterval(-60),
                 expiresAt: firstExpiry),
             CodexResetCreditAutoRedemption(
-                creditID: "second",
+                creditID: secondID,
                 fireDate: secondExpiry.addingTimeInterval(-60),
                 expiresAt: secondExpiry),
         ])
@@ -134,6 +136,9 @@ struct CodexResetCreditAutomationTests {
         let finalMinuteExpiry = now.addingTimeInterval(30)
         let twoMinuteExpiry = now.addingTimeInterval(120)
         let tooLateExpiry = now.addingTimeInterval(0.5)
+        let finalMinuteID = Self.credit(id: "final-minute", expiresAt: finalMinuteExpiry).id
+        let twoMinuteID = Self.credit(id: "two-minutes", expiresAt: twoMinuteExpiry).id
+        let tooLateID = Self.credit(id: "too-late", expiresAt: tooLateExpiry).id
         let snapshot = Self.snapshot([
             Self.credit(id: "final-minute", expiresAt: finalMinuteExpiry),
             Self.credit(id: "two-minutes", expiresAt: twoMinuteExpiry),
@@ -145,19 +150,19 @@ struct CodexResetCreditAutomationTests {
             settings: .init(expiryAlertsEnabled: true, autoRedeemEnabled: true),
             now: now)
 
-        #expect(plan.expiryAlerts.map(\.creditID) == ["final-minute", "two-minutes"])
+        #expect(plan.expiryAlerts.map(\.creditID) == [finalMinuteID, twoMinuteID])
         #expect(plan.expiryAlerts.allSatisfy { $0.fireDate == now.addingTimeInterval(1) })
         #expect(plan.autoRedemptions == [
             CodexResetCreditAutoRedemption(
-                creditID: "too-late",
+                creditID: tooLateID,
                 fireDate: now,
                 expiresAt: tooLateExpiry),
             CodexResetCreditAutoRedemption(
-                creditID: "final-minute",
+                creditID: finalMinuteID,
                 fireDate: now,
                 expiresAt: finalMinuteExpiry),
             CodexResetCreditAutoRedemption(
-                creditID: "two-minutes",
+                creditID: twoMinuteID,
                 fireDate: now.addingTimeInterval(60),
                 expiresAt: twoMinuteExpiry),
         ])
@@ -167,6 +172,7 @@ struct CodexResetCreditAutomationTests {
     func `plan ignores unusable credits and de-duplicates credit ids`() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let validExpiry = now.addingTimeInterval(600)
+        let validID = Self.credit(id: "valid", expiresAt: validExpiry).id
         let snapshot = Self.snapshot([
             Self.credit(id: "valid", expiresAt: validExpiry),
             Self.credit(id: "valid", expiresAt: now.addingTimeInterval(900)),
@@ -180,8 +186,8 @@ struct CodexResetCreditAutomationTests {
             settings: .init(expiryAlertsEnabled: true, autoRedeemEnabled: true),
             now: now)
 
-        #expect(plan.expiryAlerts.map(\.creditID) == ["valid"])
-        #expect(plan.autoRedemptions.map(\.creditID) == ["valid"])
+        #expect(plan.expiryAlerts.map(\.creditID) == [validID])
+        #expect(plan.autoRedemptions.map(\.creditID) == [validID])
         #expect(plan.expiryAlerts.first?.expiresAt == validExpiry)
     }
 
@@ -211,6 +217,9 @@ struct CodexResetCreditAutomationTests {
     func `controller redeems through injected closure once and reports the mocked result`() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let idempotencyKey = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let stableCreditID = Self.credit(
+            id: "credit-to-use",
+            expiresAt: now.addingTimeInterval(30)).id
         let snapshot = Self.snapshot([
             Self.credit(id: "credit-to-use", expiresAt: now.addingTimeInterval(30)),
         ], now: now)
@@ -255,10 +264,10 @@ struct CodexResetCreditAutomationTests {
 
         let recorded = await recorder.snapshot()
         #expect(recorded.calls == [
-            .init(creditID: "credit-to-use", idempotencyKey: idempotencyKey),
+            .init(creditID: stableCreditID, idempotencyKey: idempotencyKey),
         ])
         #expect(recorded.completions == [
-            .init(creditID: "credit-to-use", outcome: .reset),
+            .init(creditID: stableCreditID, outcome: .reset),
         ])
         #expect(notifier.events == [.completed(.reset)])
     }

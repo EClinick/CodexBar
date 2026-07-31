@@ -16,6 +16,14 @@ CodexBar does not need your browser password. macOS owns the prompt, and the pro
 that is requesting access. For support reports, include that requesting app/path when possible and do not paste
 passwords, cookie headers, OAuth tokens, API keys, or Keychain item values.
 
+Before a Keychain read that may require interaction, CodexBar shows an explanation of the item and its purpose.
+**Learn More** opens this page without dismissing that explanation or starting the macOS prompt. Choose **OK** only
+when you are ready to continue, or use the opt-out below.
+
+After you acknowledge the Claude OAuth explanation, CodexBar does not repeat that explanation for six hours. This
+cooldown only applies to CodexBar's explanatory alert: macOS can still show its own Keychain authorization prompt,
+and the Claude **Never prompt** and global **Disable Keychain access** settings remain in effect.
+
 ## If the prompt appears after uninstalling CodexBar
 
 Deleting `CodexBar.app` prevents a new process from launching from that bundle, but it does not terminate a process
@@ -63,6 +71,11 @@ CodexBar can no longer decrypt browser cookies. Manual cookie headers, API keys,
 on Keychain can still work where the provider supports them.
 
 ## Browser Safe Storage prompts
+
+If a Chromium-family Safe Storage check requires interaction or is denied, CodexBar pauses automatic cookie imports
+for every Chromium-family browser for six hours. This prevents a denial in Arc, Edge, Brave, or another Chromium
+browser from immediately moving to the next browser and showing another prompt. **Refresh Now** is an explicit retry
+for the browser that was blocked; Safari and Firefox-family cookie imports remain available during the pause.
 
 For normal browser-cookie import prompts, either allow CodexBar in the Keychain item's Access Control list or disable
 Keychain access:

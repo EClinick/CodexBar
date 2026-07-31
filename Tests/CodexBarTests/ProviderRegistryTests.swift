@@ -47,18 +47,34 @@ struct ProviderRegistryTests {
     }
 
     @Test
-    func `codex reset automation requests optional credit details without changing other providers`() {
-        #expect(ProviderRegistry.shouldIncludeOptionalUsage(
-            provider: .codex,
-            showOptionalUsage: false,
-            codexResetCreditAutomationEnabled: true))
-        #expect(!ProviderRegistry.shouldIncludeOptionalUsage(
-            provider: .claude,
-            showOptionalUsage: false,
-            codexResetCreditAutomationEnabled: true))
-        #expect(ProviderRegistry.shouldIncludeOptionalUsage(
-            provider: .claude,
-            showOptionalUsage: true,
-            codexResetCreditAutomationEnabled: false))
+    func `provider confetti palettes are complete and branded`() {
+        for descriptor in ProviderDescriptorRegistry.all {
+            let palette = descriptor.branding.confettiPalette
+            #expect(
+                (2...3).contains(palette.count),
+                "Invalid confetti palette for \(descriptor.id.rawValue).")
+            let hasDistinctColors = palette.first.map { first in
+                palette.dropFirst().contains { $0 != first }
+            } ?? false
+            #expect(
+                hasDistinctColors,
+                "Confetti palette for \(descriptor.id.rawValue) must contain distinct colors.")
+        }
+
+        #expect(ClaudeProviderDescriptor.descriptor.branding.confettiPalette == [
+            ProviderColor(hex: 0xD97757),
+            ProviderColor(hex: 0xF0EEE6),
+            ProviderColor(hex: 0x141413),
+        ])
+        #expect(CodexProviderDescriptor.descriptor.branding.confettiPalette == [
+            ProviderColor(hex: 0x736BD4),
+            ProviderColor(hex: 0x97A9F7),
+            ProviderColor(hex: 0xCFD4F7),
+        ])
+        #expect(OpenAIAPIProviderDescriptor.descriptor.branding.confettiPalette == [
+            ProviderColor(hex: 0x000000),
+            ProviderColor(hex: 0x808080),
+            ProviderColor(hex: 0xFFFFFF),
+        ])
     }
 }

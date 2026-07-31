@@ -91,6 +91,14 @@ struct TokenAccountCLIContext {
         codexActiveSourceOverride: CodexActiveSource? = nil) -> ProviderSettingsSnapshot?
     {
         let config = self.providerConfig(for: provider)
+        if provider == .qoder {
+            let settings = self.cookieSettings(provider: provider, account: account, config: config)
+            return self.makeSnapshot(qoder: self.makeProviderCookieSettings(settings))
+        }
+        if provider == .longcat {
+            let settings = self.cookieSettings(provider: provider, account: account, config: config)
+            return self.makeSnapshot(longcat: self.makeProviderCookieSettings(settings))
+        }
         if let snapshot = self.makeCookieBackedSnapshot(provider: provider, account: account, config: config) {
             return snapshot
         }
@@ -143,6 +151,7 @@ struct TokenAccountCLIContext {
         }
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func makeCookieBackedSnapshot(
         provider: UsageProvider,
         account: ProviderTokenAccount?,
@@ -174,7 +183,13 @@ struct TokenAccountCLIContext {
                     manualCookieHeader: cookieSettings.manualCookieHeader,
                     apiRegion: self.resolveAlibabaCodingPlanRegion(config)))
         case .alibabatokenplan:
-            return self.makeSnapshot(alibabaTokenPlan: self.makeProviderCookieSettings(cookieSettings))
+            return self.makeSnapshot(
+                alibabaTokenPlan: ProviderSettingsSnapshot.AlibabaTokenPlanProviderSettings(
+                    cookieSource: cookieSettings.cookieSource,
+                    manualCookieHeader: cookieSettings.manualCookieHeader,
+                    apiRegion: self.resolveAlibabaTokenPlanRegion(config)))
+        case .qwencloud:
+            return self.makeSnapshot(qwenCloud: self.makeProviderCookieSettings(cookieSettings))
         case .factory:
             return self.makeSnapshot(factory: self.makeProviderCookieSettings(cookieSettings))
         case .minimax:
@@ -203,6 +218,8 @@ struct TokenAccountCLIContext {
             return self.makeSnapshot(abacus: self.makeProviderCookieSettings(cookieSettings))
         case .mistral:
             return self.makeSnapshot(mistral: self.makeProviderCookieSettings(cookieSettings))
+        case .zoommate:
+            return self.makeSnapshot(zoommate: self.makeProviderCookieSettings(cookieSettings))
         case .stepfun:
             let stepfunSettings = self.cookieSettings(
                 provider: provider,
@@ -228,6 +245,7 @@ struct TokenAccountCLIContext {
         opencodego: ProviderSettingsSnapshot.OpenCodeProviderSettings? = nil,
         alibaba: ProviderSettingsSnapshot.AlibabaCodingPlanProviderSettings? = nil,
         alibabaTokenPlan: ProviderSettingsSnapshot.AlibabaTokenPlanProviderSettings? = nil,
+        qwenCloud: ProviderSettingsSnapshot.QwenCloudProviderSettings? = nil,
         factory: ProviderSettingsSnapshot.FactoryProviderSettings? = nil,
         minimax: ProviderSettingsSnapshot.MiniMaxProviderSettings? = nil,
         manus: ProviderSettingsSnapshot.ManusProviderSettings? = nil,
@@ -235,6 +253,7 @@ struct TokenAccountCLIContext {
         moonshot: ProviderSettingsSnapshot.MoonshotProviderSettings? = nil,
         kilo: ProviderSettingsSnapshot.KiloProviderSettings? = nil,
         kimi: ProviderSettingsSnapshot.KimiProviderSettings? = nil,
+        longcat: ProviderSettingsSnapshot.LongCatProviderSettings? = nil,
         augment: ProviderSettingsSnapshot.AugmentProviderSettings? = nil,
         amp: ProviderSettingsSnapshot.AmpProviderSettings? = nil,
         commandcode: ProviderSettingsSnapshot.CommandCodeProviderSettings? = nil,
@@ -244,7 +263,9 @@ struct TokenAccountCLIContext {
         mimo: ProviderSettingsSnapshot.MiMoProviderSettings? = nil,
         abacus: ProviderSettingsSnapshot.AbacusProviderSettings? = nil,
         mistral: ProviderSettingsSnapshot.MistralProviderSettings? = nil,
-        stepfun: ProviderSettingsSnapshot.StepFunProviderSettings? = nil) -> ProviderSettingsSnapshot
+        qoder: ProviderSettingsSnapshot.QoderProviderSettings? = nil,
+        stepfun: ProviderSettingsSnapshot.StepFunProviderSettings? = nil,
+        zoommate: ProviderSettingsSnapshot.ZoomMateProviderSettings? = nil) -> ProviderSettingsSnapshot
     {
         ProviderSettingsSnapshot.make(
             codex: codex,
@@ -254,15 +275,18 @@ struct TokenAccountCLIContext {
             opencodego: opencodego,
             alibaba: alibaba,
             alibabaTokenPlan: alibabaTokenPlan,
+            qwenCloud: qwenCloud,
             factory: factory,
             minimax: minimax,
             manus: manus,
             zai: zai,
             kilo: kilo,
             kimi: kimi,
+            longcat: longcat,
             augment: augment,
             moonshot: moonshot,
             amp: amp,
+            zoommate: zoommate,
             commandcode: commandcode,
             ollama: ollama,
             jetbrains: jetbrains,
@@ -270,6 +294,7 @@ struct TokenAccountCLIContext {
             mimo: mimo,
             abacus: abacus,
             mistral: mistral,
+            qoder: qoder,
             stepfun: stepfun)
     }
 
@@ -423,7 +448,9 @@ struct TokenAccountCLIContext {
         let routing = self.claudeCredentialRouting(account: account, config: config)
 
         if base == .auto {
-            if routing.adminAPIKey != nil { return .api }
+            if routing.adminAPIKey != nil {
+                return .api
+            }
             return routing.isOAuth ? .oauth : base
         }
 
@@ -598,6 +625,15 @@ struct TokenAccountCLIContext {
             return .international
         }
         return AlibabaCodingPlanAPIRegion(rawValue: raw) ?? .international
+    }
+
+    private func resolveAlibabaTokenPlanRegion(_ config: ProviderConfig?) -> AlibabaTokenPlanAPIRegion {
+        guard let raw = config?.region?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty
+        else {
+            return .chinaMainland
+        }
+        return AlibabaTokenPlanAPIRegion(rawValue: raw) ?? .chinaMainland
     }
 
     private static func kiloUsageDataSource(from source: ProviderSourceMode?) -> KiloUsageDataSource {

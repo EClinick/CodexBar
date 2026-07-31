@@ -6,7 +6,17 @@ import WidgetKit
 
 extension UsageStore {
     func persistWidgetSnapshot(reason: String) {
-        let snapshot = self.makeWidgetSnapshot()
+        // A fresh process has token-cost data before a user-authorized Claude OAuth refresh can run.
+        // Keep the last queued snapshot in memory so back-to-back writes cannot race the on-disk cache.
+        let previousSnapshot = self.lastQueuedWidgetSnapshot ?? {
+            #if DEBUG
+            // Snapshot-save overrides must stay isolated from a developer's real app-group data.
+            guard self._test_widgetSnapshotSaveOverride == nil else { return nil }
+            #endif
+            return WidgetSnapshotStore.load()
+        }()
+        let snapshot = self.makeWidgetSnapshot(previousSnapshot: previousSnapshot)
+        self.lastQueuedWidgetSnapshot = snapshot
         let previousTask = self.widgetSnapshotPersistTask
         self.widgetSnapshotPersistTask = Task { @MainActor in
             _ = await previousTask?.result
@@ -25,19 +35,54 @@ extension UsageStore {
         }
     }
 
-    private func makeWidgetSnapshot() -> WidgetSnapshot {
+    private func makeWidgetSnapshot(previousSnapshot: WidgetSnapshot?) -> WidgetSnapshot {
+        let now = Date()
         let enabledProviders = self.enabledProviders()
         let entries = UsageProvider.allCases.compactMap { provider in
-            self.makeWidgetEntry(for: provider)
+            self.makeWidgetEntry(
+                for: provider,
+                now: now,
+                previousEntry: previousSnapshot?.entries.first { $0.provider == provider })
         }
-        return WidgetSnapshot(entries: entries, enabledProviders: enabledProviders, generatedAt: Date())
+        return WidgetSnapshot(
+            entries: entries,
+            enabledProviders: enabledProviders,
+            usageBarsShowUsed: self.settings.usageBarsShowUsed,
+            generatedAt: now)
     }
 
-    private func makeWidgetEntry(for provider: UsageProvider) -> WidgetSnapshot.ProviderEntry? {
-        guard let snapshot = self.snapshots[provider] else { return nil }
+    private func makeWidgetEntry(
+        for provider: UsageProvider,
+        now: Date,
+        previousEntry: WidgetSnapshot.ProviderEntry?) -> WidgetSnapshot.ProviderEntry?
+    {
+        let snapshot = self.snapshots[provider]
+        let storedTokenSnapshot = self.tokenSnapshotForCurrentProviderConfig(for: provider)?.snapshot
+        let claudeQuotaOwnerKey: String? = if provider == .claude {
+            self.claudeWidgetQuotaOwnerKey()
+        } else {
+            nil
+        }
+        let preservedClaudeUsage: PreservedClaudeWidgetUsage? = if provider == .claude,
+                                                                   snapshot == nil,
+                                                                   !self.widgetUsagePreservationBlockedProviders
+                                                                       .contains(provider),
+                                                                       self.knownLimitsAvailabilityByProvider[provider]?
+                                                                           .isUnavailable != true
+        {
+            Self.preservedClaudeWidgetUsage(
+                from: previousEntry,
+                expectedQuotaOwnerKey: claudeQuotaOwnerKey)
+        } else {
+            nil
+        }
+        guard snapshot != nil ||
+            (provider == .claude && (storedTokenSnapshot != nil || preservedClaudeUsage != nil))
+        else {
+            return nil
+        }
 
-        let tokenSnapshot = self.tokenSnapshot(fromProviderSnapshot: snapshot, provider: provider) ?? self
-            .tokenSnapshots[provider]
+        let tokenSnapshot = storedTokenSnapshot
         let dailyUsage = tokenSnapshot?.daily.map { entry in
             WidgetSnapshot.DailyUsagePoint(
                 dayKey: entry.date,
@@ -46,15 +91,17 @@ extension UsageStore {
         } ?? []
 
         let tokenUsage = Self.widgetTokenUsageSummary(from: tokenSnapshot, provider: provider)
-        let usageRows = self.widgetUsageRows(provider: provider, snapshot: snapshot)
+        let usageRows = snapshot.map {
+            self.widgetUsageRows(provider: provider, snapshot: $0, now: now)
+        } ?? preservedClaudeUsage?.usageRows ?? []
 
         let creditsRemaining: Double?
         let codeReviewRemaining: Double?
-        if provider == .codex {
+        if provider == .codex, let snapshot {
             let projection = self.codexConsumerProjection(
                 surface: .widget,
                 snapshotOverride: snapshot,
-                now: snapshot.updatedAt)
+                now: now)
             let displayOnlyExtrasHidden = projection.dashboardVisibility == .displayOnly
             creditsRemaining = displayOnlyExtrasHidden ? nil : projection.credits?.remaining
             codeReviewRemaining = displayOnlyExtrasHidden ? nil : projection.remainingPercent(for: .codeReview)
@@ -62,29 +109,111 @@ extension UsageStore {
             creditsRemaining = nil
             codeReviewRemaining = nil
         }
+        let providerCost: ProviderCostSnapshot? = if provider == .devin,
+                                                     self.settings.showOptionalCreditsAndExtraUsage
+        {
+            snapshot?.providerCost
+        } else {
+            nil
+        }
+        let quotaOwnerKey: String? = if provider == .claude {
+            snapshot != nil ? claudeQuotaOwnerKey : preservedClaudeUsage?.quotaOwnerKey
+        } else {
+            nil
+        }
 
         return WidgetSnapshot.ProviderEntry(
             provider: provider,
-            updatedAt: snapshot.updatedAt,
-            primary: snapshot.primary,
-            secondary: snapshot.secondary,
-            tertiary: snapshot.tertiary,
+            updatedAt: snapshot?.updatedAt ?? preservedClaudeUsage?.updatedAt ?? tokenSnapshot?.updatedAt ?? now,
+            primary: snapshot?.primary ?? preservedClaudeUsage?.primary,
+            secondary: snapshot?.secondary ?? preservedClaudeUsage?.secondary,
+            tertiary: snapshot?.tertiary ?? preservedClaudeUsage?.tertiary,
             usageRows: usageRows,
             creditsRemaining: creditsRemaining,
             codeReviewRemainingPercent: codeReviewRemaining,
             tokenUsage: tokenUsage,
-            dailyUsage: dailyUsage)
+            dailyUsage: dailyUsage,
+            providerCost: providerCost,
+            quotaOwnerKey: quotaOwnerKey)
     }
 
-    private nonisolated static func widgetTokenUsageSummary(
+    private struct PreservedClaudeWidgetUsage {
+        let updatedAt: Date
+        let primary: RateWindow?
+        let secondary: RateWindow?
+        let tertiary: RateWindow?
+        let usageRows: [WidgetSnapshot.WidgetUsageRowSnapshot]?
+        let quotaOwnerKey: String?
+    }
+
+    private func claudeWidgetQuotaOwnerKey() -> String {
+        if let account = self.settings.effectiveSelectedTokenAccount(for: .claude) {
+            return self.tokenAccountSnapshotCacheKey(provider: .claude, account: account)
+        }
+        let environment = ProviderRegistry.makeEnvironment(
+            base: self.environmentBase,
+            provider: .claude,
+            settings: self.settings,
+            tokenOverride: nil)
+        return ClaudeOAuthCredentialsStore.credentialsProfileIdentifier(environment: environment)
+    }
+
+    private nonisolated static func preservedClaudeWidgetUsage(
+        from entry: WidgetSnapshot.ProviderEntry?,
+        expectedQuotaOwnerKey: String?) -> PreservedClaudeWidgetUsage?
+    {
+        guard let entry, entry.provider == .claude else { return nil }
+        guard let expectedQuotaOwnerKey,
+              let quotaOwnerKey = entry.quotaOwnerKey,
+              quotaOwnerKey == expectedQuotaOwnerKey
+        else {
+            return nil
+        }
+
+        let primary = entry.primary?.isSyntheticPlaceholder == true ? nil : entry.primary
+        let secondary = entry.secondary?.isSyntheticPlaceholder == true ? nil : entry.secondary
+        let tertiary = entry.tertiary?.isSyntheticPlaceholder == true ? nil : entry.tertiary
+        let usageRows = entry.usageRows?.filter { row in
+            guard row.window?.isSyntheticPlaceholder != true else { return false }
+            return switch row.id {
+            case "primary": primary != nil
+            case "secondary": secondary != nil
+            case "tertiary": tertiary != nil
+            default: row.percentLeft != nil
+            }
+        }
+        guard primary != nil || secondary != nil || tertiary != nil || usageRows?.isEmpty == false else {
+            return nil
+        }
+        return PreservedClaudeWidgetUsage(
+            updatedAt: entry.updatedAt,
+            primary: primary,
+            secondary: secondary,
+            tertiary: tertiary,
+            usageRows: usageRows,
+            quotaOwnerKey: quotaOwnerKey)
+    }
+
+    nonisolated static func widgetTokenUsageSummary(
         from snapshot: CostUsageTokenSnapshot?,
         provider: UsageProvider) -> WidgetSnapshot.TokenUsageSummary?
     {
         guard let snapshot else { return nil }
         let fallbackTokens = snapshot.daily.compactMap(\.totalTokens).reduce(0, +)
         let monthTokensValue = snapshot.last30DaysTokens ?? (fallbackTokens > 0 ? fallbackTokens : nil)
-        let sessionLabel = provider == .bedrock || provider == .mistral ? "Latest billing day" : "Today"
-        let monthLabel = snapshot.historyLabel ?? (snapshot.historyDays == 1 ? "Today" : "\(snapshot.historyDays)d")
+        let sessionLabel = if provider == .bedrock || provider == .mistral {
+            "Latest billing day"
+        } else if provider == .codex {
+            "Today API est. · not billed"
+        } else {
+            "Today"
+        }
+        let defaultMonthLabel = snapshot.historyDays == 1 ? "Today" : "\(snapshot.historyDays)d"
+        let monthLabel = if provider == .codex {
+            "\(snapshot.historyLabel ?? defaultMonthLabel) API est. · not billed"
+        } else {
+            snapshot.historyLabel ?? defaultMonthLabel
+        }
         return WidgetSnapshot.TokenUsageSummary(
             sessionCostUSD: snapshot.sessionCostUSD,
             sessionTokens: snapshot.sessionTokens,
@@ -92,21 +221,23 @@ extension UsageStore {
             last30DaysTokens: monthTokensValue,
             currencyCode: snapshot.currencyCode,
             sessionLabel: sessionLabel,
-            last30DaysLabel: monthLabel)
+            last30DaysLabel: monthLabel,
+            updatedAt: snapshot.updatedAt)
     }
 
     private func widgetUsageRows(
         provider: UsageProvider,
-        snapshot: UsageSnapshot) -> [WidgetSnapshot.WidgetUsageRowSnapshot]
+        snapshot: UsageSnapshot,
+        now: Date) -> [WidgetSnapshot.WidgetUsageRowSnapshot]
     {
         let metadata = ProviderDefaults.metadata[provider]
         if provider == .codex {
             let projection = self.codexConsumerProjection(
                 surface: .widget,
                 snapshotOverride: snapshot,
-                now: snapshot.updatedAt)
+                now: now)
             return projection.visibleRateLanes.compactMap { lane in
-                guard let window = projection.rateWindow(for: lane) else { return nil }
+                guard let window = projection.sourceRateWindow(for: lane) else { return nil }
                 let title = switch lane {
                 case .session:
                     metadata?.sessionLabel ?? "Session"
@@ -116,8 +247,22 @@ extension UsageStore {
                 return WidgetSnapshot.WidgetUsageRowSnapshot(
                     id: lane.rawValue,
                     title: title,
-                    percentLeft: window.remainingPercent)
+                    percentLeft: window.remainingPercent,
+                    window: window)
             }
+        }
+        if provider == .claude,
+           let spendLimit = MenuBarMetricWindowResolver.claudeSpendLimitWindow(snapshot: snapshot)
+        {
+            let period = snapshot.providerCost?.period?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = period.flatMap { $0.isEmpty ? nil : $0 } ?? "Extra usage"
+            return [
+                WidgetSnapshot.WidgetUsageRowSnapshot(
+                    id: "extraUsage",
+                    title: title,
+                    percentLeft: spendLimit.remainingPercent,
+                    window: spendLimit),
+            ]
         }
         if provider == .antigravity,
            let rows = Self.antigravityQuotaSummaryWidgetRows(snapshot: snapshot),
@@ -135,13 +280,43 @@ extension UsageStore {
         }
 
         let primaryTitle: String = {
+            // Legacy request-based Cursor plans track a request quota, not the token-based "Total" pool.
+            if provider == .cursor, snapshot.cursorRequests != nil {
+                return "Requests"
+            }
             if provider == .grok,
                let dyn = GrokProviderDescriptor.primaryLabel(window: snapshot.primary)
             {
                 return dyn
             }
+            if provider == .doubao,
+               let dyn = DoubaoProviderDescriptor.primaryLabel(window: snapshot.primary)
+            {
+                return dyn
+            }
+            if provider == .amp,
+               let dyn = AmpProviderDescriptor.primaryLabel(details: snapshot.ampUsage)
+            {
+                return dyn
+            }
+            if provider == .crof {
+                return CrofProviderDescriptor.primaryLabel(snapshot: snapshot)
+            }
+            if provider == .alibabatokenplan,
+               let dyn = AlibabaTokenPlanProviderDescriptor.primaryLabel(window: snapshot.primary)
+            {
+                return dyn
+            }
             return metadata?.sessionLabel ?? "Session"
         }()
+        let secondaryTitle = if provider == .amp {
+            AmpProviderDescriptor.secondaryLabel(details: snapshot.ampUsage) ?? metadata?.weeklyLabel ?? "Weekly"
+        } else if provider == .alibabatokenplan {
+            AlibabaTokenPlanProviderDescriptor.secondaryLabel(window: snapshot.secondary) ??
+                metadata?.weeklyLabel ?? "Weekly"
+        } else {
+            metadata?.weeklyLabel ?? "Weekly"
+        }
 
         var rows: [WidgetSnapshot.WidgetUsageRowSnapshot] = [
             WidgetSnapshot.WidgetUsageRowSnapshot(
@@ -150,7 +325,7 @@ extension UsageStore {
                 percentLeft: snapshot.primary?.remainingPercent),
             WidgetSnapshot.WidgetUsageRowSnapshot(
                 id: "secondary",
-                title: metadata?.weeklyLabel ?? "Weekly",
+                title: secondaryTitle,
                 percentLeft: snapshot.secondary?.remainingPercent),
         ]
         if metadata?.supportsOpus == true {
@@ -158,6 +333,18 @@ extension UsageStore {
                 id: "tertiary",
                 title: metadata?.opusLabel ?? "Opus",
                 percentLeft: snapshot.tertiary?.remainingPercent))
+        }
+        if provider == .kimi {
+            // Keep persisted widget order stable and include only Kimi's intentional subscription lanes.
+            let kimiWindowIDs = ["kimi-monthly", "kimi-code-7d"]
+            rows.append(contentsOf: kimiWindowIDs.compactMap { id in
+                guard let window = snapshot.extraRateWindows?.first(where: { $0.id == id }), window.usageKnown
+                else { return nil }
+                return WidgetSnapshot.WidgetUsageRowSnapshot(
+                    id: window.id,
+                    title: window.title,
+                    percentLeft: window.window.remainingPercent)
+            })
         }
         return rows.filter { $0.percentLeft != nil }
     }

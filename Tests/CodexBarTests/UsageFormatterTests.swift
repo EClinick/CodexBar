@@ -12,6 +12,8 @@ struct UsageFormatterTests {
         "Resets now",
         "reset_tomorrow_format",
         "Updated %@",
+        "Updated relative %@",
+        "Updated absolute %@",
         "Updated %@h ago",
         "Updated %@m ago",
         "Updated just now",
@@ -44,9 +46,33 @@ struct UsageFormatterTests {
     }
 
     @Test
+    func `positive sub percent usage stays visible`() {
+        #expect(UsageFormatter.percentString(-1) == "0%")
+        #expect(UsageFormatter.percentString(0) == "0%")
+        #expect(UsageFormatter.percentString(0.1) == "<1%")
+        #expect(UsageFormatter.percentString(0.96) == "<1%")
+        #expect(UsageFormatter.percentString(1) == "1%")
+        #expect(UsageFormatter.percentString(101) == "100%")
+        #expect(UsageFormatter.usageLine(remaining: 99.9, used: 0.1, showUsed: true) == "<1% used")
+        // Values in (0.5, 1) round up to "1%" under %.0f, so the old post-format
+        // "0%" -> "<1%" replacement missed them. percentText must show "<1%"
+        // across the whole sub-1% range, matching percentString above.
+        #expect(UsageFormatter.usageLine(remaining: 99.4, used: 0.6, showUsed: true) == "<1% used")
+        #expect(UsageFormatter.usageLine(remaining: 99.25, used: 0.75, showUsed: true) == "<1% used")
+        #expect(UsageFormatter.usageLine(remaining: 0.75, used: 99.25, showUsed: false) == "<1% left")
+
+        let usedWindow = RateWindow(usedPercent: 0.1, windowMinutes: nil, resetsAt: nil, resetDescription: nil)
+        let leftWindow = RateWindow(usedPercent: 99.9, windowMinutes: nil, resetsAt: nil, resetDescription: nil)
+        #expect(MenuBarDisplayText.percentText(window: usedWindow, showUsed: true) == "<1%")
+        #expect(MenuBarDisplayText.percentText(window: leftWindow, showUsed: false) == "<1%")
+    }
+
+    @Test
     func `usage line respects injected localization provider`() {
         UsageFormatter.setLocalizationProvider { key in
             switch key {
+            case "%.0f%% %@": "%2$@ %1$.0f%%"
+            case "<1%% %@": "%1$@ <1%%"
             case "usage_percent_suffix_left": "剩余"
             case "usage_percent_suffix_used": "已使用"
             default: key
@@ -54,8 +80,10 @@ struct UsageFormatterTests {
         }
         defer { UsageFormatter.clearLocalizationProvider() }
 
-        #expect(UsageFormatter.usageLine(remaining: 22, used: 78, showUsed: false) == "22% 剩余")
-        #expect(UsageFormatter.usageLine(remaining: 22, used: 78, showUsed: true) == "78% 已使用")
+        #expect(UsageFormatter.usageLine(remaining: 22, used: 78, showUsed: false) == "剩余 22%")
+        #expect(UsageFormatter.usageLine(remaining: 22, used: 78, showUsed: true) == "已使用 78%")
+        #expect(UsageFormatter.usageLine(remaining: 0.75, used: 99.25, showUsed: false) == "剩余 <1%")
+        #expect(UsageFormatter.usageLine(remaining: 99.4, used: 0.6, showUsed: true) == "已使用 <1%")
     }
 
     @Test
@@ -78,7 +106,7 @@ struct UsageFormatterTests {
     func `injected zh Hans locale applies app language formatting`() {
         UsageFormatter.setLocalizationProvider { key in
             switch key {
-            case "Updated %@":
+            case "Updated absolute %@":
                 "更新于 %@"
             default:
                 key
@@ -95,6 +123,30 @@ struct UsageFormatterTests {
         let output = UsageFormatter.updatedString(from: old, now: now)
 
         #expect(output.hasPrefix("更新于 "))
+    }
+
+    @Test
+    func `injected zh Hant relative updated string can place updated after relative time`() {
+        UsageFormatter.setLocalizationProvider { key in
+            switch key {
+            case "Updated relative %@":
+                "%@已更新"
+            default:
+                key
+            }
+        }
+        UsageFormatter.setLocaleProvider { Locale(identifier: "zh-Hant") }
+        defer {
+            UsageFormatter.clearLocalizationProvider()
+            UsageFormatter.clearLocaleProvider()
+        }
+
+        let now = Date(timeIntervalSince1970: 1_710_048_000)
+        let old = now.addingTimeInterval(-(5 * 3600))
+        let output = UsageFormatter.updatedString(from: old, now: now)
+
+        #expect(output.hasSuffix("已更新"))
+        #expect(!output.hasPrefix("已更新"))
     }
 
     @Test
@@ -171,10 +223,38 @@ struct UsageFormatterTests {
     }
 
     @Test
-    func `reset countdown days and hours`() {
+    func `reset countdown caps days with hours at two units`() {
         let now = Date(timeIntervalSince1970: 1_000_000)
-        let reset = now.addingTimeInterval((26 * 3600) + 10)
+        let reset = now.addingTimeInterval((26 * 3600) + (1 * 60))
         #expect(UsageFormatter.resetCountdownDescription(from: reset, now: now) == "in 1d 2h")
+    }
+
+    @Test
+    func `reset countdown days and exact hours`() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let reset = now.addingTimeInterval(26 * 3600)
+        #expect(UsageFormatter.resetCountdownDescription(from: reset, now: now) == "in 1d 2h")
+    }
+
+    @Test
+    func `reset countdown days and minutes without whole hours`() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let reset = now.addingTimeInterval((24 * 3600) + (5 * 60))
+        #expect(UsageFormatter.resetCountdownDescription(from: reset, now: now) == "in 1d 5m")
+    }
+
+    @Test
+    func `reset countdown exact days`() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let reset = now.addingTimeInterval(2 * 24 * 3600)
+        #expect(UsageFormatter.resetCountdownDescription(from: reset, now: now) == "in 2d")
+    }
+
+    @Test
+    func `reset countdown rounds the last minute into a day`() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let reset = now.addingTimeInterval((24 * 3600) - 59)
+        #expect(UsageFormatter.resetCountdownDescription(from: reset, now: now) == "in 1d")
     }
 
     @Test
@@ -220,6 +300,7 @@ struct UsageFormatterTests {
         #expect(UsageFormatter.modelDisplayName("Claude Opus 4.5 2025 1101") == "Claude Opus 4.5")
         #expect(UsageFormatter.modelDisplayName("claude-sonnet-4-5") == "claude-sonnet-4-5")
         #expect(UsageFormatter.modelDisplayName("gpt-5.3-codex-spark") == "gpt-5.3-codex-spark")
+        #expect(UsageFormatter.modelDisplayName("unknown") == "Unknown model")
     }
 
     @Test
@@ -301,6 +382,16 @@ struct UsageFormatterTests {
         #expect(result == "$0.00")
     }
 
+    @Test(arguments: [
+        (0.0, "$0"),
+        (0.50, "$0.50"),
+        (12.56, "$13"),
+        (1515.0, "$1,515"),
+    ])
+    func `compact currency keeps cents only below one unit`(value: Double, expected: String) {
+        #expect(UsageFormatter.compactCurrencyString(value, currencyCode: "USD") == expected)
+    }
+
     @Test
     func `currency string handles non USD currencies`() {
         // FormatStyle handles all currencies with proper symbols
@@ -376,6 +467,61 @@ struct UsageFormatterTests {
         #expect(UsageFormatter.byteCountStringLong(1024 * 1024) == "1 [byte_unit_megabyte]")
         #expect(UsageFormatter.byteCountStringLong(1024 * 1024 + 1) == "1.0 [byte_unit_megabyte]")
         #expect(UsageFormatter.byteCountStringLong(.min) == "-8589934592 [byte_unit_gigabytes]")
+    }
+
+    @Test
+    func `currency exchange converts rates and formats correctly`() {
+        let exchange = CurrencyExchange.shared
+        let epsilon = 1e-9
+        // USD → USD is identity
+        #expect(abs((exchange.convert(usdAmount: 10.0, to: "USD") ?? 0) - 10.0) < epsilon)
+
+        // Cross-currency conversion via USD pivot
+        let gbpRate = exchange.rate(for: "GBP") ?? 0.79
+        let eurRate = exchange.rate(for: "EUR") ?? 0.92
+        #expect(abs((exchange.convert(usdAmount: 10.0, to: "GBP") ?? 0) - 10.0 * gbpRate) < epsilon)
+        #expect(abs((exchange.convert(usdAmount: 10.0, to: "EUR") ?? 0) - 10.0 * eurRate) < epsilon)
+
+        // Cross-currency: GBP → EUR
+        let gbpToEur = exchange.convert(amount: 10.0, from: "GBP", to: "EUR")
+        let expectedGbpToEur = 10.0 / gbpRate * eurRate
+        #expect(abs((gbpToEur ?? 0) - expectedGbpToEur) < epsilon)
+
+        // GBP → USD cross-currency
+        let gbpToUsd = exchange.convert(amount: 10.0, from: "GBP", to: "USD")
+        #expect(abs((gbpToUsd ?? 0) - 10.0 / gbpRate) < epsilon)
+
+        // Formatting
+        let gbpFormatted = UsageFormatter.convertedCostString(10.0, targetCurrency: "GBP")
+        #expect(gbpFormatted.contains("£"))
+
+        let usdFormatted = UsageFormatter.convertedCostString(10.0, targetCurrency: "USD")
+        #expect(usdFormatted == "$10.00")
+
+        // Smart conversion with preferred currency
+        let autoResult = UsageFormatter.convertedCostString(10.0, preferredCurrency: "auto", providerCurrency: "GBP")
+        #expect(autoResult.contains("£"))
+
+        let explicitCNY = UsageFormatter.convertedCostString(10.0, preferredCurrency: "CNY", providerCurrency: "USD")
+        #expect(explicitCNY.contains("¥"))
+
+        #expect(exchange.convert(amount: 10.0, from: "CHF", to: "USD") == nil)
+        let unavailable = UsageFormatter.convertedCostString(
+            10.0,
+            preferredCurrency: "USD",
+            providerCurrency: "CHF")
+        #expect(unavailable.contains("CHF"))
+        #expect(!unavailable.contains("$"))
+    }
+
+    @Test
+    func `live exchange rates require an explicit non USD currency`() {
+        #expect(!CurrencyExchange.requiresLiveRates(preferredCurrencyCode: "USD"))
+        #expect(!CurrencyExchange.requiresLiveRates(preferredCurrencyCode: " usd "))
+        #expect(!CurrencyExchange.requiresLiveRates(preferredCurrencyCode: "auto"))
+        #expect(!CurrencyExchange.requiresLiveRates(preferredCurrencyCode: "CHF"))
+        #expect(CurrencyExchange.requiresLiveRates(preferredCurrencyCode: "GBP"))
+        #expect(CurrencyExchange.requiresLiveRates(preferredCurrencyCode: " eur "))
     }
 
     @Test

@@ -18,7 +18,9 @@ struct CodexResetCreditRPCIntegrationTests {
             initializeTimeoutSeconds: 1,
             requestTimeoutSeconds: 1,
             codexArguments: ["app-server"],
-            codexExecutableResolver: { _, _ in stubPath })
+            codexExecutableResolver: { _, _ in
+                CodexExecutableResolution(executable: stubPath, loginPATH: nil)
+            })
 
         let accountSnapshot = try await fetcher.loadLatestCLIAccountSnapshot()
         let usage = try #require(accountSnapshot.usage)
@@ -27,18 +29,22 @@ struct CodexResetCreditRPCIntegrationTests {
 
         #expect(usage.accountEmail(for: .codex) == "stub@example.com")
         #expect(resetCredits.availableCount == 1)
-        #expect(resetCredit.id == creditID)
-        #expect(resetCredit.resetType == "full")
+        #expect(resetCredit.id == CodexRateLimitResetCredit.stableID(forProviderID: creditID))
+        #expect(resetCredit.resetType == "codexRateLimits")
         #expect(resetCredit.status == .available)
         #expect(resetCredit.grantedAt == Date(timeIntervalSince1970: 1_800_000_000))
         #expect(resetCredit.expiresAt == Date(timeIntervalSince1970: 1_900_000_000))
 
         let outcome = try await fetcher.consumeRateLimitResetCredit(
-            creditID: creditID,
+            creditID: resetCredit.id,
             idempotencyKey: idempotencyKey,
             expectedAccountEmail: "STUB@example.com")
 
         #expect(outcome == .reset)
+
+        let debugRateLimits = await fetcher.debugRawRateLimits()
+        #expect(!debugRateLimits.contains(creditID))
+        #expect(debugRateLimits.contains(resetCredit.id))
     }
 
     @Test
@@ -62,15 +68,56 @@ struct CodexResetCreditRPCIntegrationTests {
             initializeTimeoutSeconds: 1,
             requestTimeoutSeconds: 1,
             codexArguments: ["app-server"],
-            codexExecutableResolver: { _, _ in stubPath })
+            codexExecutableResolver: { _, _ in
+                CodexExecutableResolution(executable: stubPath, loginPATH: nil)
+            })
 
         do {
             _ = try await fetcher.consumeRateLimitResetCredit(
-                creditID: creditID,
+                creditID: CodexRateLimitResetCredit.stableID(forProviderID: creditID),
                 idempotencyKey: idempotencyKey,
                 expectedAccountEmail: "selected@example.com")
             Issue.record("Expected the mocked account mismatch to block consumption")
         } catch RPCWireError.accountMismatch {
+            // Expected.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: consumeMarker.path))
+    }
+
+    @Test
+    func `mock app server refuses to consume a reset missing from refreshed inventory`() async throws {
+        let creditID = "reset-credit-test"
+        let idempotencyKey = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let consumeMarker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-reset-credit-consume-\(UUID().uuidString)", isDirectory: false)
+        let stubPath = try Self.makeStubCodexCLI(
+            expectedCreditID: creditID,
+            expectedIdempotencyKey: idempotencyKey,
+            consumeMarkerPath: consumeMarker.path)
+        defer {
+            try? FileManager.default.removeItem(atPath: stubPath)
+            try? FileManager.default.removeItem(at: consumeMarker)
+        }
+
+        let fetcher = UsageFetcher(
+            environment: [:],
+            initializeTimeoutSeconds: 1,
+            requestTimeoutSeconds: 1,
+            codexArguments: ["app-server"],
+            codexExecutableResolver: { _, _ in
+                CodexExecutableResolution(executable: stubPath, loginPATH: nil)
+            })
+
+        do {
+            _ = try await fetcher.consumeRateLimitResetCredit(
+                creditID: CodexRateLimitResetCredit.stableID(forProviderID: "stale-credit"),
+                idempotencyKey: idempotencyKey,
+                expectedAccountEmail: "stub@example.com")
+            Issue.record("Expected the mocked stale credit to block consumption")
+        } catch RPCWireError.resetCreditUnavailable {
             // Expected.
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -93,7 +140,9 @@ struct CodexResetCreditRPCIntegrationTests {
             initializeTimeoutSeconds: 1,
             requestTimeoutSeconds: 1,
             codexArguments: ["app-server"],
-            codexExecutableResolver: { _, _ in stubPath })
+            codexExecutableResolver: { _, _ in
+                CodexExecutableResolution(executable: stubPath, loginPATH: nil)
+            })
 
         let usage = try #require(try await fetcher.loadLatestCLIAccountSnapshot().usage)
         #expect(usage.primary?.usedPercent == 12.5)
@@ -117,7 +166,7 @@ struct CodexResetCreditRPCIntegrationTests {
                 "availableCount": 1,
                 "credits": [{
                     "id": "\(expectedCreditID)",
-                    "resetType": "full",
+                    "resetType": "codexRateLimits",
                     "status": "available",
                     "grantedAt": 1800000000,
                     "expiresAt": 1900000000,

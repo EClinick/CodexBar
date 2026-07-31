@@ -7,11 +7,13 @@ public enum UsageProvider: String, CaseIterable, Sendable, Codable {
     case openai
     case azureopenai
     case claude
+    case clinepass
     case cursor
     case opencode
     case opencodego
     case alibaba
     case alibabatokenplan
+    case qwencloud
     case factory
     case gemini
     case antigravity
@@ -26,7 +28,6 @@ public enum UsageProvider: String, CaseIterable, Sendable, Codable {
     case vertexai
     case augment
     case jetbrains
-    case kimik2
     case moonshot
     case amp
     case t3chat
@@ -40,13 +41,16 @@ public enum UsageProvider: String, CaseIterable, Sendable, Codable {
     case perplexity
     case mimo
     case doubao
+    case sakana
     case abacus
     case mistral
     case deepseek
+    case deepinfra
     case codebuff
     case crof
     case venice
     case commandcode
+    case qoder
     case stepfun
     case bedrock
     case grok
@@ -56,6 +60,15 @@ public enum UsageProvider: String, CaseIterable, Sendable, Codable {
     case deepgram
     case poe
     case chutes
+    case neuralwatt
+    case clawrouter
+    case longcat
+    case sub2api
+    case wayfinder
+    case zenmux
+    case aiand
+    case zoommate
+    case xai
 }
 
 // swiftformat:enable sortDeclarations
@@ -64,6 +77,7 @@ public enum IconStyle: String, Sendable, CaseIterable {
     case codex
     case openai
     case claude
+    case clinepass
     case zai
     case minimax
     case manus
@@ -73,11 +87,11 @@ public enum IconStyle: String, Sendable, CaseIterable {
     case opencode
     case opencodego
     case alibaba
+    case qwencloud
     case factory
     case copilot
     case devin
     case kimi
-    case kimik2
     case kilo
     case kiro
     case vertexai
@@ -96,13 +110,16 @@ public enum IconStyle: String, Sendable, CaseIterable {
     case perplexity
     case mimo
     case doubao
+    case sakana
     case abacus
     case mistral
     case deepseek
+    case deepinfra
     case codebuff
     case crof
     case venice
     case commandcode
+    case qoder
     case stepfun
     case bedrock
     case grok
@@ -112,6 +129,15 @@ public enum IconStyle: String, Sendable, CaseIterable {
     case deepgram
     case poe
     case chutes
+    case neuralwatt
+    case clawrouter
+    case longcat
+    case sub2api
+    case wayfinder
+    case zenmux
+    case aiand
+    case zoommate
+    case xai
     case combined
 }
 
@@ -140,6 +166,8 @@ public struct ProviderMetadata: Sendable {
     public let statusLinkURL: String?
     /// Google Workspace product ID for status polling (appsstatus dashboard).
     public let statusWorkspaceProductID: String?
+    /// Optional top-level component/group names to show from a provider status feed.
+    public let statusComponentAllowlist: Set<String>?
 
     public init(
         id: UsageProvider,
@@ -161,7 +189,8 @@ public struct ProviderMetadata: Sendable {
         changelogURL: String? = nil,
         statusPageURL: String?,
         statusLinkURL: String? = nil,
-        statusWorkspaceProductID: String? = nil)
+        statusWorkspaceProductID: String? = nil,
+        statusComponentAllowlist: Set<String>? = nil)
     {
         self.id = id
         self.displayName = displayName
@@ -183,6 +212,7 @@ public struct ProviderMetadata: Sendable {
         self.statusPageURL = statusPageURL
         self.statusLinkURL = statusLinkURL
         self.statusWorkspaceProductID = statusWorkspaceProductID
+        self.statusComponentAllowlist = statusComponentAllowlist
     }
 }
 
@@ -193,6 +223,14 @@ public enum ProviderDefaults {
 }
 
 public enum ProviderBrowserCookieDefaults {
+    public static var chromeOnlyImportOrder: BrowserCookieImportOrder? {
+        #if os(macOS)
+        [.chrome]
+        #else
+        nil
+        #endif
+    }
+
     public static var defaultImportOrder: BrowserCookieImportOrder? {
         #if os(macOS)
         Browser.defaultImportOrder
@@ -216,6 +254,16 @@ public enum ProviderBrowserCookieDefaults {
         #if os(macOS)
         let preferredPrefix: [Browser] = [.safari, .chrome, .firefox]
         return preferredPrefix + Browser.defaultImportOrder.filter { !preferredPrefix.contains($0) }
+        #else
+        nil
+        #endif
+    }
+
+    /// OpenCode web Auto stays Chrome-only by default, with Dia as the one bounded provider exception
+    /// because Dia has a confirmed reporter need. Other browsers stay on Manual until users can choose them.
+    public static var opencodeCookieImportOrder: BrowserCookieImportOrder? {
+        #if os(macOS)
+        [.chrome, .dia]
         #else
         nil
         #endif
@@ -256,6 +304,39 @@ public enum ProviderBrowserCookieDefaults {
     public static var copilotCookieImportOrder: BrowserCookieImportOrder? {
         #if os(macOS)
         [.chrome]
+        #else
+        nil
+        #endif
+    }
+
+    /// LongCat Auto keeps Chrome first for existing users, then checks Firefox without adding
+    /// an unrelated browser Keychain prompt.
+    public static var longcatCookieImportOrder: BrowserCookieImportOrder? {
+        #if os(macOS)
+        [.chrome, .firefox]
+        #else
+        nil
+        #endif
+    }
+
+    /// Qoder sessions are documented through Chrome cookie import. Keep automatic import narrow
+    /// so enabling this provider does not probe unrelated browser keychains.
+    public static var qoderCookieImportOrder: BrowserCookieImportOrder? {
+        #if os(macOS)
+        [.chrome]
+        #else
+        nil
+        #endif
+    }
+
+    /// Mistral Auto: Chrome first (matches the original Chrome-only behavior so
+    /// existing users see no change), then Firefox so users signed in via Firefox
+    /// or Firefox Developer Edition are detected without Manual mode. Safari
+    /// follows for Full Disk Access users. Other Chromium forks stay on Manual
+    /// import to avoid scanning the full default order.
+    public static var mistralCookieImportOrder: BrowserCookieImportOrder? {
+        #if os(macOS)
+        [.chrome, .firefox, .safari]
         #else
         nil
         #endif

@@ -56,10 +56,11 @@ struct ProviderRegistry {
                         runtime: .app,
                         sourceMode: sourceMode,
                         includeCredits: false,
-                        includeOptionalUsage: Self.shouldIncludeOptionalUsage(
+                        includeOptionalUsage: ProviderTokenAccountSelection.shouldIncludeOptionalUsage(
                             provider: provider,
-                            showOptionalUsage: settings.showOptionalCreditsAndExtraUsage,
-                            codexResetCreditAutomationEnabled: settings.codexResetCreditAutomationEnabled),
+                            settings: settings,
+                            override: nil) ||
+                            (provider == .codex && settings.codexResetCreditAutomationEnabled),
                         webTimeout: 60,
                         webDebugDumpHTML: false,
                         verbose: verbose,
@@ -87,7 +88,7 @@ struct ProviderRegistry {
                         costUsageHistoryDays: settings.costUsageHistoryDays,
                         persistsCLISessions: true,
                         persistentCLISessionIdleWindow: Self.persistentCLISessionIdleWindow(
-                            refreshInterval: settings.refreshFrequency.seconds))
+                            refreshInterval: Self.nominalRefreshInterval(for: settings.refreshFrequency)))
                 })
             specs[provider] = spec
         }
@@ -99,12 +100,12 @@ struct ProviderRegistry {
         max(180, (refreshInterval ?? 120) + 60)
     }
 
-    static func shouldIncludeOptionalUsage(
-        provider: UsageProvider,
-        showOptionalUsage: Bool,
-        codexResetCreditAutomationEnabled: Bool) -> Bool
-    {
-        showOptionalUsage || (provider == .codex && codexResetCreditAutomationEnabled)
+    /// `RefreshFrequency.seconds` is nil for `.adaptive`, which would collapse the idle window to
+    /// its floor and churn persistent CLI sessions between adaptive ticks. No `UsageStore` exists
+    /// when specs are built, so `.adaptive` maps to the policy's nominal interval instead of a
+    /// live decision; `.manual` stays nil.
+    static func nominalRefreshInterval(for frequency: RefreshFrequency) -> TimeInterval? {
+        frequency.usesAdaptivePolicy ? AdaptiveRefreshPolicy.nominalIntervalForHeuristics : frequency.seconds
     }
 
     @MainActor

@@ -19,10 +19,6 @@ public enum ProviderConfigEnvironment {
         switch provider {
         case .copilot:
             env["COPILOT_API_TOKEN"] = apiKey
-        case .kimik2:
-            if let key = KimiK2SettingsReader.apiKeyEnvironmentKeys.first {
-                env[key] = apiKey
-            }
         case .warp:
             if let key = WarpSettingsReader.apiKeyEnvironmentKeys.first {
                 env[key] = apiKey
@@ -51,9 +47,11 @@ public enum ProviderConfigEnvironment {
     }
 
     public static func supportsAPIKeyOverride(for provider: UsageProvider) -> Bool {
-        if self.directAPIKeyEnvironmentKey(for: provider) != nil { return true }
+        if self.directAPIKeyEnvironmentKey(for: provider) != nil {
+            return true
+        }
         switch provider {
-        case .copilot, .kimik2, .warp, .codebuff, .crof, .doubao:
+        case .copilot, .warp, .codebuff, .crof, .doubao:
             return true
         case .azureopenai:
             return true
@@ -68,6 +66,12 @@ public enum ProviderConfigEnvironment {
             LLMProxySettingsReader.baseURLEnvironmentKey
         case .litellm:
             LiteLLMSettingsReader.baseURLEnvironmentKey
+        case .clawrouter:
+            ClawRouterSettingsReader.baseURLEnvironmentKey
+        case .sub2api:
+            Sub2APISettingsReader.baseURLEnvironmentKey
+        case .wayfinder:
+            WayfinderSettingsReader.baseURLEnvironmentKey
         default:
             nil
         }
@@ -82,24 +86,67 @@ public enum ProviderConfigEnvironment {
         provider: UsageProvider,
         config: ProviderConfig?) -> [String: String]?
     {
-        switch provider {
-        case .openai:
-            self.applyOpenAIOverrides(base: base, config: config)
-        case .bedrock:
-            self.applyBedrockOverrides(base: base, config: config)
+        if self.supportsAPIKeyAndBaseURLOverride(provider) {
+            return self.applyAPIKeyAndBaseURLOverrides(base: base, provider: provider, config: config)
+        }
+        if let env = self.applyMultiFieldCredentialOverrides(base: base, provider: provider, config: config) {
+            return env
+        }
+        return switch provider {
+        case .deepseek:
+            self.applyDeepSeekOverrides(base: base, config: config)
         case .deepgram:
             self.applyDeepgramOverrides(base: base, config: config)
-        case .llmproxy, .litellm:
-            self.applyAPIKeyAndBaseURLOverrides(base: base, provider: provider, config: config)
+        case .xai:
+            self.applyXAIOverrides(base: base, config: config)
         case .azureopenai:
             self.applyAzureOpenAIOverrides(base: base, config: config)
         case .kimi:
             self.applyKimiOverrides(base: base, config: config)
+        case .doubao:
+            self.applyDoubaoOverrides(base: base, config: config)
+        case .sakana:
+            self.applySakanaOverrides(base: base, config: config)
+        case .longcat:
+            self.applyLongCatOverrides(base: base, config: config)
         default:
             nil
         }
     }
 
+    private static func applyDeepSeekOverrides(
+        base: [String: String],
+        config: ProviderConfig?) -> [String: String]
+    {
+        var env = base
+        if let platformToken = config?.sanitizedCookieHeader {
+            env[DeepSeekSettingsReader.platformTokenEnvironmentKey] = platformToken
+        }
+        if let profileID = config?.sanitizedDeepSeekProfileID {
+            env[DeepSeekSettingsReader.profileIDEnvironmentKey] = profileID
+        }
+        if let profileScope = config?.sanitizedDeepSeekProfileScope {
+            env[DeepSeekSettingsReader.profileScopeEnvironmentKey] = profileScope
+        }
+        return env
+    }
+
+    private static func applyMultiFieldCredentialOverrides(
+        base: [String: String],
+        provider: UsageProvider,
+        config: ProviderConfig?) -> [String: String]?
+    {
+        switch provider {
+        case .openai:
+            self.applyOpenAIOverrides(base: base, config: config)
+        case .bedrock:
+            self.applyBedrockOverrides(base: base, config: config)
+        default:
+            nil
+        }
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity
     private static func directAPIKeyEnvironmentKey(for provider: UsageProvider) -> String? {
         switch provider {
         case .amp:
@@ -110,6 +157,8 @@ public enum ProviderConfigEnvironment {
             AzureOpenAISettingsReader.apiKeyEnvironmentKey
         case .claude:
             ClaudeAdminAPISettingsReader.adminAPIKeyEnvironmentKey
+        case .clinepass:
+            ClinePassSettingsReader.apiKeyEnvironmentKey
         case .zai:
             ZaiSettingsReader.apiTokenKey
         case .minimax:
@@ -138,7 +187,8 @@ public enum ProviderConfigEnvironment {
             GroqSettingsReader.apiKeyEnvironmentKey
         case .llmproxy:
             LLMProxySettingsReader.apiKeyEnvironmentKey
-        case .chutes, .poe, .litellm:
+        case .chutes, .poe, .litellm, .clawrouter, .factory, .sub2api, .neuralwatt, .zenmux, .deepinfra, .aiand,
+             .xai:
             self.additionalAPIKeyEnvironmentKey(for: provider)
         default:
             nil
@@ -153,6 +203,22 @@ public enum ProviderConfigEnvironment {
             PoeSettingsReader.apiKeyEnvironmentKey
         case .litellm:
             LiteLLMSettingsReader.apiKeyEnvironmentKey
+        case .clawrouter:
+            ClawRouterSettingsReader.apiKeyEnvironmentKey
+        case .sub2api:
+            Sub2APISettingsReader.apiKeyEnvironmentKey
+        case .neuralwatt:
+            NeuralWattSettingsReader.apiKeyEnvironmentKey
+        case .factory:
+            FactorySettingsReader.apiTokenKey
+        case .zenmux:
+            ZenMuxSettingsReader.managementAPIKeyEnvironmentKey
+        case .deepinfra:
+            DeepInfraSettingsReader.apiKeyEnvironmentKey
+        case .aiand:
+            AiAndSettingsReader.apiKeyEnvironmentKey
+        case .xai:
+            XAISettingsReader.apiKeyEnvironmentKey
         default:
             nil
         }
@@ -249,6 +315,25 @@ public enum ProviderConfigEnvironment {
         return env
     }
 
+    private static func applyXAIOverrides(
+        base: [String: String],
+        config: ProviderConfig?) -> [String: String]
+    {
+        guard let config else { return base }
+
+        var env = base
+
+        if let apiKey = config.sanitizedAPIKey {
+            env[XAISettingsReader.apiKeyEnvironmentKey] = apiKey
+        }
+
+        if let teamID = config.sanitizedWorkspaceID {
+            env[XAISettingsReader.teamIDEnvironmentKey] = teamID
+        }
+
+        return env
+    }
+
     private static func applyAPIKeyAndBaseURLOverrides(
         base: [String: String],
         provider: UsageProvider,
@@ -283,6 +368,90 @@ public enum ProviderConfigEnvironment {
             env[KimiSettingsReader.codeAPIBaseURLEnvironmentKey] = baseURL
         }
         return env
+    }
+
+    private static func applyDoubaoOverrides(
+        base: [String: String],
+        config: ProviderConfig?) -> [String: String]
+    {
+        guard let config else { return base }
+        var env = base
+        let apiKey = config.sanitizedAPIKey
+        let secretKey = config.sanitizedSecretKey
+
+        if let apiKey, self.doubaoAccessKeyID(from: apiKey) == nil {
+            self.clearDoubaoCodingPlanCredentialKeys(in: &env)
+            env[DoubaoSettingsReader.apiKeyEnvironmentKeys[0]] = apiKey
+            if let region = config.sanitizedRegion {
+                env[DoubaoSettingsReader.regionEnvironmentKeys[0]] = region
+            }
+            return env
+        }
+
+        let accessKeyID = self.doubaoAccessKeyID(from: apiKey) ?? DoubaoSettingsReader.accessKeyID(environment: base)
+        let secretAccessKey = secretKey ?? DoubaoSettingsReader.secretAccessKey(environment: base)
+
+        if let accessKeyID, let secretAccessKey {
+            env[DoubaoSettingsReader.accessKeyIDEnvironmentKeys[0]] = accessKeyID
+            env[DoubaoSettingsReader.secretAccessKeyEnvironmentKeys[0]] = secretAccessKey
+            if let region = config.sanitizedRegion ?? self.firstDoubaoRegionValue(in: base) {
+                env[DoubaoSettingsReader.regionEnvironmentKeys[0]] = region
+            }
+            return env
+        }
+
+        if let region = config.sanitizedRegion {
+            env[DoubaoSettingsReader.regionEnvironmentKeys[0]] = region
+        }
+        return env
+    }
+
+    private static func applySakanaOverrides(
+        base: [String: String],
+        config: ProviderConfig?) -> [String: String]
+    {
+        guard let config else { return base }
+        var env = base
+        if let cookieHeader = config.sanitizedCookieHeader {
+            env[SakanaSettingsReader.cookieHeaderKey] = cookieHeader
+        }
+        return env
+    }
+
+    private static func applyLongCatOverrides(
+        base: [String: String],
+        config: ProviderConfig?) -> [String: String]
+    {
+        guard let config else { return base }
+        var env = base
+        if config.cookieSource == .manual,
+           let cookieHeader = config.sanitizedCookieHeader
+        {
+            env[LongCatSettingsReader.cookieHeaderKey] = cookieHeader
+        }
+        return env
+    }
+
+    private static func doubaoAccessKeyID(from apiKey: String?) -> String? {
+        guard let apiKey, apiKey.hasPrefix("AKLT") else { return nil }
+        return apiKey
+    }
+
+    private static func clearDoubaoCodingPlanCredentialKeys(in environment: inout [String: String]) {
+        for key in DoubaoSettingsReader.accessKeyIDEnvironmentKeys {
+            environment.removeValue(forKey: key)
+        }
+        for key in DoubaoSettingsReader.secretAccessKeyEnvironmentKeys {
+            environment.removeValue(forKey: key)
+        }
+    }
+
+    private static func firstDoubaoRegionValue(in environment: [String: String]) -> String? {
+        for key in DoubaoSettingsReader.regionEnvironmentKeys {
+            guard let value = DoubaoSettingsReader.cleaned(environment[key]) else { continue }
+            return value
+        }
+        return nil
     }
 
     private static func applyAzureOpenAIOverrides(

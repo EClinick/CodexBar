@@ -2,7 +2,55 @@ import Foundation
 import Testing
 @testable import CodexBarCore
 
+// swiftlint:disable:next type_body_length
 struct CostUsageScannerTests {
+    @Test
+    func `codex session metadata skips an oversized line without retaining it`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let fileURL = env.root.appendingPathComponent("oversized-session-meta.jsonl")
+        FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: fileURL)
+        defer { try? handle.close() }
+
+        let oversizedPrefix = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"too-large\",\"padding\":\""
+        try handle.write(contentsOf: Data(oversizedPrefix.utf8))
+        let chunk = Data(repeating: 0x78, count: 64 * 1024)
+        for _ in 0..<128 {
+            try handle.write(contentsOf: chunk)
+        }
+        let expectedLine = #"{"type":"session_meta","payload":{"id":"expected-session"}}"#
+        try handle.write(contentsOf: Data((#""}}"# + "\n" + expectedLine).utf8))
+        try handle.close()
+
+        let sessionID = try CostUsageScanner.parseCodexSessionIdentifier(fileURL: fileURL)
+        #expect(sessionID == "expected-session")
+    }
+
+    @Test
+    func `codex session metadata accepts a line exactly at the byte limit`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let prefix = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"limit-session\",\"padding\":\""
+        let suffix = "\"}}"
+        let paddingCount = CostUsageScanner.codexSessionMetadataMaxLineBytes
+            - prefix.utf8.count
+            - suffix.utf8.count
+        var line = Data(prefix.utf8)
+        line.append(Data(repeating: 0x78, count: paddingCount))
+        line.append(contentsOf: suffix.utf8)
+        #expect(line.count == CostUsageScanner.codexSessionMetadataMaxLineBytes)
+
+        let fileURL = env.root.appendingPathComponent("max-size-session-meta.jsonl")
+        try line.write(to: fileURL)
+        #expect(try (JSONSerialization.jsonObject(with: line)) is [String: Any])
+
+        let sessionID = try CostUsageScanner.parseCodexSessionIdentifier(fileURL: fileURL)
+        #expect(sessionID == "limit-session")
+    }
+
     @Test
     func `codex file metadata detects append truncation and replacement`() throws {
         let root = FileManager.default.temporaryDirectory
@@ -405,6 +453,7 @@ struct CostUsageScannerTests {
                         "input_tokens": 100,
                         "cached_input_tokens": 20,
                         "output_tokens": 10,
+                        "reasoning_output_tokens": 4,
                     ],
                     "model": model,
                 ],
@@ -422,6 +471,8 @@ struct CostUsageScannerTests {
         #expect(first.lastTotals?.input == 100)
         #expect(first.lastTotals?.cached == 20)
         #expect(first.lastTotals?.output == 10)
+        #expect(first.lastTotals?.reasoning == 4)
+        #expect(first.rows.first?.reasoning == 4)
 
         let secondTokenCount: [String: Any] = [
             "type": "event_msg",
@@ -433,6 +484,7 @@ struct CostUsageScannerTests {
                         "input_tokens": 160,
                         "cached_input_tokens": 40,
                         "output_tokens": 16,
+                        "reasoning_output_tokens": 7,
                     ],
                     "model": model,
                 ],
@@ -453,6 +505,7 @@ struct CostUsageScannerTests {
         #expect(packed[0] == 60)
         #expect(packed[1] == 20)
         #expect(packed[2] == 6)
+        #expect(delta.rows.first?.reasoning == 3)
     }
 
     @Test
@@ -935,6 +988,71 @@ struct CostUsageTestEnvironment {
 
     func writeClaudeProjectFile(relativePath: String, contents: String) throws -> URL {
         let url = self.claudeProjectsRoot.appendingPathComponent(relativePath, isDirectory: false)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func writeClaudeDesktopLocalAgentFile(relativePath: String, contents: String) throws -> URL {
+        let localAgentRoot = self.root
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("Claude", isDirectory: true)
+            .appendingPathComponent("local-agent-mode-sessions", isDirectory: true)
+            .appendingPathComponent("workspace-id", isDirectory: true)
+            .appendingPathComponent("session-id", isDirectory: true)
+            .appendingPathComponent("local_agent", isDirectory: true)
+        let url = localAgentRoot.appendingPathComponent(relativePath, isDirectory: false)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func writeClaudeDesktopLocalAgentProjectFile(relativePath: String, contents: String) throws -> URL {
+        try self.writeClaudeDesktopLocalAgentFile(
+            relativePath: ".claude/projects/\(relativePath)",
+            contents: contents)
+    }
+
+    func writeClaudeDesktopCodeSessionProjectFile(relativePath: String, contents: String) throws -> URL {
+        let projectsRoot = self.root
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("Claude", isDirectory: true)
+            .appendingPathComponent("claude-code-sessions", isDirectory: true)
+            .appendingPathComponent("account-id", isDirectory: true)
+            .appendingPathComponent("org-id", isDirectory: true)
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+        let url = projectsRoot.appendingPathComponent(relativePath, isDirectory: false)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func writeClaudeDesktopSharedProjectFile(relativePath: String, contents: String) throws -> URL {
+        let projectsRoot = self.root
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+        let url = projectsRoot.appendingPathComponent(relativePath, isDirectory: false)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func writeNestedClaudeDesktopLocalAgentProjectFile(relativePath: String, contents: String) throws -> URL {
+        let projectsRoot = self.root
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("Claude", isDirectory: true)
+            .appendingPathComponent("local-agent-mode-sessions", isDirectory: true)
+            .appendingPathComponent("workspace-id", isDirectory: true)
+            .appendingPathComponent("session-id", isDirectory: true)
+            .appendingPathComponent("agent", isDirectory: true)
+            .appendingPathComponent("local_agent", isDirectory: true)
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+        let url = projectsRoot.appendingPathComponent(relativePath, isDirectory: false)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try contents.write(to: url, atomically: true, encoding: .utf8)
         return url

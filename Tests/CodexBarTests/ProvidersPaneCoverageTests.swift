@@ -145,21 +145,12 @@ struct ProvidersPaneCoverageTests {
     }
 
     @Test
-    func `selected provider sidebar palette uses contrasting selected text colors`() {
-        let palette = ProviderSidebarRowPalette(isSelected: true)
-
-        #expect(palette.primary.isEqual(NSColor.alternateSelectedControlTextColor))
-        #expect(palette.secondary.alphaComponent == 0.82)
-        #expect(palette.tertiary.alphaComponent == 0.65)
-    }
-
-    @Test
-    func `unselected provider sidebar palette uses standard label colors`() {
-        let palette = ProviderSidebarRowPalette(isSelected: false)
-
-        #expect(palette.primary.isEqual(NSColor.labelColor))
-        #expect(palette.secondary.isEqual(NSColor.secondaryLabelColor))
-        #expect(palette.tertiary.isEqual(NSColor.tertiaryLabelColor))
+    @MainActor
+    func `settings pane titles cover app panes and providers`() {
+        #expect(SettingsPane.general.title == L("tab_general"))
+        #expect(SettingsPane.about.title == L("tab_about"))
+        #expect(!SettingsPane.provider(.codex).title.isEmpty)
+        #expect(SettingsPane.provider(.codex) != SettingsPane.provider(.claude))
     }
 
     @Test
@@ -192,233 +183,91 @@ struct ProvidersPaneCoverageTests {
     }
 
     @Test
-    func `open router menu bar metric picker shows only automatic and primary`() {
-        Self.withEnglishLocalization {
-            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-openrouter-picker")
-            let store = Self.makeUsageStore(settings: settings)
-            let pane = ProvidersPane(settings: settings, store: store)
-
-            let picker = pane._test_menuBarMetricPicker(for: .openrouter)
-            #expect(picker?.options.map(\.id) == [
-                MenuBarMetricPreference.automatic.rawValue,
-                MenuBarMetricPreference.primary.rawValue,
-            ])
-            #expect(picker?.options.map(\.title) == [
-                "Automatic",
-                "Primary (API key limit)",
-            ])
-        }
-    }
-
-    @Test
-    func `deepseek menu bar metric picker shows balance only copy`() {
-        Self.withEnglishLocalization {
-            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-deepseek-picker")
-            let store = Self.makeUsageStore(settings: settings)
-            let pane = ProvidersPane(settings: settings, store: store)
-
-            let picker = pane._test_menuBarMetricPicker(for: .deepseek)
-            #expect(picker?.options.map(\.id) == [
-                MenuBarMetricPreference.automatic.rawValue,
-            ])
-            #expect(picker?.subtitle == "Shows the DeepSeek balance in the menu bar.")
-        }
-    }
-
-    @Test
-    func `moonshot menu bar metric picker shows balance only copy`() {
-        Self.withEnglishLocalization {
-            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-moonshot-picker")
-            let store = Self.makeUsageStore(settings: settings)
-            let pane = ProvidersPane(settings: settings, store: store)
-
-            let picker = pane._test_menuBarMetricPicker(for: .moonshot)
-            #expect(picker?.options.map(\.id) == [
-                MenuBarMetricPreference.automatic.rawValue,
-            ])
-            #expect(picker?.subtitle == "Shows the Moonshot / Kimi API balance in the menu bar.")
-        }
-    }
-
-    @Test
-    func `mistral menu bar metric picker shows payg and monthly plan options`() {
-        Self.withEnglishLocalization {
-            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-mistral-picker")
-            let store = Self.makeUsageStore(settings: settings)
-            let pane = ProvidersPane(settings: settings, store: store)
-
-            let picker = pane._test_menuBarMetricPicker(for: .mistral)
-            #expect(picker?.options.map(\.id) == [
-                MenuBarMetricPreference.automatic.rawValue,
-                MenuBarMetricPreference.monthlyPlan.rawValue,
-            ])
-            #expect(picker?.options.first?.title == "Pay-as-you-go")
-            #expect(picker?.options.last?.title == "Monthly Plan")
-            #expect(picker?.subtitle == "Shows current-month Mistral API spend in the menu bar.")
-        }
-    }
-
-    @Test
-    func `kimi k2 menu bar metric picker shows credits only copy`() {
-        Self.withEnglishLocalization {
-            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-kimik2-picker")
-            let store = Self.makeUsageStore(settings: settings)
-            let pane = ProvidersPane(settings: settings, store: store)
-
-            let picker = pane._test_menuBarMetricPicker(for: .kimik2)
-            #expect(picker?.options.map(\.id) == [
-                MenuBarMetricPreference.automatic.rawValue,
-            ])
-            #expect(picker?.subtitle == "Shows Kimi K2 API-key credits in the menu bar.")
-        }
-    }
-
-    @Test
-    func `cursor menu bar metric picker omits tertiary api lane when snapshot has no api metric`() {
-        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-cursor-no-tertiary-picker")
+    func `claude provider preview follows daily routines visibility`() {
+        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-claude-routines-preview")
         let store = Self.makeUsageStore(settings: settings)
-        let pane = ProvidersPane(settings: settings, store: store)
-
-        let picker = pane._test_menuBarMetricPicker(for: .cursor)
-        let ids = picker?.options.map(\.id) ?? []
-        #expect(!ids.contains(MenuBarMetricPreference.tertiary.rawValue))
-    }
-
-    @Test
-    func `cursor menu bar metric picker includes tertiary api lane when snapshot has api metric`() {
-        Self.withEnglishLocalization {
-            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-cursor-tertiary-picker")
-            let store = Self.makeUsageStore(settings: settings)
-            store._setSnapshotForTesting(
-                UsageSnapshot(
-                    primary: RateWindow(usedPercent: 12, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                    secondary: RateWindow(usedPercent: 34, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                    tertiary: RateWindow(usedPercent: 56, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                    updatedAt: Date()),
-                provider: .cursor)
-            let pane = ProvidersPane(settings: settings, store: store)
-
-            let picker = pane._test_menuBarMetricPicker(for: .cursor)
-            let ids = picker?.options.map(\.id) ?? []
-            #expect(ids.contains(MenuBarMetricPreference.tertiary.rawValue))
-            let tertiaryOption = picker?.options.first { $0.id == MenuBarMetricPreference.tertiary.rawValue }
-            #expect(tertiaryOption?.title == "Tertiary (API)")
-        }
-    }
-
-    @Test
-    func `cursor menu bar metric picker omits extra usage when on demand budget is missing`() {
-        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-cursor-no-extra-usage-picker")
-        let store = Self.makeUsageStore(settings: settings)
+        let now = Date()
         store._setSnapshotForTesting(
             UsageSnapshot(
-                primary: RateWindow(usedPercent: 12, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                secondary: RateWindow(usedPercent: 34, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                updatedAt: Date()),
-            provider: .cursor)
-        let pane = ProvidersPane(settings: settings, store: store)
-
-        let picker = pane._test_menuBarMetricPicker(for: .cursor)
-        let ids = picker?.options.map(\.id) ?? []
-        #expect(!ids.contains(MenuBarMetricPreference.extraUsage.rawValue))
-    }
-
-    @Test
-    func `cursor menu bar metric picker includes extra usage when on demand budget is available`() {
-        Self.withEnglishLocalization {
-            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-cursor-extra-usage-picker")
-            let store = Self.makeUsageStore(settings: settings)
-            store._setSnapshotForTesting(
-                UsageSnapshot(
-                    primary: RateWindow(usedPercent: 12, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                    secondary: RateWindow(usedPercent: 34, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                    tertiary: RateWindow(usedPercent: 56, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                    providerCost: ProviderCostSnapshot(
-                        used: 15,
-                        limit: 100,
-                        currencyCode: "USD",
-                        updatedAt: Date()),
-                    updatedAt: Date()),
-                provider: .cursor)
-            let pane = ProvidersPane(settings: settings, store: store)
-
-            let picker = pane._test_menuBarMetricPicker(for: .cursor)
-            let ids = picker?.options.map(\.id) ?? []
-            #expect(ids.contains(MenuBarMetricPreference.extraUsage.rawValue))
-            let option = picker?.options.first { $0.id == MenuBarMetricPreference.extraUsage.rawValue }
-            #expect(option?.title == "Extra usage")
-        }
-    }
-
-    @Test
-    func `claude menu bar metric picker includes extra usage when spend limit is available`() {
-        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-claude-extra-usage-picker")
-        let store = Self.makeUsageStore(settings: settings)
-        store._setSnapshotForTesting(
-            UsageSnapshot(
-                primary: nil,
-                secondary: nil,
-                providerCost: ProviderCostSnapshot(
-                    used: 67.03,
-                    limit: 1000,
-                    currencyCode: "USD",
-                    period: "Spend limit",
-                    updatedAt: Date()),
-                updatedAt: Date()),
+                primary: RateWindow(usedPercent: 20, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
+                secondary: RateWindow(
+                    usedPercent: 30,
+                    windowMinutes: 10080,
+                    resetsAt: nil,
+                    resetDescription: nil),
+                extraRateWindows: [
+                    NamedRateWindow(
+                        id: "claude-weekly-scoped-fable",
+                        title: "Fable only",
+                        window: RateWindow(
+                            usedPercent: 30,
+                            windowMinutes: 10080,
+                            resetsAt: now.addingTimeInterval(3600),
+                            resetDescription: nil)),
+                    NamedRateWindow(
+                        id: "claude-routines",
+                        title: "Daily Routines",
+                        window: RateWindow(
+                            usedPercent: 40,
+                            windowMinutes: 10080,
+                            resetsAt: now.addingTimeInterval(7200),
+                            resetDescription: nil)),
+                ],
+                updatedAt: now),
             provider: .claude)
         let pane = ProvidersPane(settings: settings, store: store)
 
-        let picker = pane._test_menuBarMetricPicker(for: .claude)
-        let ids = picker?.options.map(\.id) ?? []
-        #expect(ids.contains(MenuBarMetricPreference.extraUsage.rawValue))
+        #expect(pane._test_menuCardModel(for: .claude).metrics.contains { $0.id == "claude-routines" })
+
+        settings.claudeDailyRoutinesUsageVisible = false
+        let hiddenModel = pane._test_menuCardModel(for: .claude)
+        #expect(!hiddenModel.metrics.contains { $0.id == "claude-routines" })
+        #expect(hiddenModel.metrics.contains { $0.id == "claude-weekly-scoped-fable" })
     }
 
     @Test
-    func `zai menu bar metric picker omits tertiary lane when snapshot has no 5-hour metric`() {
-        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-zai-no-tertiary-picker")
+    func `codex provider preview follows spark visibility`() {
+        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-codex-spark-preview")
         let store = Self.makeUsageStore(settings: settings)
+        let now = Date()
+        store._setSnapshotForTesting(
+            UsageSnapshot(
+                primary: RateWindow(usedPercent: 20, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
+                secondary: RateWindow(
+                    usedPercent: 30,
+                    windowMinutes: 10080,
+                    resetsAt: nil,
+                    resetDescription: nil),
+                extraRateWindows: [
+                    NamedRateWindow(
+                        id: CodexAdditionalRateLimitMapper.sparkWindowID,
+                        title: "Codex Spark 5-hour",
+                        window: RateWindow(
+                            usedPercent: 40,
+                            windowMinutes: 300,
+                            resetsAt: now.addingTimeInterval(1800),
+                            resetDescription: nil)),
+                    NamedRateWindow(
+                        id: "codex-other-limit",
+                        title: "Other Codex limit",
+                        window: RateWindow(
+                            usedPercent: 30,
+                            windowMinutes: 1440,
+                            resetsAt: now.addingTimeInterval(3600),
+                            resetDescription: nil)),
+                ],
+                updatedAt: now),
+            provider: .codex)
         let pane = ProvidersPane(settings: settings, store: store)
 
-        let picker = pane._test_menuBarMetricPicker(for: .zai)
-        let ids = picker?.options.map(\.id) ?? []
-        #expect(ids == [
-            MenuBarMetricPreference.automatic.rawValue,
-            MenuBarMetricPreference.primary.rawValue,
-            MenuBarMetricPreference.secondary.rawValue,
-        ])
-    }
+        #expect(pane._test_menuCardModel(for: .codex).metrics.contains {
+            $0.id == CodexAdditionalRateLimitMapper.sparkWindowID
+        })
 
-    @Test
-    func `zai menu bar metric picker includes tertiary 5-hour lane when snapshot has it`() {
-        Self.withEnglishLocalization {
-            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-zai-tertiary-picker")
-            let store = Self.makeUsageStore(settings: settings)
-            store._setSnapshotForTesting(
-                UsageSnapshot(
-                    primary: RateWindow(usedPercent: 12, windowMinutes: 10080, resetsAt: nil, resetDescription: nil),
-                    secondary: RateWindow(usedPercent: 34, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
-                    tertiary: RateWindow(usedPercent: 56, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
-                    updatedAt: Date()),
-                provider: .zai)
-            let pane = ProvidersPane(settings: settings, store: store)
-
-            let picker = pane._test_menuBarMetricPicker(for: .zai)
-            let ids = picker?.options.map(\.id) ?? []
-            #expect(ids.contains(MenuBarMetricPreference.tertiary.rawValue))
-            let tertiaryOption = picker?.options.first { $0.id == MenuBarMetricPreference.tertiary.rawValue }
-            #expect(tertiaryOption?.title == "Tertiary (5-hour)")
-        }
-    }
-
-    @Test
-    func `gemini menu bar metric picker omits tertiary lane`() {
-        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-gemini-no-tertiary-picker")
-        let store = Self.makeUsageStore(settings: settings)
-        let pane = ProvidersPane(settings: settings, store: store)
-
-        let picker = pane._test_menuBarMetricPicker(for: .gemini)
-        let ids = picker?.options.map(\.id) ?? []
-        #expect(!ids.contains(MenuBarMetricPreference.tertiary.rawValue))
+        settings.codexSparkUsageVisible = false
+        let hiddenModel = pane._test_menuCardModel(for: .codex)
+        #expect(!hiddenModel.metrics.contains { $0.id == CodexAdditionalRateLimitMapper.sparkWindowID })
+        #expect(hiddenModel.metrics.contains { $0.id == "codex-other-limit" })
     }
 
     @Test
@@ -499,6 +348,7 @@ struct ProvidersPaneCoverageTests {
 
         #expect(picker?.dynamicSubtitle?() == "Paste a Cookie header captured from the billing page.")
         #expect(picker?.trailingText?() == nil)
+        #expect(picker?.trailingActions.first?.isVisible?() == false)
     }
 
     @Test
@@ -514,6 +364,7 @@ struct ProvidersPaneCoverageTests {
 
         #expect(picker?.dynamicSubtitle?() == "Paste a Cookie header captured from the billing page.")
         #expect(picker?.trailingText?() == nil)
+        #expect(picker?.trailingActions.first?.isVisible?() == false)
     }
 
     @Test
@@ -580,7 +431,6 @@ struct ProvidersPaneCoverageTests {
             minimaxCookieStore: InMemoryMiniMaxCookieStore(),
             minimaxAPITokenStore: InMemoryMiniMaxAPITokenStore(),
             kimiTokenStore: InMemoryKimiTokenStore(),
-            kimiK2TokenStore: InMemoryKimiK2TokenStore(),
             augmentCookieStore: InMemoryCookieHeaderStore(),
             ampCookieStore: InMemoryCookieHeaderStore(),
             copilotTokenStore: InMemoryCopilotTokenStore(),

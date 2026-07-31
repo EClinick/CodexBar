@@ -26,7 +26,12 @@ public enum LLMProxyProviderDescriptor {
             branding: ProviderBranding(
                 iconStyle: .llmproxy,
                 iconResourceName: "ProviderIcon-llmproxy",
-                color: ProviderColor(red: 36 / 255, green: 180 / 255, blue: 126 / 255)),
+                color: ProviderColor(red: 36 / 255, green: 180 / 255, blue: 126 / 255),
+                confettiPalette: [
+                    ProviderColor(hex: 0x00FFFF),
+                    ProviderColor(hex: 0xFFFFFF),
+                    ProviderColor(hex: 0x000000),
+                ]),
             tokenCost: ProviderTokenCostConfig(
                 supportsTokenCost: false,
                 noDataMessage: { "LLM Proxy cost history is reported in the quota-stats summary." }),
@@ -46,7 +51,7 @@ struct LLMProxyAPIFetchStrategy: ProviderFetchStrategy {
 
     func isAvailable(_ context: ProviderFetchContext) async -> Bool {
         ProviderTokenResolver.llmProxyToken(environment: context.env) != nil &&
-            LLMProxySettingsReader.baseURL(environment: context.env) != nil
+            LLMProxySettingsReader.hasBaseURLOverride(environment: context.env)
     }
 
     func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
@@ -54,7 +59,11 @@ struct LLMProxyAPIFetchStrategy: ProviderFetchStrategy {
             throw LLMProxyUsageError.missingCredentials
         }
         guard let baseURL = LLMProxySettingsReader.baseURL(environment: context.env) else {
-            throw LLMProxyUsageError.missingBaseURL
+            // Distinguish "never configured" from "configured but rejected" so the user sees
+            // which one applies instead of the provider silently going unavailable.
+            throw LLMProxySettingsReader.hasBaseURLOverride(environment: context.env)
+                ? LLMProxyUsageError.invalidEndpointOverride(LLMProxySettingsReader.baseURLEnvironmentKey)
+                : LLMProxyUsageError.missingBaseURL
         }
         let usage = try await LLMProxyUsageFetcher.fetchUsage(apiKey: apiKey, baseURL: baseURL)
         return self.makeResult(

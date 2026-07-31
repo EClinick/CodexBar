@@ -11,6 +11,7 @@ public enum SubprocessRunnerError: LocalizedError, Sendable {
     case binaryNotFound(String)
     case launchFailed(String)
     case timedOut(String)
+    case outputTooLarge(String)
     case nonZeroExit(code: Int32, stderr: String)
 
     public var errorDescription: String? {
@@ -21,6 +22,8 @@ public enum SubprocessRunnerError: LocalizedError, Sendable {
             return "Failed to launch process: \(details)"
         case let .timedOut(label):
             return "Command timed out: \(label)"
+        case let .outputTooLarge(label):
+            return "Command produced too much output: \(label)"
         case let .nonZeroExit(code, stderr):
             let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
@@ -148,13 +151,40 @@ public enum SubprocessRunner {
 
     // MARK: - Public API
 
+    /// Runs a process to natural exit without letting caller cancellation or a
+    /// forced timeout interrupt an external mutation after launch.
+    public static func runToCompletion(
+        binary: String,
+        arguments: [String],
+        environment: [String: String],
+        currentDirectoryURL: URL? = nil,
+        acceptsNonZeroExit: Bool = false,
+        label: String) async throws -> SubprocessResult
+    {
+        let task = Task.detached(priority: .userInitiated) {
+            try await self.run(
+                binary: binary,
+                arguments: arguments,
+                environment: environment,
+                timeout: .infinity,
+                currentDirectoryURL: currentDirectoryURL,
+                acceptsNonZeroExit: acceptsNonZeroExit,
+                label: label)
+        }
+        return try await task.value
+    }
+
     public static func run(
         binary: String,
         arguments: [String],
         environment: [String: String],
         timeout: TimeInterval,
+        // Preserve the legacy bounded-prefix capture when omitted. Structured-output callers can opt into
+        // fail-closed rejection by supplying an explicit limit.
+        maxOutputBytes: Int? = nil,
         standardInput: Any? = nil,
         currentDirectoryURL: URL? = nil,
+        acceptsNonZeroExit: Bool = false,
         label: String) async throws -> SubprocessResult
     {
         guard FileManager.default.isExecutableFile(atPath: binary) else {
@@ -178,8 +208,12 @@ public enum SubprocessRunner {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
         process.standardInput = standardInput
-        let stdoutCapture = ProcessPipeCapture(pipe: stdoutPipe)
-        let stderrCapture = ProcessPipeCapture(pipe: stderrPipe)
+        let normalizedMaxOutputBytes = maxOutputBytes.map { max(0, $0) }
+        let captureMaxBytes = normalizedMaxOutputBytes.map { limit in
+            limit == Int.max ? Int.max : limit + 1
+        } ?? ProcessPipeCapture.defaultMaxBytes
+        let stdoutCapture = ProcessPipeCapture(pipe: stdoutPipe, maxBytes: captureMaxBytes)
+        let stderrCapture = ProcessPipeCapture(pipe: stderrPipe, maxBytes: captureMaxBytes)
 
         let termination = ProcessTermination()
         process.terminationHandler = { process in
@@ -207,15 +241,21 @@ public enum SubprocessRunner {
         }
 
         let killedByTimeout = KillFlag()
-        let timeoutTimer = DispatchSource.makeTimerSource(queue: self.timeoutQueue)
-        timeoutTimer.schedule(deadline: .now() + self.timeoutInterval(timeout))
-        timeoutTimer.setEventHandler {
-            guard process.isRunning else { return }
-            killedByTimeout.set()
-            self.terminateProcess(process, processGroup: processGroup)
+        let timeoutTimerBox: TimeoutTimer? = if timeout.isFinite {
+            {
+                let timeoutTimer = DispatchSource.makeTimerSource(queue: self.timeoutQueue)
+                timeoutTimer.schedule(deadline: .now() + self.timeoutInterval(timeout))
+                timeoutTimer.setEventHandler {
+                    guard process.isRunning else { return }
+                    killedByTimeout.set()
+                    self.terminateProcess(process, processGroup: processGroup)
+                }
+                timeoutTimer.resume()
+                return TimeoutTimer(timer: timeoutTimer)
+            }()
+        } else {
+            nil
         }
-        timeoutTimer.resume()
-        let timeoutTimerBox = TimeoutTimer(timer: timeoutTimer)
 
         do {
             let exitCode = try await withTaskCancellationHandler {
@@ -224,10 +264,10 @@ public enum SubprocessRunner {
                 try Task.checkCancellation()
                 return code
             } onCancel: {
-                timeoutTimerBox.cancel()
+                timeoutTimerBox?.cancel()
                 self.terminateProcess(process, processGroup: processGroup)
             }
-            timeoutTimerBox.cancel()
+            timeoutTimerBox?.cancel()
 
             let duration = Date().timeIntervalSince(start)
             // Race guard: the timeout timer may kill the process just before the
@@ -246,10 +286,20 @@ public enum SubprocessRunner {
 
             async let stdoutData = stdoutCapture.finish(timeout: .seconds(1))
             async let stderrData = stderrCapture.finish(timeout: .seconds(1))
-            let stdout = await ProcessPipeCapture.decodeUTF8(stdoutData)
-            let stderr = await ProcessPipeCapture.decodeUTF8(stderrData)
+            let capturedStdout = await stdoutData
+            let capturedStderr = await stderrData
+            if let normalizedMaxOutputBytes,
+               capturedStdout.count > normalizedMaxOutputBytes || capturedStderr.count > normalizedMaxOutputBytes
+            {
+                self.log.warning(
+                    "Subprocess output exceeded memory limit",
+                    metadata: ["label": label, "binary": binaryName])
+                throw SubprocessRunnerError.outputTooLarge(label)
+            }
+            let stdout = ProcessPipeCapture.decodeUTF8(capturedStdout)
+            let stderr = ProcessPipeCapture.decodeUTF8(capturedStderr)
 
-            if exitCode != 0 {
+            if exitCode != 0, !acceptsNonZeroExit {
                 let duration = Date().timeIntervalSince(start)
                 self.log.warning(
                     "Subprocess failed",

@@ -65,8 +65,8 @@ extension UsageStore {
         startupConnectivityRetryAttempt == nil ? providerRefreshPhase : .startup
     }
 
-    private func openAIWebRefreshIntervalSeconds() -> TimeInterval {
-        let base = max(self.settings.refreshFrequency.seconds ?? 0, 120)
+    func openAIWebRefreshIntervalSeconds() -> TimeInterval {
+        let base = max(self.normalRefreshIntervalForHeuristics() ?? 0, 120)
         return base * Self.openAIWebRefreshMultiplier
     }
 
@@ -140,6 +140,9 @@ extension UsageStore {
         }
 
         let attachedAccountEmail = self.codexDashboardAttachmentEmail(from: authority.input)
+        self.reconcileCodexPublishedUsageOwner(with: self.freshCodexAccountScopedRefreshGuard(
+            preferCurrentSnapshot: true,
+            allowLastKnownLiveFallback: false))
 
         await self.applyOpenAIDashboardAuthorityDecision(
             authority.decision,
@@ -255,12 +258,16 @@ extension UsageStore {
             if decision.allowedEffects.contains(.usageBackfill),
                allowCodexUsageBackfill,
                self.snapshots[.codex] == nil,
-               let usage = dashboard.toUsageSnapshot(provider: .codex, accountEmail: attachedAccountEmail)
+               let usage = dashboard.toUsageSnapshot(provider: .codex, accountEmail: attachedAccountEmail),
+               CodexWeeklyResetConfirmation.initialDecision(previous: nil, initial: usage) == .publishInitial
             {
                 self.snapshots[.codex] = usage
                 self.errors[.codex] = nil
                 self.failureGates[.codex]?.recordSuccess()
                 self.lastSourceLabels[.codex] = "openai-web"
+                self.lastCodexUsagePublicationGuard = self.currentCodexAccountScopedRefreshGuard(
+                    preferCurrentSnapshot: true,
+                    allowLastKnownLiveFallback: false)
             }
 
             if decision.allowedEffects.contains(.creditsAttachment),
@@ -336,15 +343,7 @@ extension UsageStore {
 
     private func clearDashboardDerivedCodexUsageIfNeeded() {
         guard self.lastSourceLabels[.codex] == "openai-web" else { return }
-        self.snapshots.removeValue(forKey: .codex)
-        self.errors[.codex] = nil
-        self.lastSourceLabels.removeValue(forKey: .codex)
-        self.lastFetchAttempts.removeValue(forKey: .codex)
-        self.accountSnapshots.removeValue(forKey: .codex)
-        self.codexAccountSnapshots = []
-        self.failureGates[.codex]?.reset()
-        self.lastKnownSessionRemaining.removeValue(forKey: .codex)
-        self.lastKnownSessionWindowSource.removeValue(forKey: .codex)
+        self.clearCodexPublishedUsageState()
     }
 
     private func clearDashboardDerivedCreditsIfNeeded() {
@@ -358,9 +357,17 @@ extension UsageStore {
     }
 
     private func clearDashboardRefreshGuardSeedIfNeeded() {
-        self.lastCodexAccountScopedRefreshGuard = self.currentCodexAccountScopedRefreshGuard(
+        let currentGuard = self.currentCodexAccountScopedRefreshGuard(
             preferCurrentSnapshot: false,
             allowLastKnownLiveFallback: false)
+        if self.snapshots[.codex] != nil,
+           self.lastCodexUsagePublicationGuard.map({
+               !Self.codexScopedRefreshGuardsMatchAccount($0, currentGuard)
+           }) ?? true
+        {
+            self.clearCodexPublishedUsageState()
+        }
+        self.lastCodexAccountScopedRefreshGuard = currentGuard
     }
 
     private func openAIDashboardPolicyFailureMessage(
@@ -429,6 +436,10 @@ extension UsageStore {
         {
             await task.value
             return
+        }
+        if bypassCoalescing {
+            self.openAIDashboardBackgroundRefreshTask?.cancel()
+            self.openAIDashboardRefreshTask?.cancel()
         }
         self.handleOpenAIWebTargetEmailChangeIfNeeded(
             targetEmail: targetEmail,
@@ -503,6 +514,7 @@ extension UsageStore {
                 }
             }
 
+            guard !Task.isCancelled else { return }
             await self.refreshOpenAIDashboardIfNeeded(force: false, expectedGuard: expectedGuard)
             guard !Task.isCancelled else { return }
             self.persistWidgetSnapshot(reason: "dashboard")
@@ -633,7 +645,8 @@ extension UsageStore {
             OpenAIDashboardFetcher.evictAllCachedWebViews()
             logger("OpenAI web refresh timed out; skipping immediate background retry.")
             await self.applyOpenAIDashboardFailure(
-                message: "OpenAI web dashboard refresh timed out. CodexBar will retry after the refresh cooldown.",
+                message: L(
+                    "OpenAI web dashboard refresh timed out. CodexBar will retry after the refresh cooldown."),
                 expectedGuard: context.expectedGuard,
                 refreshTaskToken: context.refreshTaskToken,
                 routingTargetEmail: context.targetEmail)
@@ -844,7 +857,7 @@ extension UsageStore {
             self.lastOpenAIDashboardError = nil
             self.lastOpenAIDashboardAttemptAt = nil
             self.openAIDashboardRequiresLogin = true
-            self.openAIDashboardCookieImportStatus = "Codex account changed; importing browser cookies…"
+            self.openAIDashboardCookieImportStatus = L("Codex account changed; importing browser cookies…")
             self.lastOpenAIDashboardCookieImportAttemptAt = nil
             self.lastOpenAIDashboardCookieImportEmail = nil
         }
@@ -894,7 +907,9 @@ extension UsageStore {
 
             if allowLastKnownLiveFallback {
                 let lastKnown = self.lastKnownLiveSystemCodexEmail?.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let lastKnown, !lastKnown.isEmpty { return lastKnown }
+                if let lastKnown, !lastKnown.isEmpty {
+                    return lastKnown
+                }
             }
             return nil
         case .managedAccount:
@@ -1032,8 +1047,8 @@ extension UsageStore {
         self.applyOpenAIDashboardCleanup(Set(CodexDashboardCleanup.allCases), preserveVisibleDashboard: false)
         self.openAIDashboardRequiresLogin = true
         self.openAIDashboardCookieImportStatus = [
-            "Managed Codex account data is unavailable.",
-            "Fix the managed account store before importing OpenAI cookies.",
+            L("Managed Codex account data is unavailable."),
+            L("Fix the managed account store before importing OpenAI cookies."),
         ].joined(separator: " ")
         return nil
     }
@@ -1042,8 +1057,8 @@ extension UsageStore {
         self.applyOpenAIDashboardCleanup(Set(CodexDashboardCleanup.allCases), preserveVisibleDashboard: false)
         self.openAIDashboardRequiresLogin = true
         self.lastOpenAIDashboardError = [
-            "Managed Codex account data is unavailable.",
-            "Fix the managed account store before refreshing OpenAI web data.",
+            L("Managed Codex account data is unavailable."),
+            L("Fix the managed account store before refreshing OpenAI web data."),
         ].joined(separator: " ")
     }
 
@@ -1051,8 +1066,8 @@ extension UsageStore {
         self.applyOpenAIDashboardCleanup(Set(CodexDashboardCleanup.allCases), preserveVisibleDashboard: false)
         self.openAIDashboardRequiresLogin = true
         self.openAIDashboardCookieImportStatus = [
-            "The selected managed Codex account is unavailable.",
-            "Pick another Codex account before importing OpenAI cookies.",
+            L("The selected managed Codex account is unavailable."),
+            L("Pick another Codex account before importing OpenAI cookies."),
         ].joined(separator: " ")
         return nil
     }
@@ -1061,8 +1076,8 @@ extension UsageStore {
         self.applyOpenAIDashboardCleanup(Set(CodexDashboardCleanup.allCases), preserveVisibleDashboard: false)
         self.openAIDashboardRequiresLogin = true
         self.lastOpenAIDashboardError = [
-            "The selected managed Codex account is unavailable.",
-            "Pick another Codex account before refreshing OpenAI web data.",
+            L("The selected managed Codex account is unavailable."),
+            L("Pick another Codex account before refreshing OpenAI web data."),
         ].joined(separator: " ")
     }
 
@@ -1070,8 +1085,8 @@ extension UsageStore {
         self.applyOpenAIDashboardCleanup(Set(CodexDashboardCleanup.allCases), preserveVisibleDashboard: false)
         self.openAIDashboardRequiresLogin = true
         self.openAIDashboardCookieImportStatus = [
-            "The selected Codex profile has no verified account email.",
-            "Refresh the profile before importing OpenAI cookies.",
+            L("The selected Codex profile has no verified account email."),
+            L("Refresh the profile before importing OpenAI cookies."),
         ].joined(separator: " ")
         return nil
     }
@@ -1080,8 +1095,8 @@ extension UsageStore {
         self.applyOpenAIDashboardCleanup(Set(CodexDashboardCleanup.allCases), preserveVisibleDashboard: false)
         self.openAIDashboardRequiresLogin = true
         self.lastOpenAIDashboardError = [
-            "The selected Codex profile has no verified account email.",
-            "Refresh the profile before refreshing OpenAI web data.",
+            L("The selected Codex profile has no verified account email."),
+            L("Refresh the profile before refreshing OpenAI web data."),
         ].joined(separator: " ")
     }
 
@@ -1248,7 +1263,9 @@ extension UsageStore {
                 } else {
                     found
                         .sorted { lhs, rhs in
-                            if lhs.sourceLabel == rhs.sourceLabel { return lhs.email < rhs.email }
+                            if lhs.sourceLabel == rhs.sourceLabel {
+                                return lhs.email < rhs.email
+                            }
                             return lhs.sourceLabel < rhs.sourceLabel
                         }
                         .map { "\($0.sourceLabel): \($0.email)" }
@@ -1268,6 +1285,7 @@ extension UsageStore {
                 }
             case .noCookiesFound,
                  .browserAccessDenied,
+                 .browserCookieLoadTimedOut,
                  .dashboardStillRequiresLogin,
                  .manualCookieHeaderInvalid:
                 self.logOpenAIWeb("[\(stamp)] import failed: \(err.localizedDescription)")
@@ -1375,7 +1393,9 @@ extension UsageStore {
 
             guard allowLastKnownLiveFallback else { return nil }
             let lastKnown = self.lastKnownLiveSystemCodexEmail?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let lastKnown, !lastKnown.isEmpty { return lastKnown }
+            if let lastKnown, !lastKnown.isEmpty {
+                return lastKnown
+            }
             return nil
         case .managedAccount:
             if self.openAIWebManagedTargetStoreIsUnreadable() {
@@ -1384,12 +1404,16 @@ extension UsageStore {
 
             let managed = self.currentManagedCodexRuntimeEmail()?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let managed, !managed.isEmpty { return managed }
+            if let managed, !managed.isEmpty {
+                return managed
+            }
             return nil
         case let .profileHome(path):
             let profile = self.currentProfileCodexRuntimeEmail(path: path)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let profile, !profile.isEmpty { return profile }
+            if let profile, !profile.isEmpty {
+                return profile
+            }
             return nil
         }
     }
@@ -1420,7 +1444,9 @@ extension UsageStore {
     }
 
     nonisolated static func shouldSkipOpenAIWebRefresh(_ context: OpenAIWebRefreshGateContext) -> Bool {
-        if context.force || context.accountDidChange { return false }
+        if context.force || context.accountDidChange {
+            return false
+        }
         if let lastAttemptAt = context.lastAttemptAt,
            context.now.timeIntervalSince(lastAttemptAt) < context.refreshInterval
         {
@@ -1436,7 +1462,9 @@ extension UsageStore {
     }
 
     nonisolated static func shouldSkipOpenAIWebEmptyHistoryRetry(_ context: OpenAIWebRefreshGateContext) -> Bool {
-        if context.force || context.accountDidChange { return false }
+        if context.force || context.accountDidChange {
+            return false
+        }
         guard let lastAttemptAt = context.lastAttemptAt,
               context.now.timeIntervalSince(lastAttemptAt) < context.refreshInterval
         else { return false }
@@ -1527,13 +1555,13 @@ extension UsageStore {
         let targetLabel = targetEmail?.trimmingCharacters(in: .whitespacesAndNewlines)
         if normalizedFound.isEmpty {
             guard let targetLabel, !targetLabel.isEmpty else {
-                return "No matching OpenAI web session found."
+                return L("No matching OpenAI web session found.")
             }
-            return "No matching OpenAI web session found for \(targetLabel)."
+            return L("No matching OpenAI web session found for %@.", targetLabel)
         }
         guard let targetLabel, !targetLabel.isEmpty else {
-            return "OpenAI cookies are for \(foundLabel)."
+            return L("OpenAI cookies are for %@.", foundLabel)
         }
-        return "OpenAI cookies are for \(foundLabel), not \(targetLabel)."
+        return L("OpenAI cookies are for %1$@, not %2$@.", foundLabel, targetLabel)
     }
 }

@@ -7,6 +7,14 @@ import SweetCookieKit
 public enum AlibabaTokenPlanProviderDescriptor {
     public static let descriptor: ProviderDescriptor = Self.makeDescriptor()
 
+    public static func primaryLabel(window: RateWindow?) -> String? {
+        window?.windowMinutes == 5 * 60 ? "5-hour" : nil
+    }
+
+    public static func secondaryLabel(window: RateWindow?) -> String? {
+        window?.windowMinutes == 7 * 24 * 60 ? "7-day" : nil
+    }
+
     static func makeDescriptor() -> ProviderDescriptor {
         #if os(macOS)
         let browserOrder: BrowserCookieImportOrder = [
@@ -45,10 +53,16 @@ public enum AlibabaTokenPlanProviderDescriptor {
             branding: ProviderBranding(
                 iconStyle: .alibaba,
                 iconResourceName: "ProviderIcon-alibaba",
-                color: ProviderColor(red: 1.0, green: 106 / 255, blue: 0)),
+                color: ProviderColor(red: 1.0, green: 106 / 255, blue: 0),
+                confettiPalette: [
+                    ProviderColor(hex: 0xFF6A00),
+                    ProviderColor(hex: 0x0064C8),
+                    ProviderColor(hex: 0xFFFFFF),
+                ]),
             tokenCost: ProviderTokenCostConfig(
                 supportsTokenCost: false,
                 noDataMessage: { "Alibaba Token Plan cost summary is not supported." }),
+            pace: .calendarMonthResetWindow,
             fetchPlan: ProviderFetchPlan(
                 sourceModes: [.auto, .web],
                 pipeline: ProviderFetchPipeline(resolveStrategies: self.resolveStrategies)),
@@ -77,6 +91,7 @@ struct AlibabaTokenPlanWebFetchStrategy: ProviderFetchStrategy {
 
     func isAvailable(_ context: ProviderFetchContext) async -> Bool {
         guard context.settings?.alibabaTokenPlan?.cookieSource != .off else { return false }
+        let region = context.settings?.alibabaTokenPlan?.apiRegion ?? .international
 
         if AlibabaTokenPlanSettingsReader.cookieHeader(environment: context.env) != nil {
             return true
@@ -89,7 +104,7 @@ struct AlibabaTokenPlanWebFetchStrategy: ProviderFetchStrategy {
         }
 
         #if os(macOS)
-        if let cached = CookieHeaderCache.load(provider: .alibabatokenplan),
+        if let cached = Self.cachedCookieEntry(region: region),
            !cached.cookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return true
@@ -102,22 +117,25 @@ struct AlibabaTokenPlanWebFetchStrategy: ProviderFetchStrategy {
 
     func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
         let cookieSource = context.settings?.alibabaTokenPlan?.cookieSource ?? .auto
-        let cookieHeaders = try Self.resolveCookieHeaders(context: context, allowCached: true)
+        let region = context.settings?.alibabaTokenPlan?.apiRegion ?? .international
+        let cookieHeaders = try Self.resolveCookieHeaders(context: context, allowCached: true, region: region)
         do {
             let usage = try await AlibabaTokenPlanUsageFetcher.fetchUsage(
                 apiCookieHeader: cookieHeaders.apiCookieHeader,
                 dashboardCookieHeader: cookieHeaders.dashboardCookieHeader,
+                region: region,
                 environment: context.env)
             return self.makeResult(usage: usage.toUsageSnapshot(), sourceLabel: "web")
         } catch let error as AlibabaTokenPlanUsageError
             where error.isCredentialFailure && cookieSource != .manual
         {
             #if os(macOS)
-            CookieHeaderCache.clear(provider: .alibabatokenplan)
-            let refreshedHeaders = try Self.resolveCookieHeaders(context: context, allowCached: false)
+            CookieHeaderCache.clear(provider: .alibabatokenplan, scope: region.cookieCacheScope)
+            let refreshedHeaders = try Self.resolveCookieHeaders(context: context, allowCached: false, region: region)
             let usage = try await AlibabaTokenPlanUsageFetcher.fetchUsage(
                 apiCookieHeader: refreshedHeaders.apiCookieHeader,
                 dashboardCookieHeader: refreshedHeaders.dashboardCookieHeader,
+                region: region,
                 environment: context.env)
             return self.makeResult(usage: usage.toUsageSnapshot(), sourceLabel: "web")
             #else
@@ -131,12 +149,14 @@ struct AlibabaTokenPlanWebFetchStrategy: ProviderFetchStrategy {
     }
 
     static func resolveCookieHeader(context: ProviderFetchContext, allowCached: Bool) throws -> String {
-        try self.resolveCookieHeaders(context: context, allowCached: allowCached).apiCookieHeader
+        try self.resolveCookieHeaders(context: context, allowCached: allowCached, region: .international)
+            .apiCookieHeader
     }
 
     static func resolveCookieHeaders(
         context: ProviderFetchContext,
-        allowCached: Bool) throws -> AlibabaTokenPlanCookieHeaders
+        allowCached: Bool,
+        region: AlibabaTokenPlanAPIRegion = .international) throws -> AlibabaTokenPlanCookieHeaders
     {
         if let settings = context.settings?.alibabaTokenPlan,
            settings.cookieSource == .manual
@@ -170,8 +190,8 @@ struct AlibabaTokenPlanWebFetchStrategy: ProviderFetchStrategy {
 
         #if os(macOS)
         if allowCached,
-           let cached = CookieHeaderCache.load(provider: .alibabatokenplan),
-           let headers = AlibabaTokenPlanCookieHeaders(cachedHeader: cached.cookieHeader)
+           let cached = Self.cachedCookieEntry(region: region),
+           let headers = AlibabaTokenPlanCookieHeaders(alibabaTokenPlanCachedHeader: cached.cookieHeader)
         {
             Self.log.info(
                 "Alibaba Token Plan using cached browser cookie header",
@@ -192,6 +212,7 @@ struct AlibabaTokenPlanWebFetchStrategy: ProviderFetchStrategy {
             let rawCookieNames = session.cookies.map(\.name).filter { !$0.isEmpty }.uniquedSorted()
             guard let headers = AlibabaTokenPlanCookieHeader.headers(
                 from: session.cookies,
+                region: region,
                 environment: context.env)
             else {
                 Self.log.warning(
@@ -205,7 +226,8 @@ struct AlibabaTokenPlanWebFetchStrategy: ProviderFetchStrategy {
             }
             CookieHeaderCache.store(
                 provider: .alibabatokenplan,
-                cookieHeader: headers.cacheCookieHeader,
+                scope: region.cookieCacheScope,
+                cookieHeader: headers.cacheAlibabaTokenPlanCookieHeader(),
                 sourceLabel: session.sourceLabel)
             Self.log.info(
                 "Alibaba Token Plan imported browser cookies",
@@ -229,18 +251,37 @@ struct AlibabaTokenPlanWebFetchStrategy: ProviderFetchStrategy {
         #endif
     }
 
+    #if os(macOS)
+    /// The former unscoped cache only ever represented the China gateway. Never expose it to
+    /// International requests; migrate it into the China scope after a successful scoped write.
+    private static func cachedCookieEntry(region: AlibabaTokenPlanAPIRegion) -> CookieHeaderCache.Entry? {
+        if let scoped = CookieHeaderCache.load(provider: .alibabatokenplan, scope: region.cookieCacheScope) {
+            return scoped
+        }
+        guard region == .chinaMainland,
+              let legacy = CookieHeaderCache.load(provider: .alibabatokenplan)
+        else { return nil }
+
+        CookieHeaderCache.store(
+            provider: .alibabatokenplan,
+            scope: region.cookieCacheScope,
+            cookieHeader: legacy.cookieHeader,
+            sourceLabel: legacy.sourceLabel,
+            now: legacy.storedAt)
+        if let migrated = CookieHeaderCache.load(provider: .alibabatokenplan, scope: region.cookieCacheScope) {
+            CookieHeaderCache.clear(provider: .alibabatokenplan)
+            return migrated
+        }
+        return legacy
+    }
+    #endif
+
     private static func missingCookieDetails(from error: Error) -> String? {
         if case let AlibabaCodingPlanSettingsError.missingCookie(details) = error {
             return details
         }
         let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? nil : message
-    }
-}
-
-extension [String] {
-    fileprivate func uniquedSorted() -> [String] {
-        Array(Set(self)).sorted()
     }
 }
 

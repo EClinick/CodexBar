@@ -37,7 +37,9 @@ struct UsageMenuCardView: View {
             let pacePercent: Double?
             let paceOnTop: Bool
             let warningMarkerPercents: [Double]
+            let workdayMarkerPercents: [Double]
             let cardStyle: Bool
+            let sessionEquivalentDetail: UsagePaceText.SessionEquivalentDetail?
 
             init(
                 id: String,
@@ -52,7 +54,9 @@ struct UsageMenuCardView: View {
                 pacePercent: Double?,
                 paceOnTop: Bool,
                 warningMarkerPercents: [Double] = [],
-                cardStyle: Bool = false)
+                workdayMarkerPercents: [Double] = [],
+                cardStyle: Bool = false,
+                sessionEquivalentDetail: UsagePaceText.SessionEquivalentDetail? = nil)
             {
                 self.id = id
                 self.title = title
@@ -66,11 +70,13 @@ struct UsageMenuCardView: View {
                 self.pacePercent = pacePercent
                 self.paceOnTop = paceOnTop
                 self.warningMarkerPercents = warningMarkerPercents
+                self.workdayMarkerPercents = workdayMarkerPercents
                 self.cardStyle = cardStyle
+                self.sessionEquivalentDetail = sessionEquivalentDetail
             }
 
             var percentLabel: String {
-                String(format: "%.0f%% %@", self.percent, self.percentStyle.labelSuffix)
+                UsageFormatter.percentText(self.percent, suffix: self.percentStyle.labelSuffix)
             }
         }
 
@@ -83,9 +89,31 @@ struct UsageMenuCardView: View {
         struct TokenUsageSection {
             let sessionLine: String
             let monthLine: String
+            let meteredLine: String?
+            let comparisonLines: [String]
             let hintLine: String?
             let errorLine: String?
             let errorCopyText: String?
+
+            /// Explicit initializer so `meteredLine`/`comparisonLines` default to empty: callers
+            /// that predate them (and providers that never report them) keep their call sites.
+            init(
+                sessionLine: String,
+                monthLine: String,
+                meteredLine: String? = nil,
+                comparisonLines: [String] = [],
+                hintLine: String?,
+                errorLine: String?,
+                errorCopyText: String?)
+            {
+                self.sessionLine = sessionLine
+                self.monthLine = monthLine
+                self.meteredLine = meteredLine
+                self.comparisonLines = comparisonLines
+                self.hintLine = hintLine
+                self.errorLine = errorLine
+                self.errorCopyText = errorCopyText
+            }
         }
 
         struct ProviderCostSection {
@@ -93,7 +121,10 @@ struct UsageMenuCardView: View {
             let percentUsed: Double?
             let spendLine: String
             let percentLine: String?
+            var balanceLine: String?
             var personalSpendLine: String?
+            var presentation: Presentation = .detail
+            var showsInProviderDetails = true
         }
 
         let provider: UsageProvider
@@ -109,10 +140,10 @@ struct UsageMenuCardView: View {
         let inlineUsageDashboard: InlineUsageDashboardModel?
         let creditsText: String?
         let creditsRemaining: Double?
+        var creditsProgressPercent: Double?, creditsScaleText: String?
         let creditsHintText: String?
         let creditsHintCopyText: String?
-        var codexResetCreditsText: String?
-        var codexResetCreditsDetailText: String?
+        var codexResetCredits: CodexResetCreditsPresentation?
         let providerCost: ProviderCostSection?
         let tokenUsage: TokenUsageSection?
         let placeholder: String?
@@ -122,6 +153,7 @@ struct UsageMenuCardView: View {
     let model: Model
     var layoutModel: Model?
     let width: CGFloat
+    var planAction: (() -> Void)?
     @Environment(\.menuItemHighlighted) private var isHighlighted
     @Environment(\.menuCardRefreshMonitor) private var refreshMonitor
 
@@ -135,7 +167,9 @@ struct UsageMenuCardView: View {
     var body: some View {
         let liveModel = self.liveModel
         VStack(alignment: .leading, spacing: 0) {
-            UsageMenuCardHeaderView(model: self.layoutModel ?? self.model)
+            UsageMenuCardHeaderView(
+                model: self.layoutModel ?? self.model,
+                planAction: self.planAction)
 
             if Self.hasDetails(for: liveModel) {
                 Divider()
@@ -161,19 +195,24 @@ struct UsageMenuCardView: View {
                 let hasCost = liveModel.tokenUsage != nil || hasProviderCost
 
                 VStack(alignment: .leading, spacing: 12) {
-                    if hasUsage {
+                    if hasUsage, !liveModel.creditsOnlyInlineUsageDashboard {
                         UsageMenuCardUsageContentView(model: liveModel, showBottomDivider: false)
                     }
-                    if hasUsage, hasCredits || hasCost {
+                    if hasUsage, !liveModel.creditsOnlyInlineUsageDashboard, hasCredits || hasCost {
                         Divider()
                     }
                     if let credits = liveModel.creditsText {
                         CreditsBarContent(
                             creditsText: credits,
                             creditsRemaining: liveModel.creditsRemaining,
+                            progressPercent: liveModel.creditsProgressPercent,
+                            scaleText: liveModel.creditsScaleText,
                             hintText: liveModel.creditsHintText,
                             hintCopyText: liveModel.creditsHintCopyText,
                             progressColor: liveModel.progressColor)
+                    }
+                    if liveModel.creditsOnlyInlineUsageDashboard, let dashboard = liveModel.inlineUsageDashboard {
+                        InlineUsageDashboardContent(model: dashboard)
                     }
                     if hasCredits, hasCost {
                         Divider()
@@ -187,34 +226,11 @@ struct UsageMenuCardView: View {
                         Divider()
                     }
                     if let tokenUsage = liveModel.tokenUsage {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(L("cost_header_estimated"))
-                                .font(.body)
-                                .fontWeight(.medium)
-                            Text(tokenUsage.sessionLine)
-                                .font(.footnote)
-                                .lineLimit(1)
-                            Text(tokenUsage.monthLine)
-                                .font(.footnote)
-                                .lineLimit(1)
-                            if let hint = tokenUsage.hintLine, !hint.isEmpty {
-                                Text(hint)
-                                    .font(.footnote)
-                                    .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                                    .lineLimit(4)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            if let error = tokenUsage.errorLine, !error.isEmpty {
-                                Text(error)
-                                    .font(.footnote)
-                                    .foregroundStyle(MenuHighlightStyle.error(self.isHighlighted))
-                                    .lineLimit(4)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .overlay {
-                                        ClickToCopyOverlay(copyText: tokenUsage.errorCopyText ?? error)
-                                    }
-                            }
-                        }
+                        TokenUsageSectionContent(
+                            provider: liveModel.provider,
+                            tokenUsage: tokenUsage,
+                            showsCodexHint: liveModel.inlineUsageDashboard == nil,
+                            lineFont: .footnote)
                     }
                 }
             }
@@ -253,6 +269,7 @@ struct UsageMenuCardView: View {
 
 private struct UsageMenuCardHeaderView: View {
     let model: UsageMenuCardView.Model
+    var planAction: (() -> Void)?
     @Environment(\.menuItemHighlighted) private var isHighlighted
     @Environment(\.menuCardRefreshMonitor) private var refreshMonitor
 
@@ -303,16 +320,30 @@ private struct UsageMenuCardHeaderView: View {
                 Spacer()
                 if usesErrorLayout {
                     let showsCopyButton = liveSubtitle.style == .error && !liveSubtitle.text.isEmpty
-                    CopyIconButton(copyText: liveSubtitle.text, isHighlighted: self.isHighlighted)
+                    CopyIconButton(
+                        copyText: liveSubtitle.text,
+                        isHighlighted: self.isHighlighted,
+                        isInteractive: showsCopyButton)
                         .opacity(showsCopyButton ? 1 : 0)
                         .allowsHitTesting(showsCopyButton)
                         .accessibilityHidden(!showsCopyButton)
                 }
                 if let plan = self.model.planText {
-                    Text(plan)
-                        .font(.footnote)
-                        .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                        .lineLimit(1)
+                    Group {
+                        if let planAction {
+                            Button(action: planAction) {
+                                Text(plan)
+                            }
+                            .buttonStyle(.plain)
+                            .menuCardInteractiveControl()
+                            .accessibilityLabel(plan)
+                        } else {
+                            Text(plan)
+                        }
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
+                    .lineLimit(1)
                 }
             }
         }
@@ -351,6 +382,7 @@ private struct CopyIconButtonStyle: ButtonStyle {
 private struct CopyIconButton: View {
     let copyText: String
     let isHighlighted: Bool
+    let isInteractive: Bool
 
     @State private var didCopy = false
     @State private var resetTask: Task<Void, Never>?
@@ -365,6 +397,7 @@ private struct CopyIconButton: View {
                 .frame(width: 18, height: 18)
         }
         .buttonStyle(CopyIconButtonStyle(isHighlighted: self.isHighlighted))
+        .menuCardInteractiveControl(isEnabled: self.isInteractive)
         .accessibilityLabel(self.didCopy ? L("Copied") : L("Copy error"))
     }
 
@@ -381,35 +414,55 @@ private struct CopyIconButton: View {
     }
 }
 
-private struct ProviderCostContent: View {
-    let section: UsageMenuCardView.Model.ProviderCostSection
-    let progressColor: Color
+/// Shared token-cost block (header, Today/window/metered/comparison lines, hint, error) used by
+/// both the inline card body and the standalone cost section; only the value-line font differs.
+private struct TokenUsageSectionContent: View {
+    let provider: UsageProvider
+    let tokenUsage: UsageMenuCardView.Model.TokenUsageSection
+    let showsCodexHint: Bool
+    let lineFont: Font
     @Environment(\.menuItemHighlighted) private var isHighlighted
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(self.section.title)
+            Text(UsageMenuCardView.Model.tokenUsageHeader(provider: self.provider))
                 .font(.body)
                 .fontWeight(.medium)
-            if let percentUsed = self.section.percentUsed {
-                UsageProgressBar(
-                    percent: percentUsed,
-                    tint: self.progressColor,
-                    accessibilityLabel: L("Extra usage spent"))
+            Text(self.tokenUsage.sessionLine)
+                .font(self.lineFont)
+                .lineLimit(1)
+            Text(self.tokenUsage.monthLine)
+                .font(self.lineFont)
+                .lineLimit(1)
+            if let metered = self.tokenUsage.meteredLine, !metered.isEmpty {
+                Text(metered)
+                    .font(self.lineFont)
+                    .lineLimit(1)
             }
-            HStack(alignment: .firstTextBaseline) {
-                Text(self.section.spendLine).font(.footnote).lineLimit(1)
-                Spacer()
-                if let percentLine = self.section.percentLine {
-                    Text(percentLine)
-                        .font(.footnote)
-                        .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                        .lineLimit(1)
-                }
+            ForEach(self.tokenUsage.comparisonLines, id: \.self) { line in
+                Text(line)
+                    .font(self.lineFont)
+                    .lineLimit(1)
             }
-            if let personalSpendLine = self.section.personalSpendLine {
-                Text(personalSpendLine)
-                    .font(.footnote).foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted)).lineLimit(1)
+            if self.provider != .codex || self.showsCodexHint,
+               let hint = self.tokenUsage.hintLine,
+               !hint.isEmpty
+            {
+                Text(hint)
+                    .font(.footnote)
+                    .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let error = self.tokenUsage.errorLine, !error.isEmpty {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(MenuHighlightStyle.error(self.isHighlighted))
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .overlay {
+                        ClickToCopyOverlay(copyText: self.tokenUsage.errorCopyText ?? error)
+                    }
             }
         }
     }
@@ -438,7 +491,8 @@ private struct MetricRow: View {
                     accessibilityLabel: self.metric.percentStyle.accessibilityLabel,
                     pacePercent: self.metric.pacePercent,
                     paceOnTop: self.metric.paceOnTop,
-                    warningMarkerPercents: self.metric.warningMarkerPercents)
+                    warningMarkerPercents: self.metric.warningMarkerPercents,
+                    workdayMarkerPercents: self.metric.workdayMarkerPercents)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(self.metric.percentLabel)
@@ -468,6 +522,21 @@ private struct MetricRow: View {
                                     .lineLimit(1)
                             }
                         }
+                    }
+                    if let sessionEquivalentDetail = self.metric.sessionEquivalentDetail {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(sessionEquivalentDetail.leftText)
+                                .font(.footnote)
+                                .foregroundStyle(MenuHighlightStyle.primary(self.isHighlighted))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(sessionEquivalentDetail.rightText)
+                                .font(.footnote)
+                                .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
+                                .lineLimit(1)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(sessionEquivalentDetail.accessibilityLabel)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -511,7 +580,7 @@ struct UsageMenuCardHeaderSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: UsageMenuCardLayout.headerContentSpacing) {
-            UsageMenuCardHeaderView(model: self.model)
+            UsageMenuCardHeaderView(model: self.model, planAction: nil)
 
             if self.showDivider {
                 Divider()
@@ -536,30 +605,66 @@ struct UsageMenuCardHeaderSectionView: View {
 private struct UsageMenuCardUsageContentView: View {
     let model: UsageMenuCardView.Model
     let showBottomDivider: Bool
+    var showsSectionDividers = true
     @Environment(\.menuItemHighlighted) private var isHighlighted
+
+    /// Doubao ships Coding Plan and Agent Plan subscriptions, each with personal
+    /// and team editions whose windows share period labels. Split the two plan
+    /// families here; team rows keep distinct ids and disclose their edition.
+    private var doubaoSplitMetrics: (
+        coding: [UsageMenuCardView.Model.Metric],
+        agent: [UsageMenuCardView.Model.Metric])?
+    {
+        guard self.model.provider == .doubao else { return nil }
+        let agent = self.model.metrics.filter { $0.id.hasPrefix("doubao-agent-") }
+        guard !agent.isEmpty else { return nil }
+        let coding = self.model.metrics.filter { !$0.id.hasPrefix("doubao-agent-") }
+        return (coding, agent)
+    }
+
+    private func groupHeader(_ title: String) -> some View {
+        Text(L(title))
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
+            .textCase(.uppercase)
+    }
+
+    private func metricRows(_ metrics: [UsageMenuCardView.Model.Metric]) -> some View {
+        ForEach(metrics, id: \.id) { metric in
+            MetricRow(
+                metric: metric,
+                title: UsageMenuCardView.popupMetricTitle(provider: self.model.provider, metric: metric),
+                progressColor: self.model.progressColor)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(self.model.metrics, id: \.id) { metric in
-                MetricRow(
-                    metric: metric,
-                    title: UsageMenuCardView.popupMetricTitle(provider: self.model.provider, metric: metric),
-                    progressColor: self.model.progressColor)
-            }
-            if let resetCredits = self.model.codexResetCreditsText {
-                if !self.model.metrics.isEmpty {
+            if let split = self.doubaoSplitMetrics {
+                if !split.coding.isEmpty {
+                    self.groupHeader("Coding Plan")
+                    self.metricRows(split.coding)
+                }
+                if !split.coding.isEmpty, self.showsSectionDividers {
                     Divider()
                 }
-                CodexResetCreditsContent(
-                    text: resetCredits,
-                    detailText: self.model.codexResetCreditsDetailText)
+                self.groupHeader("Agent Plan")
+                self.metricRows(split.agent)
+            } else {
+                self.metricRows(self.model.metrics)
+            }
+            if let resetCredits = self.model.codexResetCredits {
+                if !self.model.metrics.isEmpty, self.showsSectionDividers {
+                    Divider()
+                }
+                CodexResetCreditsContent(presentation: resetCredits)
             }
             if let dashboard = self.model.inlineUsageDashboard {
                 InlineUsageDashboardContent(model: dashboard)
             } else if !self.model.usageNotes.isEmpty {
                 UsageNotesContent(notes: self.model.usageNotes)
             } else if let placeholder = self.model.placeholder, self.model.metrics.isEmpty,
-                      self.model.codexResetCreditsText == nil
+                      self.model.codexResetCredits == nil
             {
                 Text(placeholder)
                     .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
@@ -577,11 +682,15 @@ struct UsageMenuCardUsageSectionView: View {
     let showBottomDivider: Bool
     let bottomPadding: CGFloat
     let width: CGFloat
+    var showsSectionDividers = true
     @Environment(\.menuCardRefreshMonitor) private var refreshMonitor
 
     var body: some View {
         let liveModel = self.liveModel
-        UsageMenuCardUsageContentView(model: liveModel, showBottomDivider: self.showBottomDivider)
+        UsageMenuCardUsageContentView(
+            model: liveModel,
+            showBottomDivider: self.showBottomDivider,
+            showsSectionDividers: self.showsSectionDividers)
             .padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
             .padding(.top, UsageMenuCardLayout.usageSectionTopPadding)
             .padding(.bottom, self.bottomPadding)
@@ -609,6 +718,8 @@ struct UsageMenuCardCreditsSectionView: View {
                 CreditsBarContent(
                     creditsText: credits,
                     creditsRemaining: liveModel.creditsRemaining,
+                    progressPercent: liveModel.creditsProgressPercent,
+                    scaleText: liveModel.creditsScaleText,
                     hintText: liveModel.creditsHintText,
                     hintCopyText: liveModel.creditsHintCopyText,
                     progressColor: liveModel.progressColor)
@@ -634,18 +745,25 @@ private struct CreditsBarContent: View {
 
     let creditsText: String
     let creditsRemaining: Double?
+    var progressPercent: Double?, scaleText: String?
     let hintText: String?
     let hintCopyText: String?
     let progressColor: Color
     @Environment(\.menuItemHighlighted) private var isHighlighted
 
     private var percentLeft: Double? {
+        if let progressPercent {
+            return min(100, max(0, progressPercent))
+        }
         guard let creditsRemaining else { return nil }
         let percent = (creditsRemaining / Self.fullScaleTokens) * 100
         return min(100, max(0, percent))
     }
 
-    private var scaleText: String {
+    private var effectiveScaleText: String {
+        if let scaleText {
+            return scaleText
+        }
         let scale = UsageFormatter.tokenCountString(Int(Self.fullScaleTokens))
         return "\(scale) \(L("tokens"))"
     }
@@ -665,7 +783,7 @@ private struct CreditsBarContent: View {
                         .font(.caption)
                         .lineLimit(1)
                     Spacer()
-                    Text(self.scaleText)
+                    Text(self.effectiveScaleText)
                         .font(.caption)
                         .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
                 }
@@ -702,34 +820,11 @@ struct UsageMenuCardCostSectionView: View {
             if hasTokenCost {
                 VStack(alignment: .leading, spacing: 10) {
                     if let tokenUsage = liveModel.tokenUsage {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(L("cost_header_estimated"))
-                                .font(.body)
-                                .fontWeight(.medium)
-                            Text(tokenUsage.sessionLine)
-                                .font(.caption)
-                                .lineLimit(1)
-                            Text(tokenUsage.monthLine)
-                                .font(.caption)
-                                .lineLimit(1)
-                            if let hint = tokenUsage.hintLine, !hint.isEmpty {
-                                Text(hint)
-                                    .font(.footnote)
-                                    .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                                    .lineLimit(4)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            if let error = tokenUsage.errorLine, !error.isEmpty {
-                                Text(error)
-                                    .font(.footnote)
-                                    .foregroundStyle(MenuHighlightStyle.error(self.isHighlighted))
-                                    .lineLimit(4)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .overlay {
-                                        ClickToCopyOverlay(copyText: tokenUsage.errorCopyText ?? error)
-                                    }
-                            }
-                        }
+                        TokenUsageSectionContent(
+                            provider: liveModel.provider,
+                            tokenUsage: tokenUsage,
+                            showsCodexHint: true,
+                            lineFont: .caption)
                     }
                 }
                 .padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
@@ -777,96 +872,12 @@ struct UsageMenuCardExtraUsageSectionView: View {
 // MARK: - Model factory
 
 extension UsageMenuCardView.Model {
-    struct Input {
-        let provider: UsageProvider
-        let metadata: ProviderMetadata
-        let snapshot: UsageSnapshot?
-        let codexProjection: CodexConsumerProjection?
-        let credits: CreditsSnapshot?
-        let creditsError: String?
-        let dashboard: OpenAIDashboardSnapshot?
-        let dashboardError: String?
-        let tokenSnapshot: CostUsageTokenSnapshot?
-        let tokenError: String?
-        let account: AccountInfo
-        let isRefreshing: Bool
-        let lastError: String?
-        let usageBarsShowUsed: Bool
-        let resetTimeDisplayStyle: ResetTimeDisplayStyle
-        let tokenCostUsageEnabled: Bool
-        let showOptionalCreditsAndExtraUsage: Bool
-        let copilotBudgetExtrasEnabled: Bool
-        let sourceLabel: String?
-        let kiloAutoMode: Bool
-        let hidePersonalInfo: Bool
-        let weeklyPace: UsagePace?
-        let quotaWarningThresholds: [QuotaWarningWindow: [Int]]
-        let workDaysPerWeek: Int?
-        let usesLiveSubtitle: Bool
-        let now: Date
-
-        init(
-            provider: UsageProvider,
-            metadata: ProviderMetadata,
-            snapshot: UsageSnapshot?,
-            codexProjection: CodexConsumerProjection? = nil,
-            credits: CreditsSnapshot?,
-            creditsError: String?,
-            dashboard: OpenAIDashboardSnapshot?,
-            dashboardError: String?,
-            tokenSnapshot: CostUsageTokenSnapshot?,
-            tokenError: String?,
-            account: AccountInfo,
-            isRefreshing: Bool,
-            lastError: String?,
-            usageBarsShowUsed: Bool,
-            resetTimeDisplayStyle: ResetTimeDisplayStyle,
-            tokenCostUsageEnabled: Bool,
-            showOptionalCreditsAndExtraUsage: Bool,
-            copilotBudgetExtrasEnabled: Bool = false,
-            sourceLabel: String? = nil,
-            kiloAutoMode: Bool = false,
-            hidePersonalInfo: Bool,
-            weeklyPace: UsagePace? = nil,
-            quotaWarningThresholds: [QuotaWarningWindow: [Int]] = [:],
-            workDaysPerWeek: Int? = nil,
-            usesLiveSubtitle: Bool = false,
-            now: Date)
-        {
-            self.provider = provider
-            self.metadata = metadata
-            self.snapshot = snapshot
-            self.codexProjection = codexProjection
-            self.credits = credits
-            self.creditsError = creditsError
-            self.dashboard = dashboard
-            self.dashboardError = dashboardError
-            self.tokenSnapshot = tokenSnapshot
-            self.tokenError = tokenError
-            self.account = account
-            self.isRefreshing = isRefreshing
-            self.lastError = lastError
-            self.usageBarsShowUsed = usageBarsShowUsed
-            self.resetTimeDisplayStyle = resetTimeDisplayStyle
-            self.tokenCostUsageEnabled = tokenCostUsageEnabled
-            self.showOptionalCreditsAndExtraUsage = showOptionalCreditsAndExtraUsage
-            self.copilotBudgetExtrasEnabled = copilotBudgetExtrasEnabled
-            self.sourceLabel = sourceLabel
-            self.kiloAutoMode = kiloAutoMode
-            self.hidePersonalInfo = hidePersonalInfo
-            self.weeklyPace = weeklyPace
-            self.quotaWarningThresholds = quotaWarningThresholds
-            self.workDaysPerWeek = workDaysPerWeek
-            self.usesLiveSubtitle = usesLiveSubtitle
-            self.now = now
-        }
-    }
-
     static func make(_ input: Input) -> UsageMenuCardView.Model {
         let planText = Self.plan(
             for: input.provider,
             snapshot: input.snapshot,
             account: input.account,
+            override: input.planOverride,
             metadata: input.metadata)
         let metrics = Self.redactedMetrics(
             Self.metrics(input: input),
@@ -884,29 +895,46 @@ extension UsageMenuCardView.Model {
                 metadata: input.metadata,
                 snapshot: input.snapshot,
                 credits: input.credits,
-                error: input.creditsError)
+                error: input.creditsError,
+                preferredCurrencyCode: input.preferredCurrencyCode)
         }
         let creditsText = PersonalInfoRedactor.redactEmails(in: rawCreditsText, isEnabled: input.hidePersonalInfo)
+        let creditsProgressPercent = Self.creditsProgressPercent(credits: input.credits)
+        let creditsScaleText = Self.creditsScaleText(credits: input.credits)
+        let codexCreditLimitDetail = Self.codexCreditLimitDetail(credits: input.credits, now: input.now)
         let isClaudeAdminAPI = input.provider == .claude &&
-            input.snapshot?.identity?.loginMethod == "Admin API"
+            input.snapshot?.claudeAdminAPIUsage != nil
         let isRequiredOpenCodeZenBalance = Self.isRequiredOpenCodeZenBalance(input.snapshot)
         let hidesOptionalProviderCost = ((input.provider == .claude && !isClaudeAdminAPI) ||
             input.provider == .factory ||
+            input.provider == .devin ||
             (input.provider == .opencodego && !isRequiredOpenCodeZenBalance)) &&
             !input.showOptionalCreditsAndExtraUsage
-        let providerCost: ProviderCostSection? = if hidesOptionalProviderCost ||
+        let providerCost: ProviderCostSection? = if input.provider == .sakana {
+            input.showOptionalCreditsAndExtraUsage
+                ? Self.sakanaPayAsYouGoSection(
+                    input.snapshot?.sakanaPayAsYouGo,
+                    preferredCurrencyCode: input.preferredCurrencyCode)
+                : nil
+        } else if hidesOptionalProviderCost ||
             (input.provider == .openai && openAIAPIUsage != nil)
         {
             nil
         } else {
-            Self.providerCostSection(provider: input.provider, cost: input.snapshot?.providerCost)
+            Self.providerCostSection(
+                provider: input.provider,
+                cost: input.snapshot?.providerCost,
+                isClaudeAdminAPI: isClaudeAdminAPI,
+                preferredCurrencyCode: input.preferredCurrencyCode)
         }
         let tokenUsageSnapshot = Self.tokenUsageSnapshot(input: input)
         let tokenUsage = Self.tokenUsageSection(
             provider: input.provider,
-            enabled: input.tokenCostUsageEnabled,
+            enabled: input.tokenCostMenuSectionEnabled,
+            comparisonPeriodsEnabled: input.costComparisonPeriodsEnabled,
             snapshot: tokenUsageSnapshot,
-            error: input.tokenError)
+            error: input.tokenError,
+            preferredCurrencyCode: input.preferredCurrencyCode)
         let subtitle = Self.subtitle(
             snapshot: input.snapshot,
             isRefreshing: input.isRefreshing,
@@ -928,65 +956,19 @@ extension UsageMenuCardView.Model {
             openAIAPIUsage: openAIAPIUsage,
             inlineUsageDashboard: inlineUsageDashboard,
             creditsText: creditsText,
-            creditsRemaining: input.credits?.remaining,
-            creditsHintText: redacted.creditsHintText,
-            creditsHintCopyText: redacted.creditsHintCopyText,
-            codexResetCreditsText: Self.codexResetCreditsText(input: input),
-            codexResetCreditsDetailText: Self.codexResetCreditsDetailText(input: input),
+            creditsRemaining: input.credits?.codexCreditLimit?.remaining ?? input.credits?.remaining,
+            creditsProgressPercent: creditsProgressPercent,
+            creditsScaleText: creditsScaleText,
+            creditsHintText: codexCreditLimitDetail ?? redacted.creditsHintText,
+            creditsHintCopyText: codexCreditLimitDetail ?? redacted.creditsHintCopyText,
+            codexResetCredits: Self.codexResetCredits(input: input),
             providerCost: providerCost,
             tokenUsage: tokenUsage,
             placeholder: placeholder,
             progressColor: Self.progressColor(for: input.provider))
     }
 
-    private static func usageNotes(input: Input) -> [String] {
-        let subscriptionNotes = self.subscriptionMetadataNotes(snapshot: input.snapshot, provider: input.provider)
-
-        if input.provider == .kiro {
-            return kiroUsageNotes(input: input) + subscriptionNotes
-        }
-
-        if input.provider == .kilo {
-            var notes = Self.kiloLoginDetails(snapshot: input.snapshot)
-            let resolvedSource = input.sourceLabel?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            if input.kiloAutoMode,
-               resolvedSource == "cli",
-               !notes.contains(where: { $0.caseInsensitiveCompare("Using CLI fallback") == .orderedSame })
-            {
-                notes.append(L("Using CLI fallback"))
-            }
-            return notes + subscriptionNotes
-        }
-
-        if input.provider == .mimo, input.snapshot != nil {
-            return Self.mimoUsageNotes(input: input, subscriptionNotes: subscriptionNotes)
-        }
-
-        if let notes = apiProviderUsageNotes(input: input) {
-            return notes + subscriptionNotes
-        }
-
-        guard input.provider == .openrouter,
-              let openRouter = input.snapshot?.openRouterUsage
-        else {
-            return subscriptionNotes
-        }
-
-        var notes = Self.openRouterSpendNotes(openRouter)
-        switch openRouter.keyQuotaStatus {
-        case .available:
-            break
-        case .noLimitConfigured:
-            notes.append(L("No limit set for the API key"))
-        case .unavailable:
-            notes.append(L("API key limit unavailable right now"))
-        }
-        return notes + subscriptionNotes
-    }
-
-    private static func openRouterSpendNotes(_ usage: OpenRouterUsageSnapshot) -> [String] {
+    static func openRouterSpendNotes(_ usage: OpenRouterUsageSnapshot) -> [String] {
         var parts: [String] = []
         if let daily = usage.keyUsageDaily {
             parts.append("\(L("Today")): \(Self.openRouterCurrencyString(daily))")
@@ -1006,10 +988,13 @@ extension UsageMenuCardView.Model {
         for provider: UsageProvider,
         snapshot: UsageSnapshot?,
         account: AccountInfo,
-        metadata: ProviderMetadata) -> String
+        metadata: ProviderMetadata,
+        accountIsAuthoritative: Bool) -> String
     {
-        if let email = snapshot?.accountEmail(for: provider), !email.isEmpty { return email }
-        if metadata.usesAccountFallback,
+        if let email = snapshot?.accountEmail(for: provider), !email.isEmpty {
+            return email
+        }
+        if metadata.usesAccountFallback || accountIsAuthoritative,
            let email = account.email, !email.isEmpty
         {
             return email
@@ -1021,8 +1006,12 @@ extension UsageMenuCardView.Model {
         for provider: UsageProvider,
         snapshot: UsageSnapshot?,
         account: AccountInfo,
+        override: String?,
         metadata: ProviderMetadata) -> String?
     {
+        if let override, !override.isEmpty {
+            return override
+        }
         if provider == .kiro,
            let plan = kiroPlan(snapshot: snapshot)
         {
@@ -1033,6 +1022,12 @@ extension UsageMenuCardView.Model {
                 return nil
             }
             return self.planDisplay(pass, for: provider)
+        }
+        if provider == .amp,
+           let plan = snapshot?.ampUsage?.subscriptionPlan,
+           !plan.isEmpty
+        {
+            return self.planDisplay(plan, for: provider)
         }
         if let plan = snapshot?.loginMethod(for: provider), !plan.isEmpty {
             return self.planDisplay(plan, for: provider)
@@ -1076,7 +1071,7 @@ extension UsageMenuCardView.Model {
         self.kiloLoginParts(snapshot: snapshot).pass
     }
 
-    private static func kiloLoginDetails(snapshot: UsageSnapshot?) -> [String] {
+    static func kiloLoginDetails(snapshot: UsageSnapshot?) -> [String] {
         self.kiloLoginParts(snapshot: snapshot).details
     }
 
@@ -1140,7 +1135,8 @@ extension UsageMenuCardView.Model {
                 for: input.provider,
                 snapshot: input.snapshot,
                 account: input.account,
-                metadata: input.metadata),
+                metadata: input.metadata,
+                accountIsAuthoritative: input.accountIsAuthoritative),
             isEnabled: input.hidePersonalInfo)
         let subtitleText = PersonalInfoRedactor.redactEmails(in: subtitle.text, isEnabled: input.hidePersonalInfo)
             ?? subtitle.text
@@ -1181,8 +1177,25 @@ extension UsageMenuCardView.Model {
         let zaiTokenDetail = Self.zaiLimitDetailText(limit: zaiUsage?.tokenLimit)
         let zaiTimeDetail = Self.zaiLimitDetailText(limit: zaiUsage?.timeLimit)
         let zaiSessionDetail = Self.zaiLimitDetailText(limit: zaiUsage?.sessionTokenLimit)
-        let openRouterQuotaDetail = Self.openRouterQuotaDetail(provider: input.provider, snapshot: snapshot)
+        let openRouterQuotaDetail = Self.openRouterQuotaDetail(
+            provider: input.provider,
+            snapshot: snapshot,
+            preferredCurrencyCode: input.preferredCurrencyCode)
         let labels = Self.rateWindowLabels(input: input, snapshot: snapshot)
+        if input.provider == .mistral, let credits = snapshot.mistralUsage?.credits {
+            metrics.append(Metric(
+                id: "mistral-balance",
+                title: L("Balance"),
+                percent: 0,
+                percentStyle: percentStyle,
+                statusText: credits.formattedAvailableAmount,
+                resetText: nil,
+                detailText: nil,
+                detailLeftText: nil,
+                detailRightText: nil,
+                pacePercent: nil,
+                paceOnTop: true))
+        }
         if input.provider == .codex, let codexProjection = input.codexProjection {
             metrics.append(contentsOf: Self.codexRateMetrics(
                 input: input,
@@ -1231,10 +1244,10 @@ extension UsageMenuCardView.Model {
                 tertiaryDetailText = detail
             }
             // Perplexity purchased credits don't reset; show balance without "Resets" prefix.
-            let opusResetText: String? = input.provider == .perplexity
+            let opusResetText: String? = input.provider == .perplexity || input.provider == .sub2api
                 ? opus.resetDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
                 : Self.resetText(for: opus, style: input.resetTimeDisplayStyle, now: input.now)
-            let tertiaryPaceDetail = Self.cursorBillingCyclePaceDetail(window: opus, input: input)
+            let tertiaryPaceDetail = Self.resetWindowPaceDetail(window: opus, input: input)
             metrics.append(Metric(
                 id: "tertiary",
                 title: labels.tertiary,
@@ -1254,16 +1267,16 @@ extension UsageMenuCardView.Model {
             snapshot: snapshot,
             input: input,
             percentStyle: percentStyle))
-        if input.provider == .kilo,
+        if input.provider == .kilo || input.provider == .kimi,
            metrics.contains(where: { $0.id == "primary" }),
            metrics.contains(where: { $0.id == "secondary" })
         {
             metrics.sort { lhs, rhs in
-                let kiloOrder: [String: Int] = [
+                let primarySecondaryOrder: [String: Int] = [
                     "secondary": 0,
                     "primary": 1,
                 ]
-                return (kiloOrder[lhs.id] ?? Int.max) < (kiloOrder[rhs.id] ?? Int.max)
+                return (primarySecondaryOrder[lhs.id] ?? Int.max) < (primarySecondaryOrder[rhs.id] ?? Int.max)
             }
         }
 
@@ -1298,139 +1311,38 @@ extension UsageMenuCardView.Model {
         zaiTokenDetail: String?,
         openRouterQuotaDetail: String?) -> Metric
     {
-        var primaryDetailText: String? = input.provider == .zai ? zaiTokenDetail : nil
-        var primaryResetText = Self.resetText(for: primary, style: input.resetTimeDisplayStyle, now: input.now)
-        var primaryDetailLeft: String?
-        var primaryDetailRight: String?
-        if input.provider == .crof,
-           let detail = primary.resetDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !detail.isEmpty
-        {
-            primaryDetailRight = detail
-        }
-        if input.provider == .openrouter,
-           let openRouterQuotaDetail
-        {
-            primaryResetText = openRouterQuotaDetail
-        }
-        if input.provider == .copilot,
-           let detail = primary.resetDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !detail.isEmpty
-        {
-            primaryDetailLeft = detail
-        }
-        if input.provider == .warp || input.provider == .kilo || input.provider == .mimo || input.provider == .deepseek
-            || input.provider == .litellm,
-            let detail = primary.resetDescription,
-            !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            primaryDetailText = detail
-        }
-        if let balance = Self.poeBalanceDetailText(input: input) {
-            primaryDetailText = balance
-        }
-        if input.provider == .kiro,
-           let kiroUsage = input.snapshot?.kiroUsage,
-           kiroUsage.creditsTotal > 0
-        {
-            let remaining = UsageFormatter.kiroCreditNumber(kiroUsage.creditsRemaining)
-            let total = UsageFormatter.kiroCreditNumber(kiroUsage.creditsTotal)
-            primaryDetailLeft = String(format: L("%@ of %@ credits left"), remaining, total)
-        }
-        if input.provider == .alibaba || input.provider == .alibabatokenplan || input.provider == .mistral || input
-            .provider == .manus,
-            let detail = primary.resetDescription,
-            !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            primaryDetailText = detail
-            if input.provider == .manus { primaryResetText = nil }
-        }
-        if [.warp, .kilo, .mimo, .deepseek, .litellm].contains(input.provider), primary.resetsAt == nil {
-            primaryResetText = nil
-        }
-        // Abacus: show credits as detail, compute pace on the primary monthly window
-        var primaryPacePercent: Double?
-        var primaryPaceOnTop = true
-        if let paceDetail = Self.sessionPaceDetail(
-            provider: input.provider,
-            window: primary,
-            now: input.now,
-            showUsed: input.usageBarsShowUsed)
-        {
-            primaryDetailLeft = paceDetail.leftLabel
-            primaryDetailRight = paceDetail.rightLabel
-            primaryPacePercent = paceDetail.pacePercent
-            primaryPaceOnTop = paceDetail.paceOnTop
-        }
-        if input.provider == .abacus {
-            if let detail = primary.resetDescription,
-               !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                primaryDetailText = detail
-            }
-            if primary.resetsAt == nil {
-                primaryResetText = nil
-            }
-            if let pace = input.weeklyPace {
-                let paceDetail = Self.weeklyPaceDetail(
-                    window: primary,
-                    now: input.now,
-                    pace: pace,
-                    showUsed: input.usageBarsShowUsed)
-                if let paceDetail {
-                    primaryDetailLeft = paceDetail.leftLabel
-                    primaryDetailRight = paceDetail.rightLabel
-                    primaryPacePercent = paceDetail.pacePercent
-                    primaryPaceOnTop = paceDetail.paceOnTop
-                }
-            }
-        }
-        if let paceDetail = Self.cursorBillingCyclePaceDetail(window: primary, input: input) {
-            primaryDetailLeft = paceDetail.leftLabel
-            primaryDetailRight = paceDetail.rightLabel
-            primaryPacePercent = paceDetail.pacePercent
-            primaryPaceOnTop = paceDetail.paceOnTop
-        }
-        // Legacy request-based Cursor plans: surface the raw used/limit quota on its own line,
-        // since the percentage bar and pace detail alone never spell out the request cap.
-        if input.provider == .cursor, let requests = input.snapshot?.cursorRequests {
-            primaryDetailText = String(
-                format: L("Request quota: %@ / %@"),
-                "\(requests.used)",
-                "\(requests.limit)")
-        }
-        if input.provider == .synthetic,
-           let regen = Self.syntheticRollingRegenDetail(
-               window: primary,
-               now: input.now,
-               showUsed: input.usageBarsShowUsed)
-        {
-            primaryResetText = regen.resetText
-            primaryDetailLeft = regen.pace.leftLabel
-            primaryDetailRight = regen.pace.rightLabel
-            primaryPacePercent = regen.pace.pacePercent
-            primaryPaceOnTop = regen.pace.paceOnTop
-        }
-        let primaryStatusText = input.provider == .deepseek ? primaryDetailText : nil
-        if input.provider == .deepseek {
-            primaryDetailText = nil
-        }
+        var presentation = PrimaryMetricPresentation(
+            resetText: Self.resetText(for: primary, style: input.resetTimeDisplayStyle, now: input.now),
+            detailText: input.provider == .zai ? zaiTokenDetail : nil)
+        Self.applyPrimaryQuotaPresentation(
+            &presentation,
+            input: input,
+            primary: primary,
+            openRouterQuotaDetail: openRouterQuotaDetail)
+        Self.applyPrimaryBalancePresentation(&presentation, input: input, primary: primary)
+        Self.applyPrimaryResetPresentation(&presentation, input: input, primary: primary)
+        Self.applyPrimaryPacePresentation(&presentation, input: input, primary: primary)
+        Self.applyPrimaryFinalOverrides(&presentation, input: input, primary: primary)
         return Metric(
             id: "primary",
             title: title ?? L(input.metadata.sessionLabel),
             percent: Self.clamped(
                 input.usageBarsShowUsed ? primary.usedPercent : primary.remainingPercent),
             percentStyle: percentStyle,
-            statusText: primaryStatusText,
-            resetText: primaryResetText,
-            detailText: primaryDetailText,
-            detailLeftText: primaryDetailLeft,
-            detailRightText: primaryDetailRight,
-            pacePercent: primaryPacePercent,
-            paceOnTop: primaryPaceOnTop,
+            statusText: presentation.statusText,
+            resetText: presentation.resetText,
+            detailText: presentation.detailText,
+            detailLeftText: presentation.detailLeft,
+            detailRightText: presentation.detailRight,
+            pacePercent: presentation.pacePercent,
+            paceOnTop: presentation.paceOnTop,
             warningMarkerPercents: Self.warningMarkerPercents(
                 thresholds: input.quotaWarningThresholds[.session],
-                showUsed: input.usageBarsShowUsed))
+                showUsed: input.usageBarsShowUsed),
+            sessionEquivalentDetail: Self.sessionEquivalentDetail(
+                input: input,
+                weeklyWindow: primary,
+                weeklyWindowID: nil))
     }
 
     private static func secondaryMetric(
@@ -1440,11 +1352,21 @@ extension UsageMenuCardView.Model {
         title: String? = nil,
         zaiTimeDetail: String?) -> Metric
     {
-        var paceDetail = Self.weeklyPaceDetail(
-            window: weekly,
-            now: input.now,
-            pace: input.weeklyPace,
-            showUsed: input.usageBarsShowUsed)
+        // Kimi's secondary slot is its 5-hour rate limit rather than a weekly window.
+        var paceDetail = if input.provider == .kimi {
+            Self.sessionPaceDetail(
+                provider: input.provider,
+                window: weekly,
+                now: input.now,
+                showUsed: input.usageBarsShowUsed)
+        } else {
+            Self.weeklyPaceDetail(
+                provider: input.provider,
+                window: weekly,
+                now: input.now,
+                pace: input.weeklyPace,
+                showUsed: input.usageBarsShowUsed)
+        }
         var weeklyResetText = Self.resetText(for: weekly, style: input.resetTimeDisplayStyle, now: input.now)
         var weeklyDetailText: String? = input.provider == .zai ? zaiTimeDetail : nil
         if input.provider == .warp,
@@ -1454,7 +1376,7 @@ extension UsageMenuCardView.Model {
             weeklyResetText = nil
             weeklyDetailText = detail
         }
-        if input.provider == .kilo || input.provider == .litellm,
+        if [.kilo, .litellm, .chutes].contains(input.provider),
            let detail = weekly.resetDescription,
            !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
@@ -1462,6 +1384,9 @@ extension UsageMenuCardView.Model {
             if weekly.resetsAt == nil {
                 weeklyResetText = nil
             }
+        }
+        if input.provider == .sub2api {
+            weeklyResetText = weekly.resetDescription
         }
         if input.provider == .kiro,
            let kiroUsage = input.snapshot?.kiroUsage,
@@ -1494,13 +1419,16 @@ extension UsageMenuCardView.Model {
         {
             weeklyResetText = detail
         }
-        if input.provider == .copilot,
+        if [.copilot, .zenmux].contains(input.provider),
            let detail = weekly.resetDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
            !detail.isEmpty
         {
             paceDetail = PaceDetail(leftLabel: detail, rightLabel: nil, pacePercent: nil, paceOnTop: true)
         }
-        if let cursorPaceDetail = Self.cursorBillingCyclePaceDetail(
+        if input.provider == .zenmux, weekly.resetsAt == nil {
+            weeklyResetText = nil
+        }
+        if let cursorPaceDetail = Self.resetWindowPaceDetail(
             window: weekly,
             input: input,
             pace: input.weeklyPace)
@@ -1536,54 +1464,15 @@ extension UsageMenuCardView.Model {
             detailRightText: paceDetail?.rightLabel,
             pacePercent: paceDetail?.pacePercent,
             paceOnTop: paceDetail?.paceOnTop ?? true,
-            warningMarkerPercents: Self.weeklyMarkerPercents(input: input, windowMinutes: weekly.windowMinutes))
-    }
-
-    private static func codexRateMetrics(
-        input: Input,
-        projection: CodexConsumerProjection,
-        percentStyle: PercentStyle) -> [Metric]
-    {
-        projection.visibleRateLanes.compactMap { lane in
-            guard let window = projection.rateWindow(for: lane) else { return nil }
-
-            let title: String
-            let id: String
-            let paceDetail: PaceDetail?
-            switch lane {
-            case .session:
-                title = L(input.metadata.sessionLabel)
-                id = "primary"
-                paceDetail = Self.sessionPaceDetail(
-                    provider: input.provider,
-                    window: window,
-                    now: input.now,
-                    showUsed: input.usageBarsShowUsed)
-            case .weekly:
-                title = L(input.metadata.weeklyLabel)
-                id = "secondary"
-                paceDetail = Self.weeklyPaceDetail(
-                    window: window,
-                    now: input.now,
-                    pace: Self.standardWeeklyPace(input: input, window: window),
-                    showUsed: input.usageBarsShowUsed)
-            }
-
-            return Metric(
-                id: id,
-                title: title,
-                percent: Self.clamped(input.usageBarsShowUsed ? window.usedPercent : window.remainingPercent),
-                percentStyle: percentStyle,
-                resetText: Self.resetText(for: window, style: input.resetTimeDisplayStyle, now: input.now),
-                detailText: nil,
-                detailLeftText: paceDetail?.leftLabel,
-                detailRightText: paceDetail?.rightLabel,
-                pacePercent: paceDetail?.pacePercent,
-                paceOnTop: paceDetail?.paceOnTop ?? true,
-                warningMarkerPercents: Self.codexLaneMarkerPercents(
-                    input: input,
-                    lane: lane,
-                    windowMinutes: window.windowMinutes))
-        }
+            warningMarkerPercents: Self.warningMarkerPercents(
+                thresholds: input.quotaWarningThresholds[.weekly],
+                showUsed: input.usageBarsShowUsed),
+            workdayMarkerPercents: workDayMarkerPercents(
+                workDays: input.workDaysPerWeek,
+                windowMinutes: weekly.windowMinutes),
+            sessionEquivalentDetail: Self.sessionEquivalentDetail(
+                input: input,
+                weeklyWindow: weekly,
+                weeklyWindowID: nil))
     }
 }

@@ -25,10 +25,12 @@ struct ClaudeWebRecoveryMenuTests {
     }
 
     private func actions(
-        error: String,
+        error: String? = nil,
         source: ClaudeUsageDataSource,
         cookieSource: ProviderCookieSource = .auto,
         selectedSessionKey: Bool = false,
+        authenticatedAccountEmail: String? = nil,
+        authenticatedOAuthWithoutEmail: Bool = false,
         attempts: [ProviderFetchAttempt] = []) -> [(String, MenuDescriptor.MenuAction)]
     {
         let settings = self.makeSettings()
@@ -42,6 +44,25 @@ struct ClaudeWebRecoveryMenuTests {
             fetcher: fetcher,
             browserDetection: BrowserDetection(cacheTTL: 0),
             settings: settings)
+        if authenticatedAccountEmail != nil || authenticatedOAuthWithoutEmail {
+            store._setSnapshotForTesting(
+                UsageSnapshot(
+                    primary: authenticatedOAuthWithoutEmail
+                        ? RateWindow(
+                            usedPercent: 25,
+                            windowMinutes: 5 * 60,
+                            resetsAt: nil,
+                            resetDescription: nil)
+                        : nil,
+                    secondary: nil,
+                    updatedAt: Date(),
+                    identity: ProviderIdentitySnapshot(
+                        providerID: .claude,
+                        accountEmail: authenticatedAccountEmail,
+                        accountOrganization: nil,
+                        loginMethod: "Claude Pro")),
+                provider: .claude)
+        }
         store.errors[.claude] = error
         store.lastFetchAttempts[.claude] = attempts
 
@@ -57,6 +78,42 @@ struct ClaudeWebRecoveryMenuTests {
                 guard case let .action(label, action) = entry else { return nil }
                 return (label, action)
             }
+    }
+
+    @Test
+    func `default account action localizes ambient Claude Code sign in`() {
+        let actions = CodexBarLocalizationOverride.$appLanguage.withValue("zh-Hant") {
+            self.actions(source: .auto)
+        }
+
+        #expect(actions.contains {
+            $0.0 == "使用 Claude Code 登入…" && $0.1 == .switchAccount(.claude)
+        })
+        #expect(!actions.contains { $0.0 == "Add Account..." })
+    }
+
+    @Test
+    func `authenticated Claude account shows switch action instead of sign in`() {
+        let actions = self.actions(
+            source: .auto,
+            authenticatedAccountEmail: "claude@example.com")
+
+        #expect(actions.contains {
+            $0.0 == "Switch Account..." && $0.1 == .switchAccount(.claude)
+        })
+        #expect(!actions.contains { $0.0 == "Sign in with Claude Code..." })
+    }
+
+    @Test
+    func `email-less Claude OAuth snapshot shows switch action instead of sign in`() {
+        let actions = self.actions(
+            source: .oauth,
+            authenticatedOAuthWithoutEmail: true)
+
+        #expect(actions.contains {
+            $0.0 == "Switch Account..." && $0.1 == .switchAccount(.claude)
+        })
+        #expect(!actions.contains { $0.0 == "Sign in with Claude Code..." })
     }
 
     @Test

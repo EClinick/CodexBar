@@ -2,6 +2,8 @@ import Foundation
 
 struct SettingsDefaultsState {
     var refreshFrequency: RefreshFrequency
+    var adaptiveActivityScanConsent: AdaptiveActivityScanConsent
+    var refreshAllProvidersOnMenuOpen: Bool
     var launchAtLogin: Bool
     var debugMenuEnabled: Bool
     var debugDisableKeychainAccess: Bool
@@ -14,12 +16,14 @@ struct SettingsDefaultsState {
     var codexResetExpiryNotificationsEnabled: Bool
     var codexResetAutoRedeemEnabled: Bool
     var quotaWarningNotificationsEnabled: Bool
+    var predictivePaceWarningNotificationsEnabled: Bool
     var quotaWarningThresholdsRaw: [Int]
     var quotaWarningSessionThresholdsRaw: [Int]
     var quotaWarningWeeklyThresholdsRaw: [Int]
     var quotaWarningSessionEnabled: Bool
     var quotaWarningWeeklyEnabled: Bool
     var quotaWarningSoundEnabled: Bool
+    var quotaWarningOnScreenAlertEnabled: Bool
     var quotaWarningMarkersVisible: Bool
     var weeklyProgressWorkDays: Int?
     var usageBarsShowUsed: Bool
@@ -27,23 +31,35 @@ struct SettingsDefaultsState {
     var providerChangelogLinksEnabled: Bool
     var menuBarShowsBrandIconWithPercent: Bool
     var menuBarHidesCritters: Bool
+    var menuBarHighContrastOnInactiveDisplays: Bool
     var menuBarDisplayModeRaw: String?
+    var menuBarShowsResetTimeWhenExhausted: Bool
     var kiroMenuBarDisplayModeRaw: String?
     var historicalTrackingEnabled: Bool
     var multiAccountMenuLayoutRaw: String
     var menuBarMetricPreferencesRaw: [String: String]
+    var storedMenuBarLayout: MenuBarLayout?
+    var menuBarLayoutOverridesRaw: [String: MenuBarLayout]
+    var menuBarLayoutSizeRaw: String
+    var menuBarLayoutGapRaw: String
     var copilotBudgetExtrasEnabled: Bool
     var copilotIconSecondaryWindowIDRaw: String
     var costUsageEnabled: Bool
+    var codexLocalSessionCostLedgerEnabled: Bool
     var costUsageHistoryDays: Int
+    var costComparisonPeriodsEnabled: Bool
+    var costSummaryDisplayStyleRaw: String
     var hidePersonalInfo: Bool
     var randomBlinkEnabled: Bool
+    var confettiOnSessionLimitResetsEnabled: Bool
     var confettiOnWeeklyLimitResetsEnabled: Bool
     var menuBarShowsHighestUsage: Bool
     var claudeOAuthKeychainPromptModeRaw: String?
     var claudeOAuthKeychainReadStrategyRaw: String?
     var claudeWebExtrasEnabledRaw: Bool
     var showOptionalCreditsAndExtraUsage: Bool
+    var claudeDailyRoutinesUsageVisible: Bool
+    var codexSparkUsageVisible: Bool
     var openAIWebAccessEnabled: Bool
     var openAIWebBatterySaverEnabled: Bool
     var providerStorageFootprintsEnabled: Bool
@@ -57,4 +73,8 @@ struct SettingsDefaultsState {
     var providersSortedAlphabetically: Bool
     var appLanguageRaw: String?
     var terminalAppRaw: String?
+    var agentSessionsEnabled: Bool
+    var agentSessionLabelStyleRaw: String
+    var agentSessionsManualHosts: String
+    var preferredCurrencyCode: String
 }

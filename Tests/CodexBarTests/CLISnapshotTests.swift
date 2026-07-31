@@ -6,6 +6,36 @@ import Testing
 // swiftlint:disable:next type_body_length
 struct CLISnapshotTests {
     @Test
+    func `renders Gemini paid plan without changing acronym casing`() {
+        let identity = ProviderIdentitySnapshot(
+            providerID: .gemini,
+            accountEmail: nil,
+            accountOrganization: nil,
+            loginMethod: "Gemini Code Assist in Google One AI Pro")
+        let snapshot = UsageSnapshot(
+            primary: nil,
+            secondary: nil,
+            tertiary: nil,
+            updatedAt: Date(timeIntervalSince1970: 0),
+            identity: identity)
+
+        let output = CLIRenderer.renderText(
+            provider: .gemini,
+            snapshot: snapshot,
+            credits: nil,
+            context: RenderContext(
+                header: "Gemini",
+                status: nil,
+                useColor: false,
+                resetStyle: .absolute))
+
+        #expect(CLIRenderer.planBadgeText(provider: .gemini, snapshot: snapshot) ==
+            "Gemini Code Assist in Google One AI Pro")
+        #expect(output.contains("Plan: Gemini Code Assist in Google One AI Pro"))
+        #expect(!output.contains("Google One Ai Pro"))
+    }
+
+    @Test
     func `renders Factory token rate billing with time window labels`() {
         let snap = UsageSnapshot(
             primary: .init(usedPercent: 12, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
@@ -94,7 +124,8 @@ struct CLISnapshotTests {
 
     @Test
     func `renders Codex limit reset credits`() {
-        let expiresAt = Date().addingTimeInterval(7200)
+        let now = Date()
+        let expiresAt = now.addingTimeInterval(7200)
         let resetCredits = CodexRateLimitResetCreditsSnapshot(
             credits: [
                 CodexRateLimitResetCredit(
@@ -107,8 +138,18 @@ struct CLISnapshotTests {
                     redeemedAt: nil,
                     title: nil,
                     description: nil),
+                CodexRateLimitResetCredit(
+                    id: "expired-credit",
+                    resetType: "codex_rate_limits",
+                    status: .available,
+                    grantedAt: Date(timeIntervalSince1970: 0),
+                    expiresAt: now,
+                    redeemStartedAt: nil,
+                    redeemedAt: nil,
+                    title: nil,
+                    description: nil),
             ],
-            availableCount: 1,
+            availableCount: 99,
             updatedAt: Date(timeIntervalSince1970: 0))
         let snapshot = UsageSnapshot(
             primary: .init(usedPercent: 10, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
@@ -214,6 +255,34 @@ struct CLISnapshotTests {
     }
 
     @Test
+    func `renders Claude Max multiplier without uppercasing x`() {
+        let identity = ProviderIdentitySnapshot(
+            providerID: .claude,
+            accountEmail: nil,
+            accountOrganization: nil,
+            loginMethod: "Claude Max 5x")
+        let snapshot = UsageSnapshot(
+            primary: .init(usedPercent: 2, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
+            secondary: nil,
+            tertiary: nil,
+            updatedAt: Date(timeIntervalSince1970: 0),
+            identity: identity)
+
+        let output = CLIRenderer.renderText(
+            provider: .claude,
+            snapshot: snapshot,
+            credits: nil,
+            context: RenderContext(
+                header: "Claude (oauth)",
+                status: nil,
+                useColor: false,
+                resetStyle: .absolute))
+
+        #expect(output.contains("Plan: Claude Max 5x"))
+        #expect(!output.contains("Plan: Claude Max 5X"))
+    }
+
+    @Test
     func `renders warp unlimited as detail not reset`() {
         let meta = ProviderDescriptorRegistry.descriptor(for: .warp).metadata
         let snap = UsageSnapshot(
@@ -282,6 +351,28 @@ struct CLISnapshotTests {
         let meta = ProviderDescriptorRegistry.descriptor(for: .crof).metadata
         let snap = CrofUsageSnapshot(
             credits: 9.9999,
+            updatedAt: Date(timeIntervalSince1970: 0)).toUsageSnapshot()
+
+        let output = CLIRenderer.renderText(
+            provider: .crof,
+            snapshot: snap,
+            credits: nil,
+            context: RenderContext(
+                header: "Crof",
+                status: nil,
+                useColor: false,
+                resetStyle: .countdown))
+
+        #expect(output.contains("\(meta.sessionLabel): 100% left"))
+        #expect(output.contains("$9.99"))
+        #expect(!output.contains("Resets $9.99"))
+        #expect(!output.contains("requests left"))
+    }
+
+    @Test
+    func `renders crof request quota when returned`() {
+        let snap = CrofUsageSnapshot(
+            credits: 9.9999,
             requestsPlan: 1000,
             usableRequests: 998,
             updatedAt: Date(timeIntervalSince1970: 0)).toUsageSnapshot()
@@ -296,10 +387,46 @@ struct CLISnapshotTests {
                 useColor: false,
                 resetStyle: .countdown))
 
-        #expect(output.contains("\(meta.sessionLabel): 99% left"))
-        #expect(output.contains("\(meta.weeklyLabel): 100% left"))
+        #expect(output.contains("Requests: 99% left"))
+        #expect(output.contains("998 requests left"))
+        #expect(output.contains("Credits: 100% left"))
         #expect(output.contains("$9.99"))
-        #expect(!output.contains("Resets $9.99"))
+    }
+
+    @Test
+    func `renders qoder reset and credit total separately`() {
+        let meta = ProviderDescriptorRegistry.descriptor(for: .qoder).metadata
+        let now = Date(timeIntervalSince1970: 0)
+        let snap = UsageSnapshot(
+            primary: .init(
+                usedPercent: 25,
+                windowMinutes: nil,
+                resetsAt: now.addingTimeInterval(3600),
+                resetDescription: "125 / 500 credits"),
+            secondary: nil,
+            tertiary: nil,
+            updatedAt: now,
+            identity: ProviderIdentitySnapshot(
+                providerID: .qoder,
+                accountEmail: nil,
+                accountOrganization: nil,
+                loginMethod: nil))
+
+        let output = CLIRenderer.renderText(
+            provider: .qoder,
+            snapshot: snap,
+            credits: nil,
+            context: RenderContext(
+                header: "Qoder",
+                status: nil,
+                useColor: false,
+                resetStyle: .countdown),
+            now: now)
+
+        #expect(output.contains("\(meta.sessionLabel): 75% left"))
+        #expect(output.contains("Resets in 1h"))
+        #expect(output.contains("125 / 500 credits"))
+        #expect(!output.contains("Resets 125 / 500 credits"))
     }
 
     @Test
@@ -462,6 +589,93 @@ struct CLISnapshotTests {
     }
 
     @Test
+    func `Kimi routes inverted quota windows to CLI pace and JSON metadata`() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let snapshot = UsageSnapshot(
+            primary: .init(
+                usedPercent: 30,
+                windowMinutes: KimiProviderDescriptor.weeklyWindowMinutes,
+                resetsAt: now.addingTimeInterval(4 * 24 * 60 * 60),
+                resetDescription: "weekly"),
+            secondary: .init(
+                usedPercent: 10,
+                windowMinutes: KimiProviderDescriptor.sessionWindowMinutes,
+                resetsAt: now.addingTimeInterval(4 * 60 * 60),
+                resetDescription: "rate limit"),
+            tertiary: nil,
+            updatedAt: now)
+
+        let pace = try #require(CLIRenderer.providerPacePayload(provider: .kimi, snapshot: snapshot, now: now))
+        #expect(pace.primary?.expectedUsedPercent == 43)
+        #expect(pace.primary?.summary == "13% in reserve | Expected 43% used | Lasts until reset")
+        #expect(pace.secondary?.expectedUsedPercent == 20)
+        #expect(pace.secondary?.summary == "10% in reserve | Expected 20% used | Lasts until reset")
+
+        let output = CLIRenderer.renderText(
+            provider: .kimi,
+            snapshot: snapshot,
+            credits: nil,
+            context: RenderContext(
+                header: "Kimi",
+                status: nil,
+                useColor: false,
+                resetStyle: .countdown),
+            now: now)
+        #expect(output.split(separator: "\n").count(where: { $0.contains("Pace:") }) == 2)
+
+        let payload = ProviderPayload(
+            provider: .kimi,
+            account: nil,
+            version: nil,
+            source: "Kimi Code API key",
+            status: nil,
+            usage: snapshot,
+            credits: nil,
+            antigravityPlanInfo: nil,
+            openaiDashboard: nil,
+            error: nil,
+            pace: pace)
+        let data = try JSONEncoder().encode(payload)
+        let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let usage = try #require(root["usage"] as? [String: Any])
+        let primary = try #require(usage["primary"] as? [String: Any])
+        let secondary = try #require(usage["secondary"] as? [String: Any])
+        #expect(primary["windowMinutes"] as? Int == KimiProviderDescriptor.weeklyWindowMinutes)
+        #expect(secondary["windowMinutes"] as? Int == KimiProviderDescriptor.sessionWindowMinutes)
+        let encodedPace = try #require(root["pace"] as? [String: Any])
+        #expect(encodedPace["primary"] != nil)
+        #expect(encodedPace["secondary"] != nil)
+    }
+
+    @Test
+    func `Kimi CLI pace rejects missing and unsupported window durations`() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        for duration: Int? in [nil, 24 * 60, 30 * 24 * 60] {
+            let window = RateWindow(
+                usedPercent: 25,
+                windowMinutes: duration,
+                resetsAt: now.addingTimeInterval(60 * 60),
+                resetDescription: nil)
+            let snapshots = [
+                UsageSnapshot(
+                    primary: window,
+                    secondary: nil,
+                    tertiary: nil,
+                    updatedAt: now),
+                UsageSnapshot(
+                    primary: nil,
+                    secondary: window,
+                    tertiary: nil,
+                    updatedAt: now),
+            ]
+
+            for snapshot in snapshots {
+                #expect(CLIRenderer.providerPacePayload(provider: .kimi, snapshot: snapshot, now: now) == nil)
+            }
+        }
+    }
+
+    @Test
     func `renders Ollama weekly pace line when weekly window has reset`() {
         let now = Date()
         let snap = UsageSnapshot(
@@ -490,6 +704,7 @@ struct CLISnapshotTests {
 
         #expect(output.contains("Weekly: 77% left"))
         #expect(output.contains("Pace: 6% in reserve | Expected 29% used | Lasts until reset"))
+        #expect(!output.contains("1.5× headroom"))
     }
 
     @Test
@@ -545,7 +760,7 @@ struct CLISnapshotTests {
 
         #expect(output.contains("Session: 80% left"))
         // 2h remaining of a 5h window => 3h elapsed => 60% expected; even rate easily lasts to reset.
-        #expect(output.contains("Pace: 40% in reserve | Expected 60% used | Lasts until reset"))
+        #expect(output.contains("Pace: 40% in reserve | Expected 60% used | Lasts until reset | 1.5× headroom"))
     }
 
     @Test
@@ -573,7 +788,8 @@ struct CLISnapshotTests {
             now: now)
 
         // windowMinutes is nil, so the 5-hour (300 minute) session default must drive the pace.
-        #expect(output.contains("Pace: 40% in reserve | Expected 60% used"))
+        #expect(output.contains("Pace: 40% in reserve | Expected 60% used | Lasts until reset"))
+        #expect(!output.contains("1.5× headroom"))
     }
 
     @Test
@@ -713,7 +929,8 @@ struct CLISnapshotTests {
             credits: nil,
             antigravityPlanInfo: nil,
             openaiDashboard: nil,
-            error: nil)
+            error: nil,
+            diagnostic: "Grok team usage is unavailable from the current billing surface.")
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
         let data = try encoder.encode(payload)
@@ -726,6 +943,7 @@ struct CLISnapshotTests {
         #expect(json.contains("\"version\":\"1.2.3\""))
         #expect(json.contains("\"status\""))
         #expect(json.contains("status.example.com"))
+        #expect(json.contains("Grok team usage is unavailable from the current billing surface."))
         #expect(json.contains("\"primary\""))
         #expect(json.contains("\"windowMinutes\":300"))
         #expect(json.contains("1700000000"))
@@ -1053,5 +1271,32 @@ struct CLISnapshotTests {
         #expect(output.contains("5-hour:"))
         #expect(output.contains("Tokens:"))
         #expect(output.contains("MCP:"))
+    }
+
+    @Test
+    func `devin overage balance without primary window omits generic cost line`() {
+        let snap = UsageSnapshot(
+            primary: nil,
+            secondary: .init(usedPercent: 42, windowMinutes: 10080, resetsAt: nil, resetDescription: nil),
+            tertiary: nil,
+            providerCost: ProviderCostSnapshot(
+                used: 48.0,
+                limit: 0,
+                currencyCode: "USD",
+                period: "Extra usage balance",
+                updatedAt: Date(timeIntervalSince1970: 0)),
+            updatedAt: Date(timeIntervalSince1970: 0))
+        let output = CLIRenderer.renderText(
+            provider: .devin,
+            snapshot: snap,
+            credits: nil,
+            context: RenderContext(
+                header: "Devin (devin)",
+                status: nil,
+                useColor: false,
+                resetStyle: .absolute))
+        #expect(output.contains("Extra usage: $48.00"))
+        #expect(!output.contains("Cost:"))
+        #expect(!output.contains(" / 0.0"))
     }
 }

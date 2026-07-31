@@ -5,6 +5,58 @@ import Testing
 
 struct CodexBarWidgetProviderTests {
     @Test
+    func `widget token counts use compact shared formatting`() {
+        #expect(WidgetFormat.tokenCount(999) == "999 tokens")
+        #expect(WidgetFormat.tokenCount(9_400_000) == "9.4M tokens")
+        #expect(WidgetFormat.tokenCount(94_500_000) == "94M tokens")
+        #expect(WidgetFormat.tokenCount(10_600_000_000) == "11B tokens")
+    }
+
+    @Test
+    func `usage display follows remaining and used preference`() {
+        #expect(WidgetUsageDisplay.percent(fromRemaining: 48, showUsed: false) == 48)
+        #expect(WidgetUsageDisplay.percent(fromRemaining: 48, showUsed: true) == 52)
+        #expect(WidgetUsageDisplay.percent(fromRemaining: nil, showUsed: true) == nil)
+    }
+
+    @Test
+    func `small widget falls back to local cost when quota rows are unavailable`() {
+        let tokenUsage = WidgetSnapshot.TokenUsageSummary(
+            sessionCostUSD: 1.25,
+            sessionTokens: 4200,
+            last30DaysCostUSD: 12.50,
+            last30DaysTokens: 42000,
+            currencyCode: "USD",
+            sessionLabel: "Today",
+            last30DaysLabel: "30d")
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .claude,
+            updatedAt: Date(),
+            primary: nil,
+            secondary: nil,
+            tertiary: nil,
+            usageRows: [],
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: tokenUsage,
+            dailyUsage: [])
+        let windowedEntry = WidgetSnapshot.ProviderEntry(
+            provider: .claude,
+            updatedAt: Date(),
+            primary: RateWindow(usedPercent: 25, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
+            secondary: nil,
+            tertiary: nil,
+            usageRows: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: tokenUsage,
+            dailyUsage: [])
+
+        #expect(WidgetUsageRow.compactTokenUsage(for: entry)?.sessionTokens == 4200)
+        #expect(WidgetUsageRow.compactTokenUsage(for: windowedEntry) == nil)
+    }
+
+    @Test
     func `small widget limits custom usage rows`() {
         let entry = WidgetSnapshot.ProviderEntry(
             provider: .antigravity,
@@ -216,8 +268,160 @@ struct CodexBarWidgetProviderTests {
     }
 
     @Test
+    func `provider choice supports devin`() {
+        #expect(ProviderChoice(provider: .devin) == .devin)
+        #expect(ProviderChoice.devin.provider == .devin)
+    }
+
+    @Test
+    func `widget entry carries devin overage balance through providerCost`() {
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .devin,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            primary: nil,
+            secondary: nil,
+            tertiary: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [],
+            providerCost: ProviderCostSnapshot(
+                used: 48.0,
+                limit: 0,
+                currencyCode: "USD",
+                period: "Extra usage balance",
+                updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
+        let encoded = try? JSONEncoder().encode(entry)
+        #expect(encoded != nil)
+        let decoded = encoded.flatMap { try? JSONDecoder().decode(WidgetSnapshot.ProviderEntry.self, from: $0) }
+        #expect(decoded?.providerCost?.period == "Extra usage balance")
+        #expect(decoded?.providerCost?.used == 48.0)
+        #expect(decoded?.providerCost?.limit == 0)
+        #expect(decoded?.provider == .devin)
+    }
+
+    @Test
+    func `widget balance formatter renders devin extra usage balance`() {
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .devin,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            primary: nil,
+            secondary: nil,
+            tertiary: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [],
+            providerCost: ProviderCostSnapshot(
+                used: 48.0,
+                limit: 0,
+                currencyCode: "USD",
+                period: "Extra usage balance",
+                updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
+        let line = WidgetBalanceFormatter.extraUsageBalance(for: entry)
+        #expect(line?.title == "Extra usage")
+        #expect(line?.value.hasPrefix("Balance: ") == true)
+        #expect(line?.value.contains("48") == true)
+    }
+
+    @Test
+    func `compact credits render Devin extra usage balance`() {
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .devin,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            primary: nil,
+            secondary: nil,
+            tertiary: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [],
+            providerCost: ProviderCostSnapshot(
+                used: 48.0,
+                limit: 0,
+                currencyCode: "USD",
+                period: "Extra usage balance",
+                updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
+
+        let display = CompactMetricFormatter.display(for: entry, metric: .credits)
+
+        #expect(display.value.contains("48"))
+        #expect(display.label == "Extra usage balance")
+        #expect(display.detail == nil)
+    }
+
+    @Test
+    func `widget balance formatter does not leak another provider balance`() {
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .factory,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            primary: nil,
+            secondary: nil,
+            tertiary: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [],
+            providerCost: ProviderCostSnapshot(
+                used: 12.0,
+                limit: 100.0,
+                currencyCode: "USD",
+                period: "Extra usage balance",
+                updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
+        #expect(WidgetBalanceFormatter.extraUsageBalance(for: entry) == nil)
+    }
+
+    @Test
+    func `provider choice supports Mistral`() {
+        #expect(ProviderChoice(provider: .mistral) == .mistral)
+        #expect(ProviderChoice.mistral.provider == .mistral)
+    }
+
+    @Test
+    func `provider choice supports Kimi`() {
+        #expect(ProviderChoice(provider: .kimi) == .kimi)
+        #expect(ProviderChoice.kimi.provider == .kimi)
+    }
+
+    @Test
+    func `compact Kimi widgets keep established row fit while large widgets show all quotas`() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .kimi,
+            updatedAt: now,
+            primary: RateWindow(usedPercent: 25, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
+            secondary: RateWindow(usedPercent: 50, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
+            tertiary: nil,
+            usageRows: [
+                WidgetSnapshot.WidgetUsageRowSnapshot(id: "primary", title: "Weekly", percentLeft: 75),
+                WidgetSnapshot.WidgetUsageRowSnapshot(id: "secondary", title: "Rate Limit", percentLeft: 50),
+                WidgetSnapshot.WidgetUsageRowSnapshot(id: "kimi-monthly", title: "Monthly", percentLeft: 25),
+                WidgetSnapshot.WidgetUsageRowSnapshot(id: "kimi-code-7d", title: "Code 7-day", percentLeft: 90),
+            ],
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [])
+
+        let smallRows = WidgetUsageRow.rows(
+            for: entry,
+            limit: WidgetUsageRow.smallWidgetRowLimit(for: entry))
+        let mediumRows = WidgetUsageRow.rows(
+            for: entry,
+            limit: WidgetUsageRow.mediumWidgetRowLimit(for: entry))
+        let largeRows = WidgetUsageRow.rows(for: entry)
+
+        #expect(WidgetUsageRow.smallWidgetRowLimit(for: entry) == 3)
+        #expect(WidgetUsageRow.mediumWidgetRowLimit(for: entry) == 3)
+        #expect(smallRows.map(\.id) == ["primary", "secondary", "kimi-monthly"])
+        #expect(mediumRows == smallRows)
+        #expect(largeRows.map(\.id) == ["primary", "secondary", "kimi-monthly", "kimi-code-7d"])
+    }
+
+    @Test
     func `provider choice excludes unsupported Chutes widgets`() {
         #expect(ProviderChoice(provider: .chutes) == nil)
+        #expect(ProviderChoice(provider: .sub2api) == nil)
     }
 
     @Test
@@ -261,6 +465,42 @@ struct CodexBarWidgetProviderTests {
         let snapshot = WidgetSnapshot(entries: [entry], enabledProviders: [.alibabatokenplan], generatedAt: now)
 
         #expect(CodexBarSwitcherTimelineProvider.supportedProviders(from: snapshot) == [.alibabatokenplan])
+    }
+
+    @Test
+    func `supported providers keep Mistral when it is the only enabled provider`() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .mistral,
+            updatedAt: now,
+            primary: nil,
+            secondary: nil,
+            tertiary: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [])
+        let snapshot = WidgetSnapshot(entries: [entry], enabledProviders: [.mistral], generatedAt: now)
+
+        #expect(CodexBarSwitcherTimelineProvider.supportedProviders(from: snapshot) == [.mistral])
+    }
+
+    @Test
+    func `supported providers keep Kimi when it is the only enabled provider`() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .kimi,
+            updatedAt: now,
+            primary: RateWindow(usedPercent: 25, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
+            secondary: RateWindow(usedPercent: 50, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
+            tertiary: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [])
+        let snapshot = WidgetSnapshot(entries: [entry], enabledProviders: [.kimi], generatedAt: now)
+
+        #expect(CodexBarSwitcherTimelineProvider.supportedProviders(from: snapshot) == [.kimi])
     }
 
     @Test
@@ -325,6 +565,50 @@ struct CodexBarWidgetProviderTests {
         let rows = WidgetUsageRow.rows(for: entry)
 
         #expect(rows == [WidgetUsageRow(id: "weekly", title: "Weekly", percentLeft: 75)])
+    }
+
+    @Test
+    func `codex widget session cap lifts at weekly reset without a new snapshot`() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let weeklyReset = now.addingTimeInterval(3600)
+        let sessionWindow = RateWindow(
+            usedPercent: 1,
+            windowMinutes: 300,
+            resetsAt: now.addingTimeInterval(1800),
+            resetDescription: nil)
+        let weeklyWindow = RateWindow(
+            usedPercent: 100,
+            windowMinutes: 10080,
+            resetsAt: weeklyReset,
+            resetDescription: nil)
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .codex,
+            updatedAt: now.addingTimeInterval(-7200),
+            primary: sessionWindow,
+            secondary: weeklyWindow,
+            tertiary: nil,
+            usageRows: [
+                WidgetSnapshot.WidgetUsageRowSnapshot(
+                    id: "session",
+                    title: "Session",
+                    percentLeft: 99,
+                    window: sessionWindow),
+                WidgetSnapshot.WidgetUsageRowSnapshot(
+                    id: "weekly",
+                    title: "Weekly",
+                    percentLeft: 0,
+                    window: weeklyWindow),
+            ],
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [])
+
+        let capped = WidgetUsageRow.rows(for: entry, now: now)
+        let reset = WidgetUsageRow.rows(for: entry, now: weeklyReset)
+
+        #expect(capped.map(\.percentLeft) == [0, 0])
+        #expect(reset.map(\.percentLeft) == [99, 0])
     }
 
     @Test
@@ -542,11 +826,25 @@ struct CodexBarWidgetProviderTests {
             provider: .codex,
             primaryUsed: 20,
             secondaryUsed: 30,
+            primaryReset: now.addingTimeInterval(360),
+            secondaryReset: now.addingTimeInterval(420))
+
+        #expect(BurnDownRefreshSchedule.nextRefresh(snapshot: snapshot, provider: .codex, now: now)
+            == now.addingTimeInterval(361))
+    }
+
+    @Test
+    func `burn down refresh clamps to minimum interval`() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let snapshot = Self.burnSnapshot(
+            provider: .codex,
+            primaryUsed: 20,
+            secondaryUsed: 30,
             primaryReset: now.addingTimeInterval(60),
             secondaryReset: now.addingTimeInterval(120))
 
         #expect(BurnDownRefreshSchedule.nextRefresh(snapshot: snapshot, provider: .codex, now: now)
-            == now.addingTimeInterval(61))
+            == now.addingTimeInterval(300))
     }
 
     @Test
@@ -596,5 +894,109 @@ struct CodexBarWidgetProviderTests {
             tokenUsage: nil,
             dailyUsage: [])
         return WidgetSnapshot(entries: [entry], generatedAt: entry.updatedAt)
+    }
+}
+
+extension CodexBarWidgetProviderTests {
+    @Test
+    func `provider choice supports Cursor`() {
+        #expect(ProviderChoice(provider: .cursor) == .cursor)
+        #expect(ProviderChoice.cursor.provider == .cursor)
+    }
+
+    @Test
+    func `supported providers keep Cursor when it is the only enabled provider`() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .cursor,
+            updatedAt: now,
+            primary: RateWindow(usedPercent: 25, windowMinutes: 43200, resetsAt: nil, resetDescription: nil),
+            secondary: nil,
+            tertiary: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: nil,
+            dailyUsage: [])
+        let snapshot = WidgetSnapshot(entries: [entry], enabledProviders: [.cursor], generatedAt: now)
+
+        #expect(CodexBarSwitcherTimelineProvider.supportedProviders(from: snapshot) == [.cursor])
+    }
+
+    @Test
+    func `widget token titles disclose stale age for today and history rows`() {
+        let entryUpdatedAt = Date()
+        let staleToken = WidgetSnapshot.TokenUsageSummary(
+            sessionCostUSD: 1.25,
+            sessionTokens: 4200,
+            last30DaysCostUSD: 12.50,
+            last30DaysTokens: 42000,
+            updatedAt: entryUpdatedAt.addingTimeInterval(-45 * 60))
+        let freshToken = WidgetSnapshot.TokenUsageSummary(
+            sessionCostUSD: 1.25,
+            sessionTokens: 4200,
+            last30DaysCostUSD: 12.50,
+            last30DaysTokens: 42000,
+            updatedAt: entryUpdatedAt.addingTimeInterval(-5 * 60))
+
+        let todayTitle = WidgetFormat.tokenRowTitle(
+            staleToken.sessionLabel,
+            summary: staleToken,
+            entryUpdatedAt: entryUpdatedAt)
+        let historyTitle = WidgetFormat.tokenRowTitle(
+            staleToken.last30DaysLabel,
+            summary: staleToken,
+            entryUpdatedAt: entryUpdatedAt)
+
+        #expect(todayTitle.hasPrefix("Today · "))
+        #expect(historyTitle.hasPrefix("30d · "))
+        #expect(WidgetFormat.tokenRowTitle(
+            freshToken.sessionLabel,
+            summary: freshToken,
+            entryUpdatedAt: entryUpdatedAt) == "Today")
+
+        let entry = WidgetSnapshot.ProviderEntry(
+            provider: .codex,
+            updatedAt: entryUpdatedAt,
+            primary: nil,
+            secondary: nil,
+            tertiary: nil,
+            creditsRemaining: nil,
+            codeReviewRemainingPercent: nil,
+            tokenUsage: staleToken,
+            dailyUsage: [])
+        let todayMetric = CompactMetricFormatter.display(for: entry, metric: .todayCost)
+        let historyMetric = CompactMetricFormatter.display(for: entry, metric: .last30DaysCost)
+
+        #expect(todayMetric.label.hasPrefix("Today API est. · not billed · "))
+        #expect(historyMetric.label.hasPrefix("30d API est. · not billed · "))
+        #expect(CompactMetricFormatter.costMetricLabel("7d", provider: .codex) == "7d API est. · not billed")
+        #expect(CompactMetricFormatter.costMetricLabel("90d", provider: .codex) == "90d API est. · not billed")
+        #expect(CompactMetricFormatter.costMetricLabel("This month", provider: .codex) ==
+            "This month API est. · not billed")
+        #expect(CompactMetricFormatter.costMetricLabel(
+            "This month API est. · not billed",
+            provider: .codex) == "This month API est. · not billed")
+    }
+
+    @Test
+    func `usage history chart mode requires every point to expose cost`() {
+        let costPoints = [
+            WidgetSnapshot.DailyUsagePoint(dayKey: "2026-07-01", totalTokens: 100, costUSD: 1.2),
+            WidgetSnapshot.DailyUsagePoint(dayKey: "2026-07-02", totalTokens: 200, costUSD: 2.4),
+        ]
+        let tokenPoints = [
+            WidgetSnapshot.DailyUsagePoint(dayKey: "2026-07-01", totalTokens: 100, costUSD: nil),
+            WidgetSnapshot.DailyUsagePoint(dayKey: "2026-07-02", totalTokens: 200, costUSD: nil),
+        ]
+        let mixedPoints = [
+            WidgetSnapshot.DailyUsagePoint(dayKey: "2026-07-01", totalTokens: 100, costUSD: 1.2),
+            WidgetSnapshot.DailyUsagePoint(dayKey: "2026-07-02", totalTokens: 200, costUSD: nil),
+        ]
+        let emptyPoints: [WidgetSnapshot.DailyUsagePoint] = []
+
+        #expect(UsageHistoryChartMode.isCostMode(costPoints) == true)
+        #expect(UsageHistoryChartMode.isCostMode(tokenPoints) == false)
+        #expect(UsageHistoryChartMode.isCostMode(mixedPoints) == false)
+        #expect(UsageHistoryChartMode.isCostMode(emptyPoints) == false)
     }
 }

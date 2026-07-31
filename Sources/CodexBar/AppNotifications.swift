@@ -79,6 +79,7 @@ final class AppNotifications {
         self.scheduledReplacementGenerations[idPrefix] = generation
 
         Task { @MainActor in
+            var addedIDs: [String] = []
             let existingIDs = await self.pendingNotificationIdentifiers(center: center)
                 .filter { $0.hasPrefix(requestPrefix) }
             guard self.scheduledReplacementGenerations[idPrefix] == generation else { return }
@@ -100,7 +101,10 @@ final class AppNotifications {
 
             let now = Date()
             for notification in notifications where notification.fireDate > now {
-                guard self.scheduledReplacementGenerations[idPrefix] == generation else { return }
+                guard self.scheduledReplacementGenerations[idPrefix] == generation else {
+                    center.removePendingNotificationRequests(withIdentifiers: addedIDs)
+                    return
+                }
                 let content = UNMutableNotificationContent()
                 content.title = notification.title
                 content.body = notification.body
@@ -115,8 +119,9 @@ final class AppNotifications {
                     trigger: trigger)
                 do {
                     try await center.add(request)
+                    addedIDs.append(request.identifier)
                     guard self.scheduledReplacementGenerations[idPrefix] == generation else {
-                        center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
+                        center.removePendingNotificationRequests(withIdentifiers: addedIDs)
                         return
                     }
                 } catch {

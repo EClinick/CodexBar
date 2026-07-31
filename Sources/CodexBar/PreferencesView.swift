@@ -2,58 +2,40 @@ import AppKit
 import CodexBarCore
 import SwiftUI
 
-enum PreferencesTab: String, CaseIterable, Hashable {
+/// Sidebar destinations of the settings window: fixed app panes plus one entry per provider.
+enum SettingsPane: Hashable {
     case general
-    case providers
-    case display
+    case usageSpend
+    case notifications
+    case menuBar
+    case menu
     case advanced
+    case hooks
     case about
     case debug
+    case provider(UsageProvider)
 
-    static let defaultWidth: CGFloat = 546
-    static let providersWidth: CGFloat = 792
-    static let windowHeight: CGFloat = 662
+    static let windowWidth: CGFloat = 880
+    static let windowHeight: CGFloat = 620
+    static let windowMinWidth: CGFloat = 800
+    static let windowMinHeight: CGFloat = 540
+    static let sidebarWidth: CGFloat = 260
+    static let detailMaxWidth: CGFloat = 780
 
     var title: String {
         switch self {
         case .general: L("tab_general")
-        case .providers: L("tab_providers")
-        case .display: L("tab_display")
+        case .usageSpend: L("tab_usage_spend")
+        case .notifications: L("tab_notifications")
+        case .menuBar: L("tab_menu_bar")
+        case .menu: L("tab_menu")
         case .advanced: L("tab_advanced")
+        case .hooks: L("tab_hooks")
         case .about: L("tab_about")
         case .debug: L("tab_debug")
+        case let .provider(provider):
+            ProviderDescriptorRegistry.descriptor(for: provider).metadata.displayName
         }
-    }
-
-    var preferredWidth: CGFloat {
-        self == .providers ? PreferencesTab.providersWidth : PreferencesTab.defaultWidth
-    }
-
-    var preferredHeight: CGFloat {
-        PreferencesTab.windowHeight
-    }
-}
-
-struct PreferencesTabLayoutCoordinator {
-    private(set) var bindingHandledTab: PreferencesTab?
-
-    mutating func beginBindingSelection(from current: PreferencesTab, to requested: PreferencesTab) -> Bool {
-        guard current != requested else { return false }
-        self.bindingHandledTab = requested
-        return true
-    }
-
-    mutating func layoutForObservedSelection(
-        _ observed: PreferencesTab,
-        current: PreferencesTab) -> PreferencesTab?
-    {
-        guard observed == current else { return nil }
-        defer { self.bindingHandledTab = nil }
-        return self.bindingHandledTab == observed ? nil : observed
-    }
-
-    func layoutForDeferredSelection(_ requested: PreferencesTab, current: PreferencesTab) -> PreferencesTab? {
-        current == requested ? requested : nil
     }
 }
 
@@ -67,9 +49,6 @@ struct PreferencesView: View {
     let codexAccountPromotionCoordinator: CodexAccountPromotionCoordinator
     let runProviderLoginFlow: @MainActor (UsageProvider) async -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @State private var contentWidth: CGFloat = PreferencesTab.general.preferredWidth
-    @State private var contentHeight: CGFloat = PreferencesTab.general.preferredHeight
-    @State private var tabLayoutCoordinator = PreferencesTabLayoutCoordinator()
 
     init(
         settings: SettingsStore,
@@ -94,117 +73,108 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        TabView(selection: self.tabSelectionBinding) {
-            GeneralPane(settings: self.settings, store: self.store)
-                .tabItem { Label(L("tab_general"), systemImage: "gearshape") }
-                .tag(PreferencesTab.general)
+        HStack(spacing: 0) {
+            // Golden Gate-style sidebar: edge-to-edge material with a hairline separator,
+            // no floating card chrome. The material ignores the safe area so it runs up
+            // behind the transparent titlebar.
+            SettingsSidebarView(settings: self.settings, store: self.store, selection: self.$selection.pane)
+                .frame(width: SettingsPane.sidebarWidth)
+                .background {
+                    SettingsSidebarMaterial()
+                        .ignoresSafeArea()
+                }
 
+            Divider()
+                .ignoresSafeArea()
+
+            self.detailView
+                .frame(
+                    maxWidth: SettingsPane.detailMaxWidth,
+                    maxHeight: .infinity,
+                    alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(
+            minWidth: SettingsPane.windowMinWidth,
+            idealWidth: SettingsPane.windowWidth,
+            maxWidth: .infinity,
+            minHeight: SettingsPane.windowMinHeight,
+            idealHeight: SettingsPane.windowHeight,
+            maxHeight: .infinity)
+        .id(self.settings.appLanguage)
+        .background {
+            SettingsWindowAppearanceBridge(colorScheme: self.colorScheme, windowTitle: self.selection.pane.title)
+                .allowsHitTesting(false)
+        }
+        .onAppear {
+            self.ensureValidSelection()
+        }
+        .onChange(of: self.settings.debugMenuEnabled) { _, _ in
+            self.ensureValidSelection()
+        }
+        .onChange(of: self.settings.shouldRequestAdaptiveActivityScanConsent) { _, shouldRequest in
+            guard shouldRequest else { return }
+            AdaptiveActivityConsentPresenter.presentIfNeeded(settings: self.settings)
+        }
+    }
+
+    @ViewBuilder
+    private var detailView: some View {
+        switch self.selection.pane {
+        case .general:
+            GeneralPane(settings: self.settings)
+        case .usageSpend:
+            SpendDashboardPane(settings: self.settings, store: self.store)
+        case .notifications:
+            NotificationsPane(settings: self.settings)
+        case .menuBar:
+            MenuBarPane(settings: self.settings, store: self.store)
+        case .menu:
+            MenuPane(settings: self.settings, store: self.store)
+        case .advanced:
+            AdvancedPane(settings: self.settings, store: self.store)
+        case .hooks:
+            HooksPane(settings: self.settings)
+        case .about:
+            AboutPane(updater: self.updater)
+        case .debug:
+            DebugPane(settings: self.settings, store: self.store)
+        case let .provider(provider):
             ProvidersPane(
+                provider: provider,
                 settings: self.settings,
                 store: self.store,
                 managedCodexAccountCoordinator: self.managedCodexAccountCoordinator,
                 codexAccountPromotionCoordinator: self.codexAccountPromotionCoordinator,
                 runProviderLoginFlow: self.runProviderLoginFlow)
-                .tabItem { Label(L("tab_providers"), systemImage: "square.grid.2x2") }
-                .tag(PreferencesTab.providers)
-
-            DisplayPane(settings: self.settings, store: self.store)
-                .tabItem { Label(L("tab_display"), systemImage: "eye") }
-                .tag(PreferencesTab.display)
-
-            AdvancedPane(settings: self.settings)
-                .tabItem { Label(L("tab_advanced"), systemImage: "slider.horizontal.3") }
-                .tag(PreferencesTab.advanced)
-
-            AboutPane(updater: self.updater)
-                .tabItem { Label(L("tab_about"), systemImage: "info.circle") }
-                .tag(PreferencesTab.about)
-
-            if self.settings.debugMenuEnabled {
-                DebugPane(settings: self.settings, store: self.store)
-                    .tabItem { Label(L("tab_debug"), systemImage: "ladybug") }
-                    .tag(PreferencesTab.debug)
-            }
-        }
-        .id(self.settings.appLanguage)
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .frame(width: self.contentWidth, height: self.contentHeight)
-        .background {
-            SettingsWindowAppearanceBridge(colorScheme: self.colorScheme)
-                .allowsHitTesting(false)
-        }
-        .onAppear {
-            self.updateLayout(for: self.selection.tab, animate: false)
-            self.ensureValidTabSelection()
-        }
-        .onChange(of: self.selection.tab) { _, newValue in
-            guard let tab = self.tabLayoutCoordinator.layoutForObservedSelection(
-                newValue,
-                current: self.selection.tab)
-            else { return }
-            self.updateLayout(for: tab, animate: true)
-        }
-        .onChange(of: self.settings.debugMenuEnabled) { _, _ in
-            self.ensureValidTabSelection()
+                .id(provider)
         }
     }
 
-    private var tabSelectionBinding: Binding<PreferencesTab> {
-        Binding(
-            get: { self.selection.tab },
-            set: { newValue in
-                let oldValue = self.selection.tab
-                guard self.tabLayoutCoordinator.beginBindingSelection(from: oldValue, to: newValue) else { return }
-                self.selection.tab = newValue
-                Task { @MainActor in
-                    guard let tab = self.tabLayoutCoordinator.layoutForDeferredSelection(
-                        newValue,
-                        current: self.selection.tab)
-                    else { return }
-                    self.updateLayout(for: tab, animate: true)
-                }
-            })
-    }
-
-    private func updateLayout(for tab: PreferencesTab, animate: Bool) {
-        let change = {
-            self.contentWidth = tab.preferredWidth
-            self.contentHeight = tab.preferredHeight
+    private func ensureValidSelection() {
+        if !self.settings.debugMenuEnabled, self.selection.pane == .debug {
+            self.selection.pane = .general
         }
-        if animate {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) { change() }
-        } else {
-            change()
-        }
-        Self.resizeSettingsWindow(width: tab.preferredWidth, height: tab.preferredHeight, animate: animate)
     }
+}
 
-    private static let settingsWindowIdentifier = "com_apple_SwiftUI_Settings_window"
-    private static let knownTabTitles = Set(PreferencesTab.allCases.map(\.title))
+@MainActor
+enum SettingsWindowSizing {
+    static func enforceMinimumSize(_ window: NSWindow) {
+        let toolbarHeight = max(0, window.frame.height - window.contentLayoutRect.height)
+        let minimumSize = NSSize(
+            width: SettingsPane.windowMinWidth,
+            height: SettingsPane.windowMinHeight + toolbarHeight)
+        window.minSize = minimumSize
 
-    private static func settingsWindow() -> NSWindow? {
-        NSApp.windows.first(where: {
-            $0.identifier?.rawValue == self.settingsWindowIdentifier
-                || self.knownTabTitles.contains($0.title)
-        })
-    }
-
-    private static func resizeSettingsWindow(width: CGFloat, height: CGFloat, animate: Bool) {
-        guard let window = settingsWindow() else { return }
-        let toolbarHeight = window.frame.height - window.contentLayoutRect.height
-        guard toolbarHeight > 0 else { return }
-        let newSize = NSSize(width: width, height: height + toolbarHeight)
-        var frame = window.frame
-        frame.origin.y += frame.size.height - newSize.height
-        frame.size = newSize
-        window.setFrame(frame, display: true, animate: animate)
-    }
-
-    private func ensureValidTabSelection() {
-        if !self.settings.debugMenuEnabled, self.selection.tab == .debug {
-            self.selection.tab = .general
-            self.updateLayout(for: .general, animate: true)
+        if window.frame.width < minimumSize.width || window.frame.height < minimumSize.height {
+            var frame = window.frame
+            let repairedSize = NSSize(
+                width: max(frame.width, minimumSize.width),
+                height: max(frame.height, minimumSize.height))
+            frame.origin.y += frame.height - repairedSize.height
+            frame.size = repairedSize
+            window.setFrame(frame, display: true)
         }
     }
 }
@@ -219,11 +189,15 @@ enum SettingsWindowAppearance {
         application: NSApplication = NSApp,
         scheduleReset: ResetScheduler = Self.scheduleReset)
     {
+        SettingsWindowSizing.enforceMinimumSize(window)
         window.appearanceSource = application
         // Pulse the exact effective appearance so the native toolbar redraws without
         // dropping inherited accessibility attributes, then restore KVO inheritance.
         window.appearance = application.effectiveAppearance
         scheduleReset { [weak window] in
+            if let window {
+                SettingsWindowSizing.enforceMinimumSize(window)
+            }
             window?.appearance = nil
             window?.viewsNeedDisplay = true
         }
@@ -240,13 +214,14 @@ enum SettingsWindowAppearance {
 @MainActor
 struct SettingsWindowAppearanceBridge: NSViewRepresentable {
     let colorScheme: ColorScheme
+    let windowTitle: String
 
     func makeNSView(context: Context) -> SettingsWindowAppearanceView {
         SettingsWindowAppearanceView()
     }
 
     func updateNSView(_ nsView: SettingsWindowAppearanceView, context: Context) {
-        nsView.refreshWindowAppearance(for: self.colorScheme)
+        nsView.refreshWindowAppearance(for: self.colorScheme, windowTitle: self.windowTitle)
     }
 }
 
@@ -254,6 +229,7 @@ struct SettingsWindowAppearanceBridge: NSViewRepresentable {
 final class SettingsWindowAppearanceView: NSView {
     private let scheduleReset: SettingsWindowAppearance.ResetScheduler
     private var colorScheme: ColorScheme?
+    private var windowTitle: String?
 
     init(scheduleReset: @escaping SettingsWindowAppearance.ResetScheduler = SettingsWindowAppearance.scheduleReset) {
         self.scheduleReset = scheduleReset
@@ -265,19 +241,100 @@ final class SettingsWindowAppearanceView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didUpdateNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(self.windowDidUpdate(_:)),
+                name: NSWindow.didUpdateNotification,
+                object: window)
+        }
+        self.configureWindowStyle()
         self.refreshWindowAppearance()
     }
 
-    func refreshWindowAppearance(for colorScheme: ColorScheme) {
-        guard self.colorScheme != colorScheme else { return }
+    @objc private func windowDidUpdate(_ notification: Notification) {
+        self.configureWindowStyle()
+    }
+
+    func refreshWindowAppearance(for colorScheme: ColorScheme, windowTitle: String? = nil) {
+        let colorSchemeChanged = self.colorScheme != colorScheme
+        let windowTitleChanged = self.windowTitle != windowTitle
+        guard colorSchemeChanged || windowTitleChanged else { return }
         self.colorScheme = colorScheme
-        self.refreshWindowAppearance()
+        self.windowTitle = windowTitle
+
+        guard let window else { return }
+        self.configureWindowStyle()
+        if windowTitleChanged, let windowTitle {
+            window.title = windowTitle
+        }
+        if colorSchemeChanged {
+            SettingsWindowAppearance.refresh(window, scheduleReset: self.scheduleReset)
+        }
     }
 
     private func refreshWindowAppearance() {
         guard let window else { return }
+        self.configureWindowStyle()
+        if let windowTitle {
+            window.title = windowTitle
+        }
         SettingsWindowAppearance.refresh(window, scheduleReset: self.scheduleReset)
+    }
+
+    override func layout() {
+        super.layout()
+        self.configureWindowStyle()
+    }
+
+    private func configureWindowStyle() {
+        guard let window else { return }
+        if !window.styleMask.contains(.resizable) {
+            window.styleMask.insert(.resizable)
+        }
+        if !window.titlebarAppearsTransparent {
+            window.titlebarAppearsTransparent = true
+        }
+        if window.titleVisibility != .visible {
+            window.titleVisibility = .visible
+        }
+        if window.titlebarSeparatorStyle != .none {
+            window.titlebarSeparatorStyle = .none
+        }
+        if window.toolbar != nil {
+            window.toolbar = nil
+        }
+        // Full-size content lets the sidebar material extend behind the titlebar so the
+        // edge-to-edge sidebar reaches the top of the window; content stays below the
+        // titlebar via the safe area.
+        if !window.styleMask.contains(.fullSizeContentView) {
+            window.styleMask.insert(.fullSizeContentView)
+        }
+    }
+}
+
+@MainActor
+private struct SettingsSidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        self.configure(view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        self.configure(nsView)
+    }
+
+    private func configure(_ view: NSVisualEffectView) {
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
     }
 }

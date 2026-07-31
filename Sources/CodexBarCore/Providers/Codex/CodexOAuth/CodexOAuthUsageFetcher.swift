@@ -7,6 +7,7 @@ public struct CodexUsageResponse: Decodable, Sendable {
     public let planType: PlanType?
     public let rateLimit: RateLimitDetails?
     public let credits: CreditDetails?
+    public let individualLimit: SpendControlLimitSnapshot?
     /// Model-specific limits (e.g. GPT-5.3-Codex-Spark) that sit alongside the primary/weekly windows.
     public let additionalRateLimits: [AdditionalRateLimit]?
     let additionalRateLimitsDecodeFailed: Bool
@@ -15,6 +16,8 @@ public struct CodexUsageResponse: Decodable, Sendable {
         case planType = "plan_type"
         case rateLimit = "rate_limit"
         case credits
+        case individualLimit = "individual_limit"
+        case individualLimitCamel = "individualLimit"
         case additionalRateLimits = "additional_rate_limits"
     }
 
@@ -23,6 +26,10 @@ public struct CodexUsageResponse: Decodable, Sendable {
         self.planType = try? container.decodeIfPresent(PlanType.self, forKey: .planType)
         self.rateLimit = try? container.decodeIfPresent(RateLimitDetails.self, forKey: .rateLimit)
         self.credits = try? container.decodeIfPresent(CreditDetails.self, forKey: .credits)
+        self.individualLimit = (try? container.decodeIfPresent(
+            SpendControlLimitSnapshot.self,
+            forKey: .individualLimit))
+            ?? (try? container.decodeIfPresent(SpendControlLimitSnapshot.self, forKey: .individualLimitCamel))
         // Optional and additive: missing/malformed extra limits must never disturb primary/weekly mapping.
         // Decode per element so a single malformed entry cannot discard its valid siblings; a non-array
         // value (or absent field) leaves `additionalRateLimits` nil and primary/weekly mapping untouched.
@@ -109,12 +116,15 @@ public struct CodexUsageResponse: Decodable, Sendable {
     public struct RateLimitDetails: Decodable, Sendable {
         public let primaryWindow: WindowSnapshot?
         public let secondaryWindow: WindowSnapshot?
+        public let individualLimit: SpendControlLimitSnapshot?
         let primaryWindowDecodeFailed: Bool
         let secondaryWindowDecodeFailed: Bool
 
         enum CodingKeys: String, CodingKey {
             case primaryWindow = "primary_window"
             case secondaryWindow = "secondary_window"
+            case individualLimit = "individual_limit"
+            case individualLimitCamel = "individualLimit"
         }
 
         public init(from decoder: Decoder) throws {
@@ -136,6 +146,10 @@ public struct CodexUsageResponse: Decodable, Sendable {
                 self.secondaryWindow = nil
                 self.secondaryWindowDecodeFailed = secondaryHadValue
             }
+            self.individualLimit = (try? container.decodeIfPresent(
+                SpendControlLimitSnapshot.self,
+                forKey: .individualLimit))
+                ?? (try? container.decodeIfPresent(SpendControlLimitSnapshot.self, forKey: .individualLimitCamel))
         }
 
         private static func hasNonNilValue(
@@ -217,6 +231,64 @@ public struct CodexUsageResponse: Decodable, Sendable {
         }
     }
 
+    public struct SpendControlLimitSnapshot: Decodable, Sendable {
+        public let limit: Double?
+        public let used: Double?
+        public let remainingPercent: Double?
+        public let resetsAt: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case limit
+            case used
+            case remainingPercent
+            case remainingPercentSnake = "remaining_percent"
+            case resetsAt
+            case resetsAtSnake = "resets_at"
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.limit = Self.decodeFlexibleDouble(container, forKey: .limit)
+            self.used = Self.decodeFlexibleDouble(container, forKey: .used)
+            self.remainingPercent = Self.decodeFlexibleDouble(container, forKey: .remainingPercent)
+                ?? Self.decodeFlexibleDouble(container, forKey: .remainingPercentSnake)
+            self.resetsAt = Self.decodeFlexibleInt(container, forKey: .resetsAt)
+                ?? Self.decodeFlexibleInt(container, forKey: .resetsAtSnake)
+        }
+
+        private static func decodeFlexibleDouble(
+            _ container: KeyedDecodingContainer<CodingKeys>,
+            forKey key: CodingKeys) -> Double?
+        {
+            if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                return value
+            }
+            if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+                return Double(value)
+            }
+            if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                return Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            return nil
+        }
+
+        private static func decodeFlexibleInt(
+            _ container: KeyedDecodingContainer<CodingKeys>,
+            forKey key: CodingKeys) -> Int?
+        {
+            if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+                return value
+            }
+            if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                return Int(value)
+            }
+            if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                return Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            return nil
+        }
+    }
+
     public struct CreditDetails: Decodable, Sendable {
         public let hasCredits: Bool
         public let unlimited: Bool
@@ -279,9 +351,24 @@ public enum CodexOAuthUsageFetcher {
         accountId: String?,
         env: [String: String] = ProcessInfo.processInfo.environment) async throws -> CodexUsageResponse
     {
-        var request = URLRequest(url: Self.resolveUsageURL(env: env))
+        try await self.fetchUsage(
+            accessToken: accessToken,
+            accountId: accountId,
+            env: env,
+            session: CodexAuthenticatedHTTPTransport.current)
+    }
+
+    public static func fetchUsage(
+        accessToken: String,
+        accountId: String?,
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        session transport: any ProviderHTTPTransport) async throws -> CodexUsageResponse
+    {
+        var request = URLRequest(
+            url: Self.resolveUsageURL(env: env),
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 30)
         request.httpMethod = "GET"
-        request.timeoutInterval = 30
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("CodexBar", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -291,7 +378,7 @@ public enum CodexOAuthUsageFetcher {
         }
 
         do {
-            let response = try await ProviderHTTPClient.shared.response(for: request)
+            let response = try await transport.response(for: request)
             let data = response.data
 
             switch response.statusCode {
@@ -309,7 +396,12 @@ public enum CodexOAuthUsageFetcher {
             }
         } catch let error as CodexOAuthFetchError {
             throw error
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
             throw CodexOAuthFetchError.networkError(error)
         }
     }
@@ -318,11 +410,28 @@ public enum CodexOAuthUsageFetcher {
         accessToken: String,
         accountId: String?,
         env: [String: String] = ProcessInfo.processInfo.environment,
+        timeout: TimeInterval = 4) async throws -> CodexRateLimitResetCreditsSnapshot
+    {
+        try await self.fetchRateLimitResetCredits(
+            accessToken: accessToken,
+            accountId: accountId,
+            env: env,
+            timeout: timeout,
+            session: CodexAuthenticatedHTTPTransport.current)
+    }
+
+    public static func fetchRateLimitResetCredits(
+        accessToken: String,
+        accountId: String?,
+        env: [String: String] = ProcessInfo.processInfo.environment,
         timeout: TimeInterval = 4,
-        session transport: any ProviderHTTPTransport = ProviderHTTPClient.shared) async throws
+        session transport: any ProviderHTTPTransport) async throws
         -> CodexRateLimitResetCreditsSnapshot
     {
-        var request = URLRequest(url: Self.resolveRateLimitResetCreditsURL(env: env), timeoutInterval: timeout)
+        var request = URLRequest(
+            url: Self.resolveRateLimitResetCreditsURL(env: env),
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: timeout)
         request.httpMethod = "GET"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("CodexBar", forHTTPHeaderField: "User-Agent")
@@ -348,7 +457,7 @@ public enum CodexOAuthUsageFetcher {
                         throw CodexOAuthFetchError.invalidResponse
                     }
                     return CodexRateLimitResetCreditsSnapshot(
-                        credits: payload.credits,
+                        credits: payload.credits.map(\.model),
                         availableCount: payload.availableCount,
                         updatedAt: Date())
                 } catch {
@@ -362,7 +471,12 @@ public enum CodexOAuthUsageFetcher {
             }
         } catch let error as CodexOAuthFetchError {
             throw error
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
             throw CodexOAuthFetchError.networkError(error)
         }
     }
@@ -446,12 +560,49 @@ public enum CodexOAuthUsageFetcher {
     }
 
     private struct RateLimitResetCreditsResponse: Decodable {
-        let credits: [CodexRateLimitResetCredit]
+        let credits: [RateLimitResetCreditResponse]
         let availableCount: Int
 
         private enum CodingKeys: String, CodingKey {
             case credits
             case availableCount = "available_count"
+        }
+    }
+
+    private struct RateLimitResetCreditResponse: Decodable {
+        let id: String
+        let resetType: String
+        let status: CodexRateLimitResetCreditStatus
+        let grantedAt: Date
+        let expiresAt: Date?
+        let redeemStartedAt: Date?
+        let redeemedAt: Date?
+        let title: String?
+        let description: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case resetType = "reset_type"
+            case status
+            case grantedAt = "granted_at"
+            case expiresAt = "expires_at"
+            case redeemStartedAt = "redeem_started_at"
+            case redeemedAt = "redeemed_at"
+            case title
+            case description
+        }
+
+        var model: CodexRateLimitResetCredit {
+            CodexRateLimitResetCredit(
+                id: self.id,
+                resetType: self.resetType,
+                status: self.status,
+                grantedAt: self.grantedAt,
+                expiresAt: self.expiresAt,
+                redeemStartedAt: self.redeemStartedAt,
+                redeemedAt: self.redeemedAt,
+                title: self.title,
+                description: self.description)
         }
     }
 
@@ -490,15 +641,15 @@ extension CodexOAuthUsageFetcher {
 
     static func _decodeRateLimitResetCreditsForTesting(
         _ data: Data,
-        updatedAt: Date = Date()) throws -> CodexRateLimitResetCreditsSnapshot
+        now: Date = Date()) throws -> CodexRateLimitResetCreditsSnapshot
     {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom(Self.decodeISO8601Date)
         let payload = try decoder.decode(RateLimitResetCreditsResponse.self, from: data)
         return CodexRateLimitResetCreditsSnapshot(
-            credits: payload.credits,
+            credits: payload.credits.map(\.model),
             availableCount: payload.availableCount,
-            updatedAt: updatedAt)
+            updatedAt: now)
     }
 }
 #endif

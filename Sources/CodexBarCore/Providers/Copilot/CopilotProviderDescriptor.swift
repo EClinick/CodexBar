@@ -26,10 +26,18 @@ public enum CopilotProviderDescriptor {
             branding: ProviderBranding(
                 iconStyle: .copilot,
                 iconResourceName: "ProviderIcon-copilot",
-                color: ProviderColor(red: 168 / 255, green: 85 / 255, blue: 247 / 255)),
+                color: ProviderColor(red: 168 / 255, green: 85 / 255, blue: 247 / 255),
+                confettiPalette: [
+                    ProviderColor(hex: 0x8534F3),
+                    ProviderColor(hex: 0xF08A3A),
+                    ProviderColor(hex: 0xC898FD),
+                ]),
             tokenCost: ProviderTokenCostConfig(
                 supportsTokenCost: false,
                 noDataMessage: { "Copilot cost summary is not supported." }),
+            pace: ProviderPaceCapability(
+                resetWindowPace: .resetDatePresent,
+                inferredMonthlyDuration: .windowDurationMissing),
             fetchPlan: ProviderFetchPlan(
                 sourceModes: [.auto, .api],
                 pipeline: ProviderFetchPipeline(resolveStrategies: { _ in [CopilotAPIFetchStrategy()] })),

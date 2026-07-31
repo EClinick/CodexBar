@@ -25,11 +25,17 @@ struct SettingsStoreCoverageTests {
         #expect(ordered.first == .zai)
         #expect(ordered.contains(.minimax))
 
+        let configRevisionBeforeOrder = settings.configRevision
+        let backgroundRevisionBeforeOrder = settings.backgroundWorkSettingsRevision
         settings.moveProvider(fromOffsets: IndexSet(integer: 0), toOffset: 2)
         #expect(settings.orderedProviders() != ordered)
+        #expect(settings.configRevision == configRevisionBeforeOrder + 1)
+        #expect(settings.backgroundWorkSettingsRevision == backgroundRevisionBeforeOrder)
 
         let metadata = ProviderRegistry.shared.metadata
+        let backgroundRevisionBeforeEnablement = settings.backgroundWorkSettingsRevision
         try settings.setProviderEnabled(provider: .codex, metadata: #require(metadata[.codex]), enabled: true)
+        #expect(settings.backgroundWorkSettingsRevision == backgroundRevisionBeforeEnablement + 1)
         try settings.setProviderEnabled(provider: .claude, metadata: #require(metadata[.claude]), enabled: false)
         let enabled = settings.enabledProvidersOrdered(metadataByProvider: metadata)
         #expect(enabled.contains(.codex))
@@ -115,6 +121,29 @@ struct SettingsStoreCoverageTests {
         let reloaded = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
         #expect(reloaded.copilotBudgetExtrasEnabled)
         #expect(reloaded.copilotSettingsSnapshot(tokenOverride: nil).budgetExtrasEnabled)
+    }
+
+    @Test
+    func `agent sessions default off and persist explicit opt in`() throws {
+        let suite = "SettingsStoreCoverageTests-agent-sessions"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let configStore = testConfigStore(suiteName: suite)
+
+        let initial = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
+        #expect(initial.agentSessionsEnabled == false)
+        #expect(initial.agentSessionLabelStyle == .project)
+        #expect(defaults.object(forKey: "agentSessionsEnabled") == nil)
+        #expect(defaults.object(forKey: "agentSessionLabelStyle") == nil)
+
+        initial.agentSessionsEnabled = true
+        initial.agentSessionLabelStyle = .descriptiveAndProject
+        #expect(defaults.object(forKey: "agentSessionsEnabled") as? Bool == true)
+        #expect(defaults.string(forKey: "agentSessionLabelStyle") == "descriptiveAndProject")
+
+        let reloaded = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
+        #expect(reloaded.agentSessionsEnabled)
+        #expect(reloaded.agentSessionLabelStyle == .descriptiveAndProject)
     }
 
     @Test
@@ -390,6 +419,62 @@ struct SettingsStoreCoverageTests {
         #expect(SettingsStore.hasAnyTokenCostUsageSources(
             env: ["CLAUDE_CONFIG_DIR": claudeRoot.path],
             fileManager: fileManager))
+
+        let metadataOnlyHome = fileManager.temporaryDirectory.appendingPathComponent(
+            "claude-desktop-metadata-\(UUID().uuidString)",
+            isDirectory: true)
+        let metadataFile = metadataOnlyHome
+            .appendingPathComponent("Library/Application Support/Claude/claude-code-sessions", isDirectory: true)
+            .appendingPathComponent("account-id/org-id/local_session.json", isDirectory: false)
+        try fileManager.createDirectory(at: metadataFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"cliSessionId":"desktop-cli-session"}"#.utf8).write(to: metadataFile)
+
+        #expect(!SettingsStore.hasAnyTokenCostUsageSources(
+            env: [:],
+            fileManager: fileManager,
+            homeDirectory: metadataOnlyHome))
+
+        let desktopHome = fileManager.temporaryDirectory.appendingPathComponent(
+            "claude-desktop-\(UUID().uuidString)",
+            isDirectory: true)
+        let desktopProjects = desktopHome
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("Claude", isDirectory: true)
+            .appendingPathComponent("local-agent-mode-sessions", isDirectory: true)
+            .appendingPathComponent("workspace-id", isDirectory: true)
+            .appendingPathComponent("session-id", isDirectory: true)
+            .appendingPathComponent("local_agent", isDirectory: true)
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+        try fileManager.createDirectory(at: desktopProjects, withIntermediateDirectories: true)
+        let desktopFile = desktopProjects
+            .appendingPathComponent("project-a", isDirectory: true)
+            .appendingPathComponent("session-a.jsonl", isDirectory: false)
+        try fileManager.createDirectory(at: desktopFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        fileManager.createFile(atPath: desktopFile.path, contents: Data("{}".utf8))
+
+        #expect(SettingsStore.hasAnyTokenCostUsageSources(
+            env: [:],
+            fileManager: fileManager,
+            homeDirectory: desktopHome))
+
+        let desktopCodeHome = fileManager.temporaryDirectory.appendingPathComponent(
+            "claude-desktop-code-\(UUID().uuidString)",
+            isDirectory: true)
+        let desktopCodeFile = desktopCodeHome
+            .appendingPathComponent("Library/Application Support/Claude/claude-code-sessions", isDirectory: true)
+            .appendingPathComponent("account-id/org-id/.claude/projects/project-a", isDirectory: true)
+            .appendingPathComponent("session-a.jsonl", isDirectory: false)
+        try fileManager.createDirectory(
+            at: desktopCodeFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        fileManager.createFile(atPath: desktopCodeFile.path, contents: Data("{}".utf8))
+
+        #expect(SettingsStore.hasAnyTokenCostUsageSources(
+            env: [:],
+            fileManager: fileManager,
+            homeDirectory: desktopCodeHome))
     }
 
     @Test
@@ -406,7 +491,6 @@ struct SettingsStoreCoverageTests {
         settings.ensureMiniMaxCookieLoaded()
         settings.ensureMiniMaxAPITokenLoaded()
         settings.ensureKimiAuthTokenLoaded()
-        settings.ensureKimiK2APITokenLoaded()
         settings.ensureAugmentCookieLoaded()
         settings.ensureAmpCookieLoaded()
         settings.ensureOllamaCookieLoaded()
@@ -471,9 +555,9 @@ struct SettingsStoreCoverageTests {
     }
 
     @Test
-    func `claude keychain read strategy defaults to security CLI experimental`() {
+    func `claude keychain read strategy defaults to security framework`() {
         let settings = Self.makeSettingsStore()
-        #expect(settings.claudeOAuthKeychainReadStrategy == .securityCLIExperimental)
+        #expect(settings.claudeOAuthKeychainReadStrategy == .securityFramework)
     }
 
     @Test
@@ -484,13 +568,56 @@ struct SettingsStoreCoverageTests {
         let configStore = testConfigStore(suiteName: suite)
 
         let first = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
-        first.claudeOAuthKeychainReadStrategy = .securityCLIExperimental
+        first.claudeOAuthKeychainReadStrategy = .securityFramework
         #expect(
             defaults.string(forKey: "claudeOAuthKeychainReadStrategy")
-                == ClaudeOAuthKeychainReadStrategy.securityCLIExperimental.rawValue)
+                == ClaudeOAuthKeychainReadStrategy.securityFramework.rawValue)
 
         let second = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
-        #expect(second.claudeOAuthKeychainReadStrategy == .securityCLIExperimental)
+        #expect(second.claudeOAuthKeychainReadStrategy == .securityFramework)
+    }
+
+    @Test
+    func `claude legacy security CLI read strategy preserves no prompt intent`() throws {
+        let suite = "SettingsStoreCoverageTests-claude-keychain-read-strategy-migration"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(
+            ClaudeOAuthKeychainReadStrategy.securityCLIExperimental.rawValue,
+            forKey: "claudeOAuthKeychainReadStrategy")
+        let configStore = testConfigStore(suiteName: suite)
+
+        let settings = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
+
+        #expect(settings.claudeOAuthKeychainReadStrategy == .securityFramework)
+        #expect(settings.claudeOAuthKeychainPromptMode == .never)
+        #expect(settings.claudeOAuthPromptFreeCredentialsEnabled)
+        #expect(
+            defaults.string(forKey: "claudeOAuthKeychainReadStrategy")
+                == ClaudeOAuthKeychainReadStrategy.securityFramework.rawValue)
+        #expect(
+            defaults.string(forKey: "claudeOAuthKeychainPromptMode")
+                == ClaudeOAuthKeychainPromptMode.never.rawValue)
+    }
+
+    @Test
+    func `claude legacy security CLI migration preserves explicit prompt policy`() throws {
+        let suite = "SettingsStoreCoverageTests-claude-keychain-explicit-prompt-migration"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(
+            ClaudeOAuthKeychainReadStrategy.securityCLIExperimental.rawValue,
+            forKey: "claudeOAuthKeychainReadStrategy")
+        defaults.set(
+            ClaudeOAuthKeychainPromptMode.always.rawValue,
+            forKey: "claudeOAuthKeychainPromptMode")
+        let configStore = testConfigStore(suiteName: suite)
+
+        let settings = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
+
+        #expect(settings.claudeOAuthKeychainReadStrategy == .securityFramework)
+        #expect(settings.claudeOAuthKeychainPromptMode == .always)
+        #expect(!settings.claudeOAuthPromptFreeCredentialsEnabled)
     }
 
     @Test
@@ -506,15 +633,17 @@ struct SettingsStoreCoverageTests {
     }
 
     @Test
-    func `claude prompt free credentials toggle maps to read strategy`() {
+    func `claude prompt free credentials toggle maps to never prompt policy`() {
         let settings = Self.makeSettingsStore()
-        #expect(settings.claudeOAuthPromptFreeCredentialsEnabled == true)
+        #expect(settings.claudeOAuthPromptFreeCredentialsEnabled == false)
+
+        settings.claudeOAuthPromptFreeCredentialsEnabled = true
+        #expect(settings.claudeOAuthKeychainReadStrategy == .securityFramework)
+        #expect(settings.claudeOAuthKeychainPromptMode == .never)
 
         settings.claudeOAuthPromptFreeCredentialsEnabled = false
         #expect(settings.claudeOAuthKeychainReadStrategy == .securityFramework)
-
-        settings.claudeOAuthPromptFreeCredentialsEnabled = true
-        #expect(settings.claudeOAuthKeychainReadStrategy == .securityCLIExperimental)
+        #expect(settings.claudeOAuthKeychainPromptMode == .onlyOnUserAction)
     }
 
     @Test
@@ -713,6 +842,21 @@ struct SettingsStoreCoverageTests {
         #expect(reloaded4.weeklyProgressWorkDays == nil)
     }
 
+    @Test
+    func `preferred currency defaults to USD and persists an explicit selection`() throws {
+        let suite = "SettingsStoreCoverageTests-preferred-currency"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let configStore = testConfigStore(suiteName: suite)
+
+        let fresh = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
+        #expect(fresh.preferredCurrencyCode == "USD")
+
+        fresh.preferredCurrencyCode = "GBP"
+        let reloaded = Self.makeSettingsStore(userDefaults: defaults, configStore: configStore)
+        #expect(reloaded.preferredCurrencyCode == "GBP")
+    }
+
     private static func makeSettingsStore(
         suiteName: String = "SettingsStoreCoverageTests",
         antigravityOAuthCredentialsStore: AntigravityOAuthCredentialsStore = AntigravityOAuthCredentialsStore())
@@ -747,7 +891,6 @@ struct SettingsStoreCoverageTests {
             minimaxCookieStore: InMemoryMiniMaxCookieStore(),
             minimaxAPITokenStore: InMemoryMiniMaxAPITokenStore(),
             kimiTokenStore: InMemoryKimiTokenStore(),
-            kimiK2TokenStore: InMemoryKimiK2TokenStore(),
             augmentCookieStore: InMemoryCookieHeaderStore(),
             ampCookieStore: InMemoryCookieHeaderStore(),
             copilotTokenStore: InMemoryCopilotTokenStore(),

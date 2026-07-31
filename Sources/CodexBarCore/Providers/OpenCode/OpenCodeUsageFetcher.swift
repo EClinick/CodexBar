@@ -423,7 +423,7 @@ public struct OpenCodeUsageFetcher: Sendable {
     }
 
     private static func doubleValue(from value: Any?) -> Double? {
-        switch value {
+        let number: Double? = switch value {
         case let number as Double:
             number
         case let number as NSNumber:
@@ -433,6 +433,8 @@ public struct OpenCodeUsageFetcher: Sendable {
         default:
             nil
         }
+        guard let number, number.isFinite else { return nil }
+        return number
     }
 
     private static func intValue(from value: Any?) -> Int? {
@@ -728,6 +730,9 @@ public struct OpenCodeUsageFetcher: Sendable {
 
     private static func parseWindow(_ dict: [String: Any], now: Date) -> (percent: Double, resetInSec: Int)? {
         var percent = self.doubleValue(from: dict, keys: self.percentKeys)
+        // A direct percent field may arrive as a fraction (0...1) or a percent (0...100), so it goes
+        // through the `<= 1` heuristic below. A computed used/limit percent is already 0...100 and must not.
+        let percentIsDirect = percent != nil
 
         if percent == nil {
             let used = self.doubleValue(from: dict, keys: ["used", "usage", "consumed", "count", "usedTokens"])
@@ -738,7 +743,7 @@ public struct OpenCodeUsageFetcher: Sendable {
         }
 
         guard var resolvedPercent = percent else { return nil }
-        if resolvedPercent <= 1.0, resolvedPercent >= 0 {
+        if percentIsDirect, resolvedPercent <= 1.0, resolvedPercent >= 0 {
             resolvedPercent *= 100
         }
         resolvedPercent = max(0, min(100, resolvedPercent))
@@ -746,8 +751,10 @@ public struct OpenCodeUsageFetcher: Sendable {
         var resetInSec = self.intValue(from: dict, keys: self.resetInKeys)
         if resetInSec == nil {
             let resetAtValue = self.value(from: dict, keys: self.resetAtKeys)
-            if let resetAt = self.dateValue(from: resetAtValue) {
-                resetInSec = max(0, Int(resetAt.timeIntervalSince(now)))
+            if let resetAt = self.dateValue(from: resetAtValue),
+               let interval = self.resetInterval(from: resetAt, now: now)
+            {
+                resetInSec = interval
             }
         }
 
@@ -801,6 +808,14 @@ public struct OpenCodeUsageFetcher: Sendable {
             }
         }
         return nil
+    }
+
+    private static func resetInterval(from resetAt: Date, now: Date) -> Int? {
+        let interval = resetAt.timeIntervalSince(now)
+        guard interval.isFinite else { return nil }
+        if interval <= 0 { return 0 }
+        guard interval < Double(Int.max) else { return nil }
+        return Int(interval)
     }
 
     private static func logParseSummary(text: String) {

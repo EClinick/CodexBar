@@ -219,16 +219,24 @@ extension CodexBarCLI {
             BedrockSettingsReader.hasCredentials(environment: environment)
         case .claude:
             ClaudeAdminAPISettingsReader.apiKey(environment: environment) != nil
+        case .clinepass:
+            ClinePassSettingsReader.apiKey(environment: environment) != nil
         case .codebuff:
             CodebuffSettingsReader.apiKey(environment: environment) != nil
         case .chutes:
             ChutesSettingsReader.apiKey(environment: environment) != nil
+        case .zenmux:
+            ZenMuxSettingsReader.managementAPIKey(environment: environment) != nil
+        case .aiand:
+            AiAndSettingsReader.apiKey(environment: environment) != nil
         case .crof:
             CrofSettingsReader.apiKey(environment: environment) != nil
         case .deepgram:
             DeepgramSettingsReader.apiKey(environment: environment) != nil
         case .deepseek:
             DeepSeekSettingsReader.apiKey(environment: environment) != nil
+        case .deepinfra:
+            DeepInfraSettingsReader.apiKey(environment: environment) != nil
         case .doubao:
             DoubaoSettingsReader.apiKey(environment: environment) != nil
         case .elevenlabs:
@@ -237,6 +245,10 @@ extension CodexBarCLI {
             GroqSettingsReader.apiKey(environment: environment) != nil
         case .kilo:
             KiloSettingsReader.apiKey(environment: environment) != nil
+        case .factory:
+            FactorySettingsReader.apiKey(environment: environment) != nil
+        case .neuralwatt:
+            NeuralWattSettingsReader.apiKey(environment: environment) != nil
         default:
             false
         }
@@ -249,10 +261,12 @@ extension CodexBarCLI {
         switch provider {
         case .kimi:
             KimiSettingsReader.apiKey(environment: environment) != nil
-        case .kimik2:
-            KimiK2SettingsReader.apiKey(environment: environment) != nil
         case .llmproxy:
             LLMProxySettingsReader.apiKey(environment: environment) != nil
+        case .clawrouter:
+            ClawRouterSettingsReader.apiKey(environment: environment) != nil
+        case .sub2api:
+            Sub2APISettingsReader.apiKey(environment: environment) != nil
         case .moonshot:
             MoonshotSettingsReader.apiKey(environment: environment) != nil
         case .ollama:
@@ -269,6 +283,8 @@ extension CodexBarCLI {
             VeniceSettingsReader.apiKey(environment: environment) != nil
         case .warp:
             WarpSettingsReader.apiKey(environment: environment) != nil
+        case .xai:
+            XAISettingsReader.apiKey(environment: environment) != nil
         case .zai:
             ZaiSettingsReader.apiToken(environment: environment) != nil
         default:
@@ -283,6 +299,8 @@ extension CodexBarCLI {
         switch provider {
         case .alibabatokenplan:
             AlibabaTokenPlanSettingsReader.cookieHeader(environment: environment) != nil
+        case .qwencloud:
+            QwenCloudSettingsReader.cookieHeader(environment: environment) != nil
         case .kimi:
             KimiSettingsReader.authToken(environment: environment) != nil
         case .manus:

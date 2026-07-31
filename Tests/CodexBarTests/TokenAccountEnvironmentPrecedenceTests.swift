@@ -5,6 +5,60 @@ import Testing
 @testable import CodexBarCLI
 
 @Suite(.serialized)
+struct AlibabaTokenPlanRegionSelectionTests {
+    @Test @MainActor
+    func `fresh app settings default to International`() {
+        let settings = testSettingsStore(suiteName: "AlibabaTokenPlanRegionSelectionTests-fresh")
+
+        #expect(settings.alibabaTokenPlanAPIRegion == .international)
+    }
+
+    @Test @MainActor
+    func `legacy app settings without region remain China mainland`() {
+        var config = CodexBarConfig.makeDefault()
+        config.setProviderConfig(ProviderConfig(id: .alibabatokenplan, region: nil))
+        let settings = testSettingsStore(
+            suiteName: "AlibabaTokenPlanRegionSelectionTests-legacy",
+            config: config)
+
+        #expect(settings.alibabaTokenPlanAPIRegion == .chinaMainland)
+    }
+
+    @Test @MainActor
+    func `app settings trim configured region`() {
+        var config = CodexBarConfig.makeDefault()
+        config.setProviderConfig(ProviderConfig(id: .alibabatokenplan, region: " intl "))
+        let settings = testSettingsStore(
+            suiteName: "AlibabaTokenPlanRegionSelectionTests-trimmed",
+            config: config)
+
+        #expect(settings.alibabaTokenPlanAPIRegion == .international)
+    }
+
+    @Test
+    func `CLI honors explicit region and keeps legacy config on China mainland`() throws {
+        let selection = TokenAccountCLISelection(label: nil, index: nil, allAccounts: false)
+        let internationalContext = try TokenAccountCLIContext(
+            selection: selection,
+            config: CodexBarConfig(providers: [
+                ProviderConfig(id: .alibabatokenplan, region: AlibabaTokenPlanAPIRegion.international.rawValue),
+            ]),
+            verbose: false)
+        let legacyContext = try TokenAccountCLIContext(
+            selection: selection,
+            config: CodexBarConfig(providers: [
+                ProviderConfig(id: .alibabatokenplan, region: nil),
+            ]),
+            verbose: false)
+
+        #expect(internationalContext.settingsSnapshot(for: .alibabatokenplan, account: nil)?
+            .alibabaTokenPlan?.apiRegion == .international)
+        #expect(legacyContext.settingsSnapshot(for: .alibabatokenplan, account: nil)?
+            .alibabaTokenPlan?.apiRegion == .chinaMainland)
+    }
+}
+
+@Suite(.serialized)
 struct ZaiTokenAccountEnvironmentPrecedenceTests {
     @Test
     func `zai CLI settings snapshot defaults to personal without account scope`() throws {
@@ -644,6 +698,13 @@ struct TokenAccountEnvironmentPrecedenceTests {
 
     @Test
     func `codex CLI ignores relative profile homes`() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-cli-relative-profile-\(UUID().uuidString)", isDirectory: true)
+        let ambientHome = root.appendingPathComponent("ambient", isDirectory: true)
+        let managedStoreURL = root.appendingPathComponent("managed-codex-accounts.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: ambientHome, withIntermediateDirectories: true)
+
         let config = CodexBarConfig(providers: [
             ProviderConfig(
                 id: .codex,
@@ -654,16 +715,17 @@ struct TokenAccountEnvironmentPrecedenceTests {
             selection: TokenAccountCLISelection(label: nil, index: nil, allAccounts: false),
             config: config,
             verbose: false,
-            baseEnvironment: ["CODEX_HOME": "/tmp/ambient-codex"])
+            baseEnvironment: ["CODEX_HOME": ambientHome.path],
+            managedCodexAccountStoreURL: managedStoreURL)
 
         let environment = context.environment(
-            base: ["CODEX_HOME": "/tmp/ambient-codex"],
+            base: ["CODEX_HOME": ambientHome.path],
             provider: .codex,
             account: nil,
             codexActiveSourceOverride: .profileHome(path: "relative-codex-home"))
 
         #expect(context.visibleCodexAccounts().visibleAccounts.isEmpty)
-        #expect(environment["CODEX_HOME"] == "/tmp/ambient-codex")
+        #expect(environment["CODEX_HOME"] == ambientHome.path)
     }
 
     @Test
@@ -991,7 +1053,6 @@ extension TokenAccountEnvironmentPrecedenceTests {
             minimaxCookieStore: InMemoryMiniMaxCookieStore(),
             minimaxAPITokenStore: InMemoryMiniMaxAPITokenStore(),
             kimiTokenStore: InMemoryKimiTokenStore(),
-            kimiK2TokenStore: InMemoryKimiK2TokenStore(),
             augmentCookieStore: InMemoryCookieHeaderStore(),
             ampCookieStore: InMemoryCookieHeaderStore(),
             copilotTokenStore: InMemoryCopilotTokenStore(),

@@ -47,8 +47,9 @@ struct CostHistoryChartMenuView: View {
     private let currencyCode: String
     private let historyDays: Int
     private let windowLabel: String?
+    private let projects: [CostUsageProjectBreakdown]
+    private let sessions: [CostUsageSessionBreakdown]
     private let width: CGFloat
-    private let onHeightChange: ((CGFloat) -> Void)?
     @State private var selectedDateKey: String?
 
     init(
@@ -58,7 +59,8 @@ struct CostHistoryChartMenuView: View {
         currencyCode: String = "USD",
         historyDays: Int = 30,
         windowLabel: String? = nil,
-        onHeightChange: ((CGFloat) -> Void)? = nil,
+        projects: [CostUsageProjectBreakdown] = [],
+        sessions: [CostUsageSessionBreakdown] = [],
         width: CGFloat)
     {
         self.provider = provider
@@ -67,7 +69,8 @@ struct CostHistoryChartMenuView: View {
         self.currencyCode = currencyCode
         self.historyDays = max(1, min(365, historyDays))
         self.windowLabel = windowLabel
-        self.onHeightChange = onHeightChange
+        self.projects = projects
+        self.sessions = sessions
         self.width = width
     }
 
@@ -97,8 +100,33 @@ struct CostHistoryChartMenuView: View {
                             .foregroundStyle(Color(nsColor: .systemYellow))
                     }
                 }
-                .chartYAxis(.hidden)
-                .chartXAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: Self.yAxisTickValues(maxCostUSD: model.maxCostUSD)) { value in
+                        AxisGridLine().foregroundStyle(Color.clear)
+                        AxisTick().foregroundStyle(Color.clear)
+                        AxisValueLabel(centered: false) {
+                            if let raw = value.as(Double.self) {
+                                Text(Self.yAxisCostString(raw, currencyCode: self.currencyCode))
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                                    .padding(.leading, 4)
+                            }
+                        }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: model.axisDates) { value in
+                        AxisGridLine().foregroundStyle(Color.clear)
+                        AxisTick().foregroundStyle(Color.clear)
+                        if let date = value.as(Date.self) {
+                            AxisValueLabel(anchor: Self.xAxisLabelAnchor(for: date, axisDates: model.axisDates)) {
+                                Text(date, format: .dateTime.month(.abbreviated).day())
+                                    .font(.caption2)
+                                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                            }
+                        }
+                    }
+                }
                 .chartLegend(.hidden)
                 .frame(height: Self.chartHeight)
                 .accessibilityLabel(L("Cost history chart"))
@@ -125,28 +153,6 @@ struct CostHistoryChartMenuView: View {
                     }
                 }
 
-                let axisLabelPlacement = Self.axisLabelPlacement(for: model.axisDates)
-                if axisLabelPlacement != .hidden {
-                    HStack {
-                        if axisLabelPlacement == .centered {
-                            Spacer()
-                        }
-                        Text(model.axisDates[0], format: .dateTime.month(.abbreviated).day())
-                            .font(.caption2)
-                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                        Spacer()
-                        if axisLabelPlacement == .edges {
-                            Text(
-                                model.axisDates[model.axisDates.count - 1],
-                                format: .dateTime.month(.abbreviated).day())
-                                .font(.caption2)
-                                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
-                        }
-                    }
-                    .frame(height: Self.axisLabelAreaHeight)
-                    .padding(.top, -Self.outerSpacing)
-                }
-
                 let detail = self.detailContent(selectedDateKey: selectedDateKey, model: model)
                 VStack(alignment: .leading, spacing: Self.detailSpacing) {
                     Text(detail.primary)
@@ -155,7 +161,7 @@ struct CostHistoryChartMenuView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(height: Self.detailPrimaryLineHeight, alignment: .leading)
-                    if !detail.rows.isEmpty {
+                    if model.detailViewportRowCount > 0 {
                         ScrollView(.vertical) {
                             VStack(alignment: .leading, spacing: Self.detailSpacing) {
                                 ForEach(detail.rows) { row in
@@ -164,7 +170,9 @@ struct CostHistoryChartMenuView: View {
                                             .fill(row.accentColor)
                                             .frame(
                                                 width: 2,
-                                                height: Self.accentHeight(for: row))
+                                                height: Self.accentHeight(
+                                                    for: row,
+                                                    rowHeight: model.detailRowHeight))
                                             .padding(.top, 1)
 
                                         VStack(alignment: .leading, spacing: 1) {
@@ -196,38 +204,103 @@ struct CostHistoryChartMenuView: View {
                                             }
                                         }
                                     }
-                                    .frame(height: Self.detailRowHeight(for: row), alignment: .leading)
+                                    .frame(height: model.detailRowHeight, alignment: .leading)
                                 }
                             }
                         }
                         .scrollIndicators(
                             Self.detailRowsNeedScrolling(itemCount: detail.rows.count) ? .visible : .hidden)
                         .frame(
-                            height: Self.detailRowsViewportHeight(rows: detail.rows),
+                            height: Self.detailRowsViewportHeight(
+                                rowCount: model.detailViewportRowCount,
+                                rowHeight: model.detailRowHeight),
                             alignment: .topLeading)
                         .id(selectedDateKey)
+
+                        if model.hasDetailOverflow {
+                            Text(Self.detailOverflowHint(itemCount: detail.rows.count) ?? " ")
+                                .font(.caption2)
+                                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                                .frame(height: Self.detailHintHeight, alignment: .leading)
+                                .accessibilityHidden(!Self.detailRowsNeedScrolling(itemCount: detail.rows.count))
+                        }
                     }
                 }
                 .frame(
-                    height: Self.detailBlockHeight(rows: detail.rows),
+                    height: Self.detailBlockHeight(
+                        rowCount: model.detailViewportRowCount,
+                        hasOverflow: model.hasDetailOverflow,
+                        rowHeight: model.detailRowHeight),
                     alignment: .topLeading)
             }
 
             if let total = self.totalCostUSD {
-                Text(String(
-                    format: L("Est. total (%@): %@"),
-                    self.windowLabel ?? Self.windowLabel(days: self.historyDays),
-                    self.costString(total)))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .frame(height: Self.detailPrimaryLineHeight, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(String(
+                        format: L("Est. total (%@): %@"),
+                        self.windowLabel ?? Self.windowLabel(days: self.historyDays),
+                        self.costString(total)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .frame(height: Self.detailPrimaryLineHeight, alignment: .leading)
+                    if let disclaimer = Self.estimateDisclaimer(provider: self.provider) {
+                        Text(disclaimer)
+                            .font(.caption2)
+                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+            }
+
+            if !self.projects.isEmpty {
+                VStack(alignment: .leading, spacing: Self.projectRowSpacing) {
+                    Text("Projects")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(height: Self.detailPrimaryLineHeight, alignment: .leading)
+                    ForEach(Array(self.projects.prefix(Self.maxVisibleProjectRows)), id: \.projectRowID) { project in
+                        let visibleSources = Self.visibleProjectSources(project)
+                        VStack(alignment: .leading, spacing: Self.projectSourceSpacing) {
+                            self.projectParentRow(project)
+                            if !visibleSources.isEmpty {
+                                ForEach(
+                                    Array(visibleSources.prefix(Self.maxVisibleProjectSourceRows)),
+                                    id: \.sourceRowID)
+                                { source in
+                                    self.projectSourceRow(source)
+                                }
+                                let hiddenSourceCount = visibleSources.count - Self.maxVisibleProjectSourceRows
+                                if hiddenSourceCount > 0 {
+                                    Text("+ \(hiddenSourceCount) more")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                                        .lineLimit(1)
+                                        .padding(.leading, Self.projectSourceIndent)
+                                        .frame(height: Self.projectMoreRowHeight, alignment: .leading)
+                                }
+                            }
+                        }
+                        .frame(height: Self.projectEntryHeight(project), alignment: .topLeading)
+                    }
+                }
+                .frame(height: Self.projectBlockHeight(projects: self.projects), alignment: .topLeading)
+            }
+
+            if !self.sessions.isEmpty {
+                self.sessionsBlock
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, Self.verticalPadding)
         .frame(minWidth: self.width, maxWidth: .infinity, alignment: .top)
+    }
+
+    static func estimateDisclaimer(provider: UsageProvider) -> String? {
+        provider == .codex ? L("codex_api_estimate_hint") : nil
     }
 
     private struct Model {
@@ -239,6 +312,9 @@ struct CostHistoryChartMenuView: View {
         let barColor: Color
         let peakKey: String?
         let maxCostUSD: Double
+        let detailViewportRowCount: Int
+        let hasDetailOverflow: Bool
+        let detailRowHeight: CGFloat
     }
 
     private static let selectionBandColor = Color(nsColor: .labelColor).opacity(0.1)
@@ -249,26 +325,104 @@ struct CostHistoryChartMenuView: View {
     private static let compactDetailRowHeight: CGFloat = 36
     private static let expandedDetailRowHeight: CGFloat = 44
     private static let detailSpacing: CGFloat = 6
-    private static let chartHeight: CGFloat = 114
-    private static let axisLabelAreaHeight: CGFloat = 16
+    private static let detailHintHeight: CGFloat = 13
+    private static let chartHeight: CGFloat = 130
     private static let outerSpacing: CGFloat = 10
+    private static let projectRowHeight: CGFloat = 31
+    private static let projectRowSpacing: CGFloat = 5
+    private static let maxVisibleProjectRows = 5
+    private static let projectSourceRowHeight: CGFloat = 29
+    private static let projectSourceSpacing: CGFloat = 3
+    private static let projectSourceIndent: CGFloat = 10
+    private static let projectMoreRowHeight: CGFloat = 16
+    private static let maxVisibleProjectSourceRows = 2
+    private static let sessionRowHeight: CGFloat = 44
+    private static let sessionRowSpacing: CGFloat = 5
+    private static let maxVisibleSessionRows = 5
     static let verticalPadding: CGFloat = 10
 
-    /// Deterministic total height of the rendered card for a given selection. NSMenu's modal
-    /// tracking run loop never delivers SwiftUI `onPreferenceChange`, so the live height can't be
-    /// measured via a GeometryReader while the menu is open. Every component height is fixed, so
-    /// we compute the total directly and resize from the hover handler instead.
-    private static func totalCardHeight(rows: [DetailRow], hasTotal: Bool) -> CGFloat {
-        var height = self.verticalPadding * 2
-        height += self.chartHeight
-        height += self.axisLabelAreaHeight
-        height += self.outerSpacing
-        height += self.detailBlockHeight(rows: rows)
-        if hasTotal {
-            height += self.outerSpacing
-            height += self.detailPrimaryLineHeight
+    private var sessionsBlock: some View {
+        let visibleCount = min(self.sessions.count, Self.maxVisibleSessionRows)
+        return VStack(alignment: .leading, spacing: Self.sessionRowSpacing) {
+            HStack {
+                Text("Conversations (\(self.windowLabel ?? Self.windowLabel(days: self.historyDays)))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(self.sessions.count)")
+                    .font(.caption2)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+            }
+            .frame(height: Self.detailPrimaryLineHeight, alignment: .leading)
+
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: Self.sessionRowSpacing) {
+                    ForEach(self.sessions) { session in
+                        self.sessionRow(session)
+                    }
+                }
+            }
+            .scrollIndicators(self.sessions.count > visibleCount ? .visible : .hidden)
+            .frame(
+                height: CGFloat(visibleCount) * Self.sessionRowHeight
+                    + CGFloat(max(visibleCount - 1, 0)) * Self.sessionRowSpacing,
+                alignment: .topLeading)
         }
-        return height
+        .frame(
+            height: Self.detailPrimaryLineHeight + Self.sessionRowSpacing
+                + CGFloat(visibleCount) * Self.sessionRowHeight
+                + CGFloat(max(visibleCount - 1, 0)) * Self.sessionRowSpacing,
+            alignment: .topLeading)
+    }
+
+    private func sessionRow(_ session: CostUsageSessionBreakdown) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Session \(Self.shortSessionID(session.sessionID))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(Self.sessionUsageLine(session))
+                    .font(.caption2)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(session.lastActivity, format: .dateTime.month(.abbreviated).day().hour().minute())
+                    .font(.caption2)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text(session.costUSD.map(self.costString) ?? "—")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(height: Self.sessionRowHeight, alignment: .topLeading)
+        .accessibilityElement(children: .combine)
+    }
+
+    static func shortSessionID(_ sessionID: String) -> String {
+        let trimmed = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 12 else { return trimmed }
+        return "\(trimmed.prefix(4))...\(trimmed.suffix(8))"
+    }
+
+    private static func sessionUsageLine(_ session: CostUsageSessionBreakdown) -> String {
+        let models = session.modelBreakdowns.map(\.modelName)
+        let modelLabel = if models.isEmpty {
+            "Unknown model"
+        } else if models.count == 1 {
+            models[0]
+        } else {
+            "\(models[0]) +\(models.count - 1)"
+        }
+        let input = session.inputTokens.map(UsageFormatter.tokenCountString) ?? "—"
+        let cached = session.cachedInputTokens.map(UsageFormatter.tokenCountString) ?? "—"
+        let output = session.outputTokens.map(UsageFormatter.tokenCountString) ?? "—"
+        return "\(modelLabel) · \(input) input · \(cached) cached · \(output) output"
     }
 
     static func windowLabel(days: Int) -> String {
@@ -278,20 +432,23 @@ struct CostHistoryChartMenuView: View {
         return String(format: L("Last %d days"), days)
     }
 
-    private static func detailRowHeight(for row: DetailRow) -> CGFloat {
-        self.detailRowHeight(hasModeSubtitle: row.modeSubtitle != nil)
-    }
-
-    private static func detailRowHeight(hasModeSubtitle: Bool) -> CGFloat {
-        hasModeSubtitle ? self.expandedDetailRowHeight : self.compactDetailRowHeight
-    }
-
-    private static func accentHeight(for row: DetailRow) -> CGFloat {
-        row.subtitle == nil && row.modeSubtitle == nil ? 14 : self.detailRowHeight(for: row)
+    private static func accentHeight(for row: DetailRow, rowHeight: CGFloat) -> CGFloat {
+        row.subtitle == nil && row.modeSubtitle == nil ? 14 : rowHeight
     }
 
     private static func capHeight(maxValue: Double) -> Double {
         maxValue * 0.05
+    }
+
+    /// Y-axis tick values for the cost chart: 0, mid, max when the range is at
+    /// $1 or more; 0 and max for smaller ranges; empty for flat/no data so the
+    /// axis renders no labels.
+    private static func yAxisTickValues(maxCostUSD: Double) -> [Double] {
+        guard maxCostUSD > 0 else { return [] }
+        if maxCostUSD < 1.0 {
+            return [0, maxCostUSD]
+        }
+        return [0, maxCostUSD / 2, maxCostUSD]
     }
 
     private static func makeModel(provider: UsageProvider, daily: [DailyEntry]) -> Model {
@@ -310,9 +467,10 @@ struct CostHistoryChartMenuView: View {
 
         var peak: (key: String, costUSD: Double)?
         var maxCostUSD: Double = 0
+        var maxDetailRows = 0
+        var hasModeDetails = false
         for entry in sorted {
-            guard let costUSD = entry.costUSD, costUSD >= 0 else { continue }
-            guard let date = self.dateFromDayKey(entry.date) else { continue }
+            guard let (costUSD, date) = self.chartPointInput(for: entry) else { continue }
             let point = Point(
                 date: date,
                 costUSD: costUSD,
@@ -322,8 +480,13 @@ struct CostHistoryChartMenuView: View {
             pointsByKey[entry.date] = point
             entriesByKey[entry.date] = entry
             dateKeys.append((entry.date, date))
+            let modelBreakdowns = entry.modelBreakdowns ?? []
+            maxDetailRows = max(maxDetailRows, modelBreakdowns.count)
+            hasModeDetails = hasModeDetails || modelBreakdowns.contains { Self.hasModeSubtitle($0) }
             if let cur = peak {
-                if costUSD > cur.costUSD { peak = (entry.date, costUSD) }
+                if costUSD > cur.costUSD {
+                    peak = (entry.date, costUSD)
+                }
             } else {
                 peak = (entry.date, costUSD)
             }
@@ -332,7 +495,9 @@ struct CostHistoryChartMenuView: View {
 
         let axisDates: [Date] = {
             guard let first = dateKeys.first?.date, let last = dateKeys.last?.date else { return [] }
-            if Calendar.current.isDate(first, inSameDayAs: last) { return [first] }
+            if Calendar.current.isDate(first, inSameDayAs: last) {
+                return [first]
+            }
             return [first, last]
         }()
 
@@ -345,7 +510,10 @@ struct CostHistoryChartMenuView: View {
             axisDates: axisDates,
             barColor: barColor,
             peakKey: maxCostUSD > 0 ? peak?.key : nil,
-            maxCostUSD: maxCostUSD)
+            maxCostUSD: maxCostUSD,
+            detailViewportRowCount: min(maxDetailRows, self.maxVisibleDetailLines),
+            hasDetailOverflow: maxDetailRows > self.maxVisibleDetailLines,
+            detailRowHeight: hasModeDetails ? self.expandedDetailRowHeight : self.compactDetailRowHeight)
     }
 
     private static func axisLabelPlacement(for dates: [Date]) -> AxisLabelPlacement {
@@ -353,6 +521,21 @@ struct CostHistoryChartMenuView: View {
         case 0: .hidden
         case 1: .centered
         default: .edges
+        }
+    }
+
+    private static func xAxisLabelAnchor(for date: Date, axisDates: [Date]) -> UnitPoint {
+        switch self.axisLabelPlacement(for: axisDates) {
+        case .hidden, .centered:
+            .top
+        case .edges:
+            if let first = axisDates.first, Calendar.current.isDate(date, inSameDayAs: first) {
+                .topLeading
+            } else if let last = axisDates.last, Calendar.current.isDate(date, inSameDayAs: last) {
+                .topTrailing
+            } else {
+                .top
+            }
         }
     }
 
@@ -378,6 +561,12 @@ struct CostHistoryChartMenuView: View {
         return comps.date
     }
 
+    private static func chartPointInput(for entry: DailyEntry) -> (costUSD: Double, date: Date)? {
+        guard let costUSD = entry.costUSD, costUSD >= 0 else { return nil }
+        guard let date = self.dateFromDayKey(entry.date) else { return nil }
+        return (costUSD, date)
+    }
+
     private static func peakPoint(model: Model) -> Point? {
         guard let key = model.peakKey else { return nil }
         return model.pointsByDateKey[key]
@@ -387,20 +576,46 @@ struct CostHistoryChartMenuView: View {
         item.standardCostUSD != nil || item.priorityCostUSD != nil
     }
 
-    private static func detailBlockHeight(rows: [DetailRow]) -> CGFloat {
-        guard !rows.isEmpty else { return self.detailPrimaryLineHeight }
-        return self.detailPrimaryLineHeight + self.detailRowsViewportHeight(rows: rows) + self.detailSpacing
+    private static func detailRowsViewportHeight(rowCount: Int, rowHeight: CGFloat) -> CGFloat {
+        guard rowCount > 0 else { return 0 }
+        return CGFloat(rowCount) * rowHeight + CGFloat(rowCount - 1) * self.detailSpacing
     }
 
-    private static func detailRowsViewportHeight(rows: [DetailRow]) -> CGFloat {
-        let visibleRows = Array(rows.prefix(self.maxVisibleDetailLines))
-        guard !visibleRows.isEmpty else { return 0 }
-
-        let rowHeights = visibleRows.reduce(CGFloat(0)) { total, row in
-            total + self.detailRowHeight(for: row)
+    private static func detailBlockHeight(rowCount: Int, hasOverflow: Bool, rowHeight: CGFloat) -> CGFloat {
+        guard rowCount > 0 else { return self.detailPrimaryLineHeight }
+        var height = self.detailPrimaryLineHeight + self.detailSpacing
+        height += self.detailRowsViewportHeight(rowCount: rowCount, rowHeight: rowHeight)
+        if hasOverflow {
+            height += self.detailSpacing + self.detailHintHeight
         }
-        let spacing = CGFloat(max(visibleRows.count - 1, 0)) * self.detailSpacing
-        return rowHeights + spacing
+        return height
+    }
+
+    private static func projectBlockHeight(projects: [CostUsageProjectBreakdown]) -> CGFloat {
+        let visibleProjects = Array(projects.prefix(self.maxVisibleProjectRows))
+        guard !visibleProjects.isEmpty else { return 0 }
+        return self.detailPrimaryLineHeight
+            + self.projectRowSpacing
+            + visibleProjects.reduce(CGFloat(0)) { $0 + self.projectEntryHeight($1) }
+            + CGFloat(max(visibleProjects.count - 1, 0)) * self.projectRowSpacing
+    }
+
+    private static func projectEntryHeight(_ project: CostUsageProjectBreakdown) -> CGFloat {
+        let sources = self.visibleProjectSources(project)
+        guard !sources.isEmpty else { return self.projectRowHeight }
+        let visibleSources = min(sources.count, self.maxVisibleProjectSourceRows)
+        let moreRows = sources.count > self.maxVisibleProjectSourceRows ? 1 : 0
+        return self.projectRowHeight
+            + CGFloat(visibleSources) * (self.projectSourceRowHeight + self.projectSourceSpacing)
+            + CGFloat(moreRows) * (self.projectMoreRowHeight + self.projectSourceSpacing)
+    }
+
+    static func visibleProjectSources(
+        _ project: CostUsageProjectBreakdown) -> [CostUsageProjectSourceBreakdown]
+    {
+        guard project.sources.count == 1 else { return project.sources }
+        guard let source = project.sources.first, source.path != project.path else { return [] }
+        return [source]
     }
 
     private static func defaultSelectedDateKey(model: Model) -> String? {
@@ -459,17 +674,74 @@ struct CostHistoryChartMenuView: View {
 
         if self.selectedDateKey != nearest {
             self.selectedDateKey = nearest
-            // Resize directly from the hover handler: this runs synchronously inside NSMenu's
-            // tracking run loop, unlike SwiftUI preference callbacks which are never delivered
-            // while the menu is open.
-            self.notifyHeightChange(selectedDateKey: nearest, model: model)
         }
     }
 
-    private func notifyHeightChange(selectedDateKey: String?, model: Model) {
-        guard let onHeightChange = self.onHeightChange else { return }
-        let rows = selectedDateKey.map { self.breakdownRows(key: $0, model: model) } ?? []
-        onHeightChange(Self.totalCardHeight(rows: rows, hasTotal: self.totalCostUSD != nil))
+    private func projectSummary(_ project: CostUsageProjectBreakdown) -> String {
+        let cost = project.totalCostUSD
+            .map { self.costString($0) } ?? "—"
+        guard let totalTokens = project.totalTokens else { return cost }
+        return "\(cost) · \(L("%@ tokens", UsageFormatter.tokenCountString(totalTokens)))"
+    }
+
+    private func projectParentRow(_ project: CostUsageProjectBreakdown) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
+                Text(project.name)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                Text(self.projectSummary(project))
+                    .font(.caption2)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            if let path = project.path {
+                Text(path)
+                    .font(.caption2)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .frame(height: Self.projectRowHeight, alignment: .leading)
+    }
+
+    private func projectSourceRow(_ source: CostUsageProjectSourceBreakdown) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Text(source.name)
+                    .font(.caption2)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 6)
+                Text(self.projectSourceSummary(source))
+                    .font(.caption2)
+                    .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            if let path = source.path {
+                Text(path)
+                    .font(.caption2)
+                    .foregroundStyle(Color(nsColor: .quaternaryLabelColor))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(.leading, Self.projectSourceIndent)
+        .frame(height: Self.projectSourceRowHeight, alignment: .leading)
+    }
+
+    private func projectSourceSummary(_ source: CostUsageProjectSourceBreakdown) -> String {
+        let cost = source.totalCostUSD
+            .map { self.costString($0) } ?? "—"
+        guard let totalTokens = source.totalTokens else { return cost }
+        return "\(cost) · \(L("%@ tokens", UsageFormatter.tokenCountString(totalTokens)))"
     }
 
     private func nearestDateKey(to date: Date, model: Model) -> String? {
@@ -478,7 +750,9 @@ struct CostHistoryChartMenuView: View {
         for entry in model.dateKeys {
             let dist = abs(entry.date.timeIntervalSince(date))
             if let cur = best {
-                if dist < cur.distance { best = (entry.key, dist) }
+                if dist < cur.distance {
+                    best = (entry.key, dist)
+                }
             } else {
                 best = (entry.key, dist)
             }
@@ -529,11 +803,15 @@ struct CostHistoryChartMenuView: View {
         breakdown.sorted { lhs, rhs in
             let lCost = lhs.costUSD ?? -1
             let rCost = rhs.costUSD ?? -1
-            if lCost != rCost { return lCost > rCost }
+            if lCost != rCost {
+                return lCost > rCost
+            }
 
             let lTokens = lhs.totalTokens ?? -1
             let rTokens = rhs.totalTokens ?? -1
-            if lTokens != rTokens { return lTokens > rTokens }
+            if lTokens != rTokens {
+                return lTokens > rTokens
+            }
 
             return lhs.modelName > rhs.modelName
         }
@@ -545,6 +823,10 @@ struct CostHistoryChartMenuView: View {
 
     static func detailRowsNeedScrolling(itemCount: Int) -> Bool {
         itemCount > self.maxVisibleDetailLines
+    }
+
+    static func detailOverflowHint(itemCount: Int) -> String? {
+        self.detailRowsNeedScrolling(itemCount: itemCount) ? L("Scroll to see more models") : nil
     }
 
     private func modelBreakdownTotalSubtitle(_ item: CostUsageDailyReport.ModelBreakdown) -> String? {
@@ -576,7 +858,15 @@ struct CostHistoryChartMenuView: View {
     }
 
     private func costString(_ value: Double) -> String {
-        UsageFormatter.currencyString(value, currencyCode: self.currencyCode)
+        Self.costString(value, currencyCode: self.currencyCode)
+    }
+
+    private static func costString(_ value: Double, currencyCode: String) -> String {
+        UsageFormatter.currencyString(value, currencyCode: currencyCode)
+    }
+
+    private static func yAxisCostString(_ value: Double, currencyCode: String) -> String {
+        UsageFormatter.compactCurrencyString(value, currencyCode: currencyCode)
     }
 
     private static func breakdownAccentOpacity(for index: Int) -> Double {
@@ -586,6 +876,134 @@ struct CostHistoryChartMenuView: View {
 }
 
 extension CostHistoryChartMenuView {
+    struct RenderFingerprint: Equatable {
+        let currencyCode: String
+        let historyDays: Int
+        let windowLabel: String?
+        let totalCostBitPattern: UInt64?
+        let hasDailyEntries: Bool
+        let daily: [VisibleDailyFingerprint]
+        let projects: [VisibleProjectFingerprint]
+        let sessions: [VisibleSessionFingerprint]
+    }
+
+    struct VisibleDailyFingerprint: Equatable {
+        let date: String
+        let totalTokens: Int?
+        let requestCount: Int?
+        let costBitPattern: UInt64?
+        let modelBreakdowns: [VisibleModelBreakdownFingerprint]
+    }
+
+    struct VisibleModelBreakdownFingerprint: Equatable {
+        let modelName: String
+        let costBitPattern: UInt64?
+        let totalTokens: Int?
+        let standardCostBitPattern: UInt64?
+        let priorityCostBitPattern: UInt64?
+        let standardTokens: Int?
+        let priorityTokens: Int?
+    }
+
+    struct VisibleProjectFingerprint: Equatable {
+        let name: String
+        let path: String?
+        let totalTokens: Int?
+        let totalCostBitPattern: UInt64?
+        let visibleSourceCount: Int
+        let sources: [VisibleSourceFingerprint]
+    }
+
+    struct VisibleSourceFingerprint: Equatable {
+        let name: String
+        let path: String?
+        let totalTokens: Int?
+        let totalCostBitPattern: UInt64?
+    }
+
+    struct VisibleSessionFingerprint: Equatable {
+        let sessionID: String
+        let lastActivityBitPattern: UInt64
+        let inputTokens: Int?
+        let cachedInputTokens: Int?
+        let outputTokens: Int?
+        let totalTokens: Int?
+        let costBitPattern: UInt64?
+        let models: [VisibleModelBreakdownFingerprint]
+    }
+
+    static func renderFingerprint(
+        from snapshot: CostUsageTokenSnapshot,
+        provider: UsageProvider) -> RenderFingerprint
+    {
+        let projects = provider == .codex ? snapshot.projects : []
+        let sessions = provider == .codex ? snapshot.sessions : []
+        return RenderFingerprint(
+            currencyCode: snapshot.currencyCode,
+            historyDays: snapshot.historyDays,
+            windowLabel: snapshot.historyLabel,
+            totalCostBitPattern: snapshot.last30DaysCostUSD.map(\.bitPattern),
+            hasDailyEntries: !snapshot.daily.isEmpty,
+            daily: snapshot.daily
+                .filter { self.chartPointInput(for: $0) != nil }
+                .sorted { $0.date < $1.date }
+                .map(self.visibleDailyFingerprint),
+            projects: Array(projects.prefix(self.maxVisibleProjectRows)).map { project in
+                let visibleSources = self.visibleProjectSources(project)
+                return VisibleProjectFingerprint(
+                    name: project.name,
+                    path: project.path,
+                    totalTokens: project.totalTokens,
+                    totalCostBitPattern: project.totalCostUSD.map(\.bitPattern),
+                    visibleSourceCount: visibleSources.count,
+                    sources: Array(visibleSources.prefix(self.maxVisibleProjectSourceRows)).map { source in
+                        VisibleSourceFingerprint(
+                            name: source.name,
+                            path: source.path,
+                            totalTokens: source.totalTokens,
+                            totalCostBitPattern: source.totalCostUSD.map(\.bitPattern))
+                    })
+            },
+            sessions: sessions.map { session in
+                VisibleSessionFingerprint(
+                    sessionID: session.sessionID,
+                    lastActivityBitPattern: session.lastActivity.timeIntervalSince1970.bitPattern,
+                    inputTokens: session.inputTokens,
+                    cachedInputTokens: session.cachedInputTokens,
+                    outputTokens: session.outputTokens,
+                    totalTokens: session.totalTokens,
+                    costBitPattern: session.costUSD.map(\.bitPattern),
+                    models: session.modelBreakdowns.map { item in
+                        VisibleModelBreakdownFingerprint(
+                            modelName: item.modelName,
+                            costBitPattern: item.costUSD.map(\.bitPattern),
+                            totalTokens: item.totalTokens,
+                            standardCostBitPattern: item.standardCostUSD.map(\.bitPattern),
+                            priorityCostBitPattern: item.priorityCostUSD.map(\.bitPattern),
+                            standardTokens: item.standardCostUSD == nil ? nil : item.standardTokens,
+                            priorityTokens: item.priorityCostUSD == nil ? nil : item.priorityTokens)
+                    })
+            })
+    }
+
+    private static func visibleDailyFingerprint(_ entry: DailyEntry) -> VisibleDailyFingerprint {
+        VisibleDailyFingerprint(
+            date: entry.date,
+            totalTokens: entry.totalTokens,
+            requestCount: entry.requestCount,
+            costBitPattern: entry.costUSD.map(\.bitPattern),
+            modelBreakdowns: self.orderedBreakdownItems(entry.modelBreakdowns ?? []).map { item in
+                VisibleModelBreakdownFingerprint(
+                    modelName: item.modelName,
+                    costBitPattern: item.costUSD.map(\.bitPattern),
+                    totalTokens: item.totalTokens,
+                    standardCostBitPattern: item.standardCostUSD.map(\.bitPattern),
+                    priorityCostBitPattern: item.priorityCostUSD.map(\.bitPattern),
+                    standardTokens: item.standardCostUSD == nil ? nil : item.standardTokens,
+                    priorityTokens: item.priorityCostUSD == nil ? nil : item.priorityTokens)
+            })
+    }
+
     static func _defaultSelectedDateKeyForTesting(provider: UsageProvider, daily: [DailyEntry]) -> String? {
         self.defaultSelectedDateKey(model: self.makeModel(provider: provider, daily: daily))
     }
@@ -601,39 +1019,31 @@ extension CostHistoryChartMenuView {
         self.axisLabelPlacement(for: self.makeModel(provider: provider, daily: daily).axisDates)
     }
 
-    static func _detailViewportHeightForTesting(modeSubtitlePresence: [Bool]) -> CGFloat {
-        let rows = modeSubtitlePresence.enumerated().map { index, hasModeSubtitle in
-            DetailRow(
-                id: "\(index)",
-                title: "Row \(index)",
-                subtitle: "Subtitle",
-                modeSubtitle: hasModeSubtitle ? "Mode" : nil,
-                accentColor: .blue)
-        }
-        return self.detailRowsViewportHeight(rows: rows)
+    static func _yAxisTickValuesForTesting(maxCostUSD: Double) -> [Double] {
+        self.yAxisTickValues(maxCostUSD: maxCostUSD)
     }
 
-    static func _detailBlockHeightForTesting(modeSubtitlePresence: [Bool]) -> CGFloat {
-        let rows = modeSubtitlePresence.enumerated().map { index, hasModeSubtitle in
-            DetailRow(
-                id: "\(index)",
-                title: "Row \(index)",
-                subtitle: "Subtitle",
-                modeSubtitle: hasModeSubtitle ? "Mode" : nil,
-                accentColor: .blue)
-        }
-        return self.detailBlockHeight(rows: rows)
+    static func _yAxisCostStringForTesting(_ value: Double, currencyCode: String = "USD") -> String {
+        self.yAxisCostString(value, currencyCode: currencyCode)
     }
 
-    static func _totalCardHeightForTesting(modeSubtitlePresence: [Bool], hasTotal: Bool) -> CGFloat {
-        let rows = modeSubtitlePresence.enumerated().map { index, hasModeSubtitle in
-            DetailRow(
-                id: "\(index)",
-                title: "Row \(index)",
-                subtitle: "Subtitle",
-                modeSubtitle: hasModeSubtitle ? "Mode" : nil,
-                accentColor: .blue)
-        }
-        return self.totalCardHeight(rows: rows, hasTotal: hasTotal)
+    static func _detailViewportConfigurationForTesting(
+        provider: UsageProvider,
+        daily: [DailyEntry]) -> (rowCount: Int, hasOverflow: Bool, rowHeight: CGFloat)
+    {
+        let model = self.makeModel(provider: provider, daily: daily)
+        return (model.detailViewportRowCount, model.hasDetailOverflow, model.detailRowHeight)
+    }
+}
+
+extension CostUsageProjectBreakdown {
+    fileprivate var projectRowID: String {
+        self.path ?? "unknown:\(self.name)"
+    }
+}
+
+extension CostUsageProjectSourceBreakdown {
+    fileprivate var sourceRowID: String {
+        self.path ?? "unknown:\(self.name)"
     }
 }

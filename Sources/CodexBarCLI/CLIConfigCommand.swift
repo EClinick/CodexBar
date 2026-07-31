@@ -3,6 +3,29 @@ import Commander
 import Foundation
 
 extension CodexBarCLI {
+    static func runConfig(path: [String], values: ParsedValues) {
+        switch path {
+        case ["config", "validate"]:
+            self.runConfigValidate(values)
+        case ["config", "dump"]:
+            self.runConfigDump(values)
+        case ["config", "providers"]:
+            self.runConfigProviders(values)
+        case ["config", "enable"]:
+            self.runConfigSetProviderEnabled(values, enabled: true)
+        case ["config", "disable"]:
+            self.runConfigSetProviderEnabled(values, enabled: false)
+        case ["config", "set-api-key"]:
+            self.runConfigSetAPIKey(values)
+        default:
+            self.exit(
+                code: .failure,
+                message: "Unknown command",
+                output: CLIOutputPreferences.from(values: values),
+                kind: .args)
+        }
+    }
+
     static func runConfigValidate(_ values: ParsedValues) {
         let output = CLIOutputPreferences.from(values: values)
         let config = Self.loadConfig(output: output)
@@ -31,7 +54,8 @@ extension CodexBarCLI {
 
     static func runConfigDump(_ values: ParsedValues) {
         let output = CLIOutputPreferences.from(values: values)
-        let config = Self.loadConfig(output: output)
+        let showSecrets = values.flags.contains("showSecrets")
+        let config = Self.loadConfig(output: output).sanitizedForDump(showSecrets: showSecrets)
         Self.printJSON(config, pretty: output.pretty)
         Self.exit(code: .success, output: output, kind: .config)
     }
@@ -348,6 +372,32 @@ struct ConfigOptions: CommanderParsable {
 
     @Flag(name: .long("pretty"), help: "Pretty-print JSON output")
     var pretty: Bool = false
+}
+
+struct ConfigDumpOptions: CommanderParsable {
+    @Flag(names: [.short("v"), .long("verbose")], help: "Enable verbose logging")
+    var verbose: Bool = false
+
+    @Flag(name: .long("json-output"), help: "Emit machine-readable logs")
+    var jsonOutput: Bool = false
+
+    @Option(name: .long("log-level"), help: "Set log level (trace|verbose|debug|info|warning|error|critical)")
+    var logLevel: String?
+
+    @Option(name: .long("format"), help: "Output format: text | json")
+    var format: OutputFormat?
+
+    @Flag(name: .long("json"), help: "")
+    var jsonShortcut: Bool = false
+
+    @Flag(name: .long("json-only"), help: "Emit JSON only (suppress non-JSON output)")
+    var jsonOnly: Bool = false
+
+    @Flag(name: .long("pretty"), help: "Pretty-print JSON output")
+    var pretty: Bool = false
+
+    @Flag(name: .long("show-secrets"), help: "Include raw un-redacted API keys and tokens in output")
+    var showSecrets: Bool = false
 }
 
 struct ConfigSetAPIKeyOptions: CommanderParsable {

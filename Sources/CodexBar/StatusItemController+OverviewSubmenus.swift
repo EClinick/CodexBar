@@ -17,7 +17,17 @@ extension StatusItemController {
         {
             return submenu
         }
-        if model.tokenUsage != nil,
+        // Mistral's top usage pane has no rate-limit bars of its own, so its Overview row always
+        // prioritizes cost history too. Other `tokenCostRequiresProviderSnapshot` providers (e.g.
+        // opencodego) show real rate-limit bars and should fall through to the settings-gated
+        // check below, same as Codex/Claude (see StatusItemController+Menu.swift's makeUsageSubmenu).
+        if provider == .mistral,
+           let submenu = self.makeCostHistorySubmenu(provider: provider, width: width)
+        {
+            return submenu
+        }
+        if self.settings.costSummaryShowsSubmenu(for: provider),
+           model.tokenUsage != nil,
            let submenu = self.makeCostHistorySubmenu(provider: provider, width: width)
         {
             return submenu

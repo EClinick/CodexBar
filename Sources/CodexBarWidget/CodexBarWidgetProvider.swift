@@ -9,13 +9,18 @@ enum ProviderChoice: String, AppEnum {
     case gemini
     case alibaba
     case alibabatokenplan
+    case qwencloud
     case antigravity
+    case cursor
     case zai
     case copilot
+    case devin
     case minimax
     case kilo
     case opencode
     case opencodego
+    case mistral
+    case kimi
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Provider")
 
@@ -25,13 +30,18 @@ enum ProviderChoice: String, AppEnum {
         .gemini: DisplayRepresentation(title: "Gemini"),
         .alibaba: DisplayRepresentation(title: "Alibaba"),
         .alibabatokenplan: DisplayRepresentation(title: "Alibaba Token Plan"),
+        .qwencloud: DisplayRepresentation(title: "Qwen Cloud"),
         .antigravity: DisplayRepresentation(title: "Antigravity"),
+        .cursor: DisplayRepresentation(title: "Cursor"),
         .zai: DisplayRepresentation(title: "z.ai"),
         .copilot: DisplayRepresentation(title: "Copilot"),
+        .devin: DisplayRepresentation(title: "Devin"),
         .minimax: DisplayRepresentation(title: "MiniMax"),
         .kilo: DisplayRepresentation(title: "Kilo"),
         .opencode: DisplayRepresentation(title: "OpenCode"),
         .opencodego: DisplayRepresentation(title: "OpenCode Go"),
+        .mistral: DisplayRepresentation(title: "Mistral"),
+        .kimi: DisplayRepresentation(title: "Kimi"),
     ]
 
     var provider: UsageProvider {
@@ -41,13 +51,18 @@ enum ProviderChoice: String, AppEnum {
         case .gemini: .gemini
         case .alibaba: .alibaba
         case .alibabatokenplan: .alibabatokenplan
+        case .qwencloud: .qwencloud
         case .antigravity: .antigravity
+        case .cursor: .cursor
         case .zai: .zai
         case .copilot: .copilot
+        case .devin: .devin
         case .minimax: .minimax
         case .kilo: .kilo
         case .opencode: .opencode
         case .opencodego: .opencodego
+        case .mistral: .mistral
+        case .kimi: .kimi
         }
     }
 
@@ -58,17 +73,19 @@ enum ProviderChoice: String, AppEnum {
         case .openai: return nil // OpenAI not yet supported in widgets
         case .azureopenai: return nil // Azure OpenAI not yet supported in widgets
         case .claude: self = .claude
+        case .clinepass: return nil // ClinePass not yet supported in widgets
         case .gemini: self = .gemini
         case .alibaba: self = .alibaba
         case .alibabatokenplan: self = .alibabatokenplan
+        case .qwencloud: self = .qwencloud
         case .antigravity: self = .antigravity
-        case .cursor: return nil // Cursor not yet supported in widgets
+        case .cursor: self = .cursor
         case .opencode: self = .opencode
         case .opencodego: self = .opencodego
         case .zai: self = .zai
         case .factory: return nil // Factory not yet supported in widgets
         case .copilot: self = .copilot
-        case .devin: return nil // Devin not yet supported in widgets
+        case .devin: self = .devin
         case .minimax: self = .minimax
         case .manus: return nil // Manus not yet supported in widgets
         case .vertexai: return nil // Vertex AI not yet supported in widgets
@@ -76,27 +93,33 @@ enum ProviderChoice: String, AppEnum {
         case .kiro: return nil // Kiro not yet supported in widgets
         case .augment: return nil // Augment not yet supported in widgets
         case .jetbrains: return nil // JetBrains not yet supported in widgets
-        case .kimi: return nil // Kimi not yet supported in widgets
-        case .kimik2: return nil // Kimi K2 not yet supported in widgets
+        case .kimi: self = .kimi
         case .moonshot: return nil // Moonshot not yet supported in widgets
         case .amp: return nil // Amp not yet supported in widgets
         case .t3chat: return nil // T3 Chat not yet supported in widgets
+        case .zoommate: return nil // ZoomMate not yet supported in widgets
         case .ollama: return nil // Ollama not yet supported in widgets
         case .synthetic: return nil // Synthetic not yet supported in widgets
         case .openrouter: return nil // OpenRouter not yet supported in widgets
+        case .clawrouter: return nil // ClawRouter not yet supported in widgets
+        case .sub2api: return nil // sub2api not yet supported in widgets
+        case .wayfinder: return nil // Wayfinder not yet supported in widgets
         case .elevenlabs: return nil // ElevenLabs not yet supported in widgets
         case .warp: return nil // Warp not yet supported in widgets
         case .windsurf: return nil // Windsurf not yet supported in widgets
         case .perplexity: return nil // Perplexity not yet supported in widgets
         case .mimo: return nil // Xiaomi MiMo not yet supported in widgets
         case .doubao: return nil // Doubao not yet supported in widgets
+        case .sakana: return nil // Sakana AI not yet supported in widgets
         case .abacus: return nil // Abacus AI not yet supported in widgets
-        case .mistral: return nil // Mistral not yet supported in widgets
+        case .mistral: self = .mistral
         case .deepseek: return nil // DeepSeek not yet supported in widgets
+        case .deepinfra: return nil // DeepInfra not yet supported in widgets
         case .codebuff: return nil // Codebuff not yet supported in widgets
         case .crof: return nil // Crof not yet supported in widgets
         case .venice: return nil // Venice not yet supported in widgets
         case .commandcode: return nil // CommandCode not yet supported in widgets
+        case .qoder: return nil // Qoder not yet supported in widgets
         case .stepfun: return nil // StepFun not yet supported in widgets
         case .bedrock: return nil // Bedrock not yet supported in widgets
         case .grok: return nil // Grok not yet supported in widgets
@@ -106,7 +129,12 @@ enum ProviderChoice: String, AppEnum {
         case .deepgram: return nil // Deepgram not yet supported in widgets
         case .poe: return nil // Poe not yet supported in widgets
         case .chutes: return nil // Chutes not yet supported in widgets
+        case .longcat: return nil // LongCat not yet supported in widgets
         case .zed: return nil // Zed not yet supported in widgets
+        case .neuralwatt: return nil // Neuralwatt not yet supported in widgets
+        case .zenmux: return nil // ZenMux not yet supported in widgets
+        case .aiand: return nil // ai& not yet supported in widgets
+        case .xai: return nil // xAI not yet supported in widgets
         }
     }
 }
@@ -215,8 +243,9 @@ struct CodexBarTimelineProvider: AppIntentTimelineProvider {
     {
         let provider = configuration.provider.provider
         let snapshot = WidgetSnapshotStore.load() ?? WidgetPreviewData.emptySnapshot()
-        let entry = CodexBarWidgetEntry(date: Date(), provider: provider, snapshot: snapshot)
-        let refresh = Date().addingTimeInterval(30 * 60)
+        let now = Date()
+        let entry = CodexBarWidgetEntry(date: now, provider: provider, snapshot: snapshot)
+        let refresh = BurnDownRefreshSchedule.nextRefresh(snapshot: snapshot, provider: provider, now: now)
         return Timeline(entries: [entry], policy: .after(refresh))
     }
 }
@@ -238,7 +267,10 @@ struct CodexBarSwitcherTimelineProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CodexBarSwitcherEntry>) -> Void) {
         let entry = self.makeEntry()
-        let refresh = Date().addingTimeInterval(30 * 60)
+        let refresh = BurnDownRefreshSchedule.nextRefresh(
+            snapshot: entry.snapshot,
+            provider: entry.provider,
+            now: entry.date)
         completion(Timeline(entries: [entry], policy: .after(refresh)))
     }
 

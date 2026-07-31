@@ -29,6 +29,27 @@ struct KeychainCacheStoreTests {
     }
 
     @Test
+    func `implicit test store override stays isolated from explicit test store`() {
+        let service = "implicit-test-store-\(UUID().uuidString)"
+        let key = KeychainCacheStore.Key(category: "test", identifier: UUID().uuidString)
+        let explicitEntry = TestEntry(value: "explicit", storedAt: Date(timeIntervalSince1970: 1))
+        let implicitEntry = TestEntry(value: "implicit", storedAt: Date(timeIntervalSince1970: 2))
+
+        KeychainCacheStore.setTestStoreForTesting(true)
+        defer { KeychainCacheStore.setTestStoreForTesting(false) }
+
+        KeychainCacheStore.withServiceOverrideForTesting(service) {
+            KeychainCacheStore.store(key: key, entry: explicitEntry)
+            KeychainCacheStore.withImplicitTestStoreForTesting {
+                #expect(self.loadedEntry(for: key) == nil)
+                KeychainCacheStore.store(key: key, entry: implicitEntry)
+                #expect(self.loadedEntry(for: key) == implicitEntry)
+            }
+            #expect(self.loadedEntry(for: key) == explicitEntry)
+        }
+    }
+
+    @Test
     func `background interaction keeps real keychain cache available for no UI reads writes and deletes`() {
         KeychainAccessGate.withTaskOverrideForTesting(false) {
             ProviderInteractionContext.$current.withValue(.background) {
@@ -36,6 +57,11 @@ struct KeychainCacheStoreTests {
                 #expect(KeychainCacheStore.canEnumerateOrDeleteRealKeychainForTesting == true)
             }
         }
+    }
+
+    private func loadedEntry(for key: KeychainCacheStore.Key) -> TestEntry? {
+        guard case let .found(entry) = KeychainCacheStore.load(key: key, as: TestEntry.self) else { return nil }
+        return entry
     }
 
     @Test
@@ -188,6 +214,93 @@ struct KeychainCacheStoreTests {
             #expect(loaded == entry)
         case .missing, .temporarilyUnavailable, .invalid:
             #expect(Bool(false), "Expected override not to mutate test store")
+        }
+    }
+
+    @Test
+    func `disabled keychain access keeps an in process memory cache`() {
+        KeychainCacheStore.resetDisabledAccessMemoryStoreForTesting()
+        defer {
+            KeychainCacheStore.resetDisabledAccessMemoryStoreForTesting()
+            KeychainAccessGate.resetOverrideForTesting()
+        }
+
+        let service = "disabled-memory-\(UUID().uuidString)"
+        let key = KeychainCacheStore.Key(category: "cookie", identifier: "cursor")
+        let entry = TestEntry(value: "WorkosCursorSessionToken=memory", storedAt: Date(timeIntervalSince1970: 3))
+
+        KeychainAccessGate.withTaskOverrideForTesting(true) {
+            KeychainCacheStore.withDisabledAccessMemoryStoreForTesting(true) {
+                KeychainCacheStore.withServiceOverrideForTesting(service) {
+                    #expect(KeychainCacheStore.storeResult(key: key, entry: entry))
+                    switch KeychainCacheStore.load(key: key, as: TestEntry.self) {
+                    case let .found(loaded):
+                        #expect(loaded == entry)
+                    case .missing, .temporarilyUnavailable, .invalid:
+                        #expect(Bool(false), "Expected in-process memory cache entry")
+                    }
+                    #expect(KeychainCacheStore.keys(category: "cookie").contains(key))
+                    #expect(KeychainCacheStore.clearResult(key: key) == .removed)
+                    switch KeychainCacheStore.load(key: key, as: TestEntry.self) {
+                    case .missing:
+                        break
+                    case .found, .temporarilyUnavailable, .invalid:
+                        #expect(Bool(false), "Expected memory cache entry to be cleared")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    func `disabled keychain access does not retain OAuth entries in memory`() {
+        KeychainCacheStore.resetDisabledAccessMemoryStoreForTesting()
+        defer {
+            KeychainCacheStore.resetDisabledAccessMemoryStoreForTesting()
+            KeychainAccessGate.resetOverrideForTesting()
+        }
+
+        let service = "disabled-memory-oauth-\(UUID().uuidString)"
+        let key = KeychainCacheStore.Key.oauth(provider: .claude)
+        let entry = TestEntry(value: "synthetic-oauth-credential", storedAt: Date(timeIntervalSince1970: 4))
+
+        KeychainAccessGate.withTaskOverrideForTesting(true) {
+            KeychainCacheStore.withDisabledAccessMemoryStoreForTesting(true) {
+                KeychainCacheStore.withServiceOverrideForTesting(service) {
+                    #expect(!KeychainCacheStore.storeResult(key: key, entry: entry))
+                    #expect(self.loadedEntry(for: key) == nil)
+                    #expect(KeychainCacheStore.keysResult(category: "oauth") == .failed)
+                }
+            }
+        }
+    }
+
+    @Test
+    func `toggling Keychain access clears the disabled access memory cache`() {
+        KeychainCacheStore.resetDisabledAccessMemoryStoreForTesting()
+        defer {
+            KeychainCacheStore.resetDisabledAccessMemoryStoreForTesting()
+            KeychainAccessGate.resetOverrideForTesting()
+        }
+
+        let service = "disabled-memory-toggle-\(UUID().uuidString)"
+        let key = KeychainCacheStore.Key(category: "cookie", identifier: "cursor")
+        let entry = TestEntry(value: "WorkosCursorSessionToken=stale", storedAt: Date(timeIntervalSince1970: 4))
+
+        KeychainAccessGate.isDisabled = true
+        KeychainCacheStore.withDisabledAccessMemoryStoreForTesting(true) {
+            KeychainCacheStore.withServiceOverrideForTesting(service) {
+                #expect(KeychainCacheStore.storeResult(key: key, entry: entry))
+                #expect(self.loadedEntry(for: key) == entry)
+            }
+        }
+
+        KeychainAccessGate.isDisabled = false
+
+        KeychainCacheStore.withDisabledAccessMemoryStoreForTesting(true) {
+            KeychainCacheStore.withServiceOverrideForTesting(service) {
+                #expect(self.loadedEntry(for: key) == nil)
+            }
         }
     }
 

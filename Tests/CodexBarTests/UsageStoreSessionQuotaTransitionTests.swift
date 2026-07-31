@@ -21,14 +21,24 @@ struct UsageStoreSessionQuotaTransitionTests {
         private(set) var quotaWarningPosts: [(
             event: QuotaWarningEvent,
             provider: UsageProvider,
-            soundEnabled: Bool)] = []
+            soundEnabled: Bool,
+            onScreenAlertEnabled: Bool)] = []
 
         func post(transition: SessionQuotaTransition, provider: UsageProvider, badge _: NSNumber?) {
             self.posts.append((transition: transition, provider: provider))
         }
 
-        func postQuotaWarning(event: QuotaWarningEvent, provider: UsageProvider, soundEnabled: Bool) {
-            self.quotaWarningPosts.append((event: event, provider: provider, soundEnabled: soundEnabled))
+        func postQuotaWarning(
+            event: QuotaWarningEvent,
+            provider: UsageProvider,
+            soundEnabled: Bool,
+            onScreenAlertEnabled: Bool)
+        {
+            self.quotaWarningPosts.append((
+                event: event,
+                provider: provider,
+                soundEnabled: soundEnabled,
+                onScreenAlertEnabled: onScreenAlertEnabled))
         }
     }
 
@@ -330,6 +340,7 @@ struct UsageStoreSessionQuotaTransitionTests {
         settings.refreshFrequency = .manual
         settings.statusChecksEnabled = false
         settings.quotaWarningNotificationsEnabled = true
+        settings.quotaWarningOnScreenAlertEnabled = true
         settings.quotaWarningThresholds = [50, 20]
         settings.setQuotaWarningWindowEnabled(.session, enabled: true)
         settings.setQuotaWarningWindowEnabled(.weekly, enabled: true)
@@ -379,6 +390,7 @@ struct UsageStoreSessionQuotaTransitionTests {
         #expect(notifier.quotaWarningPosts.first?.event.window == .session)
         #expect(notifier.quotaWarningPosts.first?.event.threshold == 50)
         #expect(notifier.quotaWarningPosts.first?.event.accountDisplayName == "person@example.com")
+        #expect(notifier.quotaWarningPosts.first?.onScreenAlertEnabled == true)
     }
 
     @Test
@@ -653,6 +665,39 @@ struct UsageStoreSessionQuotaTransitionTests {
     }
 
     @Test
+    func `amp subscription quota warnings use pool labels`() {
+        let settings = self.makeSettings(suiteName: "UsageStoreSessionQuotaTransitionTests-warning-amp")
+        settings.refreshFrequency = .manual
+        settings.statusChecksEnabled = false
+        settings.quotaWarningNotificationsEnabled = true
+        settings.quotaWarningThresholds = [50]
+        settings.setQuotaWarningWindowEnabled(.session, enabled: true)
+        settings.setQuotaWarningWindowEnabled(.weekly, enabled: true)
+
+        let notifier = SessionQuotaNotifierSpy()
+        let store = UsageStore(
+            fetcher: UsageFetcher(),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            sessionQuotaNotifier: notifier)
+
+        func snapshot(used: Double) -> UsageSnapshot {
+            UsageSnapshot(
+                primary: RateWindow(usedPercent: used, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
+                secondary: RateWindow(usedPercent: used, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
+                ampUsage: AmpUsageDetails(
+                    individualCredits: nil,
+                    workspaceBalances: [],
+                    subscriptionPlan: "Megawatt"),
+                updatedAt: Date())
+        }
+        store.handleQuotaWarningTransitions(provider: .amp, snapshot: snapshot(used: 40))
+        store.handleQuotaWarningTransitions(provider: .amp, snapshot: snapshot(used: 55))
+
+        #expect(notifier.quotaWarningPosts.map(\.event.windowDisplayLabel) == ["Other usage", "Orb usage"])
+    }
+
+    @Test
     func `antigravity quota warnings use named session and weekly durations`() {
         let settings = self.makeSettings(suiteName: "UsageStoreSessionQuotaTransitionTests-warning-antigravity")
         settings.refreshFrequency = .manual
@@ -733,7 +778,10 @@ struct UsageStoreSessionQuotaTransitionTests {
             snapshot: self.antigravityLegacySnapshot(geminiUsed: 80, claudeUsed: 40))
 
         #expect(notifier.quotaWarningPosts.isEmpty)
-        let key = UsageStore.QuotaWarningStateKey(provider: .antigravity, window: .session)
+        let key = UsageStore.QuotaWarningStateKey(
+            provider: .antigravity,
+            window: .session,
+            accountDiscriminator: nil)
         #expect(store.quotaWarningState[key]?.lastRemaining == 20)
         #expect(store.quotaWarningState[key]?.source == .antigravityLegacy)
     }
@@ -776,7 +824,9 @@ struct UsageStoreSessionQuotaTransitionTests {
                 updatedAt: Date()))
 
         #expect(notifier.quotaWarningPosts.count == 1)
-        #expect(store.quotaWarningState[UsageStore.QuotaWarningStateKey(provider: .codex, window: .session)] == nil)
+        #expect(store.quotaWarningState[
+            UsageStore.QuotaWarningStateKey(provider: .codex, window: .session, accountDiscriminator: nil),
+        ] == nil)
     }
 
     private func minimaxSnapshot(sessionUsed: Double, weeklyUsed: Double) -> UsageSnapshot {
@@ -859,5 +909,94 @@ struct UsageStoreSessionQuotaTransitionTests {
                 resetsAt: nil,
                 resetDescription: nil),
             updatedAt: Date())
+    }
+}
+
+@MainActor
+struct CrofQuotaNotificationTests {
+    private func makeSettings(suiteName: String) -> SettingsStore {
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return SettingsStore(
+            userDefaults: defaults,
+            configStore: testConfigStore(suiteName: suiteName),
+            zaiTokenStore: NoopZaiTokenStore(),
+            syntheticTokenStore: NoopSyntheticTokenStore())
+    }
+
+    @Test
+    func `crof credits-only balance depletion and top-up do not emit quota notifications`() {
+        let settings = self.makeSettings(suiteName: "UsageStoreSessionQuotaTransitionTests-crof-balance")
+        settings.refreshFrequency = .manual
+        settings.statusChecksEnabled = false
+        settings.sessionQuotaNotificationsEnabled = true
+        settings.quotaWarningNotificationsEnabled = true
+        settings.quotaWarningThresholds = [50, 20]
+
+        let notifier = UsageStoreSessionQuotaTransitionTests.SessionQuotaNotifierSpy()
+        let store = UsageStore(
+            fetcher: UsageFetcher(),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            sessionQuotaNotifier: notifier)
+
+        let funded = CrofUsageSnapshot(credits: 9.0441, updatedAt: Date()).toUsageSnapshot()
+        let depleted = CrofUsageSnapshot(credits: 0, updatedAt: Date()).toUsageSnapshot()
+        let toppedUp = CrofUsageSnapshot(credits: 5, updatedAt: Date()).toUsageSnapshot()
+
+        #expect(funded.secondary == nil)
+        #expect(funded.primary?.windowMinutes == nil)
+        #expect(depleted.primary?.usedPercent == 100)
+
+        for snapshot in [funded, depleted, toppedUp] {
+            store.handleSessionQuotaTransition(provider: .crof, snapshot: snapshot)
+            store.handleQuotaWarningTransitions(provider: .crof, snapshot: snapshot)
+        }
+
+        #expect(notifier.posts.isEmpty)
+        #expect(notifier.quotaWarningPosts.isEmpty)
+    }
+
+    @Test
+    func `crof quota-backed session window still emits session quota notifications`() {
+        let settings = self.makeSettings(suiteName: "UsageStoreSessionQuotaTransitionTests-crof-quota")
+        settings.refreshFrequency = .manual
+        settings.statusChecksEnabled = false
+        settings.sessionQuotaNotificationsEnabled = true
+
+        let notifier = UsageStoreSessionQuotaTransitionTests.SessionQuotaNotifierSpy()
+        let store = UsageStore(
+            fetcher: UsageFetcher(),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            sessionQuotaNotifier: notifier)
+
+        // Quota-backed Crof shape: request-quota primary + credits secondary.
+        let credits = RateWindow(
+            usedPercent: 0,
+            windowMinutes: nil,
+            resetsAt: nil,
+            resetDescription: "$10.00")
+        let baseline = UsageSnapshot(
+            primary: RateWindow(
+                usedPercent: 20,
+                windowMinutes: 5 * 60,
+                resetsAt: nil,
+                resetDescription: "800 requests left"),
+            secondary: credits,
+            updatedAt: Date())
+        store.handleSessionQuotaTransition(provider: .crof, snapshot: baseline)
+
+        let depleted = UsageSnapshot(
+            primary: RateWindow(
+                usedPercent: 100,
+                windowMinutes: 5 * 60,
+                resetsAt: nil,
+                resetDescription: "0 requests left"),
+            secondary: credits,
+            updatedAt: Date())
+        store.handleSessionQuotaTransition(provider: .crof, snapshot: depleted)
+
+        #expect(notifier.posts.map(\.provider) == [.crof])
     }
 }

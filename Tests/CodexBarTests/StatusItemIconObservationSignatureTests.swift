@@ -6,15 +6,25 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct StatusItemIconObservationSignatureTests {
-    private func makeController(suiteName: String) -> (SettingsStore, UsageStore, StatusItemController) {
-        let settings = SettingsStore(
-            configStore: testConfigStore(suiteName: suiteName),
-            zaiTokenStore: NoopZaiTokenStore(),
-            syntheticTokenStore: NoopSyntheticTokenStore())
+    private func makeController(
+        suiteName: String,
+        menuBarLayout: MenuBarLayout? = nil)
+        -> (SettingsStore, UsageStore, StatusItemController)
+    {
+        let settings = testSettingsStore(suiteName: suiteName)
         settings.statusChecksEnabled = true
         settings.refreshFrequency = .manual
+        settings.usageBarsShowUsed = false
+        settings.showOptionalCreditsAndExtraUsage = true
         settings.menuBarShowsBrandIconWithPercent = false
+        settings.menuBarShowsHighestUsage = false
         settings.mergeIcons = true
+        settings.mergedMenuLastSelectedWasOverview = false
+        settings.selectedMenuProvider = .codex
+        if let menuBarLayout {
+            settings.menuBarShowsBrandIconWithPercent = true
+            settings.setMenuBarLayout(menuBarLayout, for: nil)
+        }
 
         let registry = ProviderRegistry.shared
         if let codexMeta = registry.metadata[.codex] {
@@ -59,11 +69,69 @@ struct StatusItemIconObservationSignatureTests {
     }
 
     @Test
+    func `custom menu bar layout preserves accessibility without a hover tooltip`() throws {
+        let (_, _, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-custom-layout-tooltip",
+            menuBarLayout: MenuBarLayout(lines: [[.icon, .providerName]]))
+        defer { controller.releaseStatusItemsForTesting() }
+
+        let button = try #require(controller.statusItem.button)
+        #expect(button.accessibilityTitle()?.isEmpty == false)
+        #expect(button.toolTip == nil)
+    }
+
+    @Test
     func `store icon observation signature ignores non visual snapshot churn`() {
         let (_, store, controller) = self.makeController(
             suiteName: "StatusItemIconObservationSignatureTests-snapshot-metadata")
         defer { controller.releaseStatusItemsForTesting() }
 
+        let baseline = controller.storeIconObservationSignature()
+        #expect(!baseline.contains("icon@example.com"))
+
+        store._setSnapshotForTesting(
+            Self.makeSnapshot(
+                provider: .codex,
+                email: "rotated-account@example.com",
+                updatedAt: Date(timeIntervalSince1970: 200)),
+            provider: .codex)
+
+        let signature = controller.storeIconObservationSignature()
+
+        #expect(signature == baseline)
+        #expect(!signature.contains("rotated-account@example.com"))
+    }
+
+    @Test
+    func `custom account label changes the store icon observation signature`() {
+        let (_, store, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-custom-account-label",
+            menuBarLayout: MenuBarLayout(lines: [[.accountLabel]]))
+        defer { controller.releaseStatusItemsForTesting() }
+
+        let baseline = controller.storeIconObservationSignature()
+        #expect(!baseline.contains("icon@example.com"))
+
+        store._setSnapshotForTesting(
+            Self.makeSnapshot(
+                provider: .codex,
+                email: "rotated-account@example.com",
+                updatedAt: Date(timeIntervalSince1970: 200)),
+            provider: .codex)
+
+        let signature = controller.storeIconObservationSignature()
+
+        #expect(signature != baseline)
+        #expect(!signature.contains("rotated-account@example.com"))
+    }
+
+    @Test
+    func `hidden custom account label ignores account changes`() {
+        let (settings, store, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-hidden-custom-account-label",
+            menuBarLayout: MenuBarLayout(lines: [[.accountLabel]]))
+        defer { controller.releaseStatusItemsForTesting() }
+        settings.hidePersonalInfo = true
         let baseline = controller.storeIconObservationSignature()
 
         store._setSnapshotForTesting(
@@ -88,6 +156,7 @@ struct StatusItemIconObservationSignatureTests {
         let registry = ProviderRegistry.shared
         let claudeMetadata = try #require(registry.metadata[.claude])
         settings.setProviderEnabled(provider: .claude, metadata: claudeMetadata, enabled: true)
+        settings.selectedMenuProvider = .codex
         store._setSnapshotForTesting(
             Self.makeSnapshot(provider: .claude, email: "claude@example.com"),
             provider: .claude)
@@ -239,6 +308,103 @@ struct StatusItemIconObservationSignatureTests {
         #expect(controller.storeIconObservationSignature() != baseline)
     }
 
+    @Test(arguments: [MenuBarLayoutToken.costToday, .cost30d])
+    func `custom cost token changes the store icon observation signature`(layoutElement: MenuBarLayoutToken) {
+        let (_, store, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-custom-cost-\(layoutElement)",
+            menuBarLayout: MenuBarLayout(lines: [[layoutElement]]))
+        defer { controller.releaseStatusItemsForTesting() }
+
+        let baseline = controller.storeIconObservationSignature()
+
+        store._setTokenSnapshotForTesting(
+            Self.makeTokenSnapshot(todayCost: 1.25, last30DaysCost: 12.50),
+            provider: .codex)
+
+        #expect(controller.storeIconObservationSignature() != baseline)
+    }
+
+    @Test
+    func `custom cost layout ignores token fields it does not render`() {
+        let (_, store, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-custom-cost-irrelevant",
+            menuBarLayout: MenuBarLayout(lines: [[.cost30d]]))
+        defer { controller.releaseStatusItemsForTesting() }
+
+        store._setTokenSnapshotForTesting(
+            Self.makeTokenSnapshot(todayCost: 1.25, last30DaysCost: 12.50, sessionTokens: 100),
+            provider: .codex)
+        let baseline = controller.storeIconObservationSignature()
+
+        store._setTokenSnapshotForTesting(
+            Self.makeTokenSnapshot(todayCost: 9.99, last30DaysCost: 12.50, sessionTokens: 999),
+            provider: .codex)
+
+        #expect(controller.storeIconObservationSignature() == baseline)
+    }
+
+    @Test
+    func `token cost publication enters the icon refresh path without a usage change`() async {
+        let (_, store, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-custom-cost-title",
+            menuBarLayout: MenuBarLayout(lines: [[.cost30d]]))
+        defer { controller.releaseStatusItemsForTesting() }
+        controller.updateIcons()
+        let baseline = controller.lastObservedStoreIconWorkSignature
+        let usageUpdatedAt = store.snapshot(for: .codex)?.updatedAt
+        let usagePrimaryPercent = store.snapshot(for: .codex)?.primary?.usedPercent
+
+        store._setTokenSnapshotForTesting(
+            Self.makeTokenSnapshot(todayCost: 1.25, last30DaysCost: 12.50),
+            provider: .codex)
+
+        for _ in 0..<100 where controller.lastObservedStoreIconWorkSignature == baseline {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(store.snapshot(for: .codex)?.updatedAt == usageUpdatedAt)
+        #expect(store.snapshot(for: .codex)?.primary?.usedPercent == usagePrimaryPercent)
+        #expect(controller.lastObservedStoreIconWorkSignature != baseline)
+        #expect(
+            controller.menuBarLayoutCostStrings(provider: .codex).last30Days ==
+                UsageFormatter.currencyString(12.50, currencyCode: "USD"))
+    }
+
+    @Test
+    func `display settings persist cached widget snapshot`() async {
+        let (settings, store, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-widget-display")
+        defer { controller.releaseStatusItemsForTesting() }
+
+        var widgetSnapshots: [WidgetSnapshot] = []
+        store._test_widgetSnapshotSaveOverride = { widgetSnapshots.append($0) }
+        defer { store._test_widgetSnapshotSaveOverride = nil }
+
+        settings.usageBarsShowUsed = true
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        await store.widgetSnapshotPersistTask?.value
+
+        #expect(widgetSnapshots.last?.usageBarsShowUsed == true)
+        #expect(widgetSnapshots.last?.entries.contains(where: { $0.provider == .codex }) == true)
+    }
+
+    @Test
+    func `config only settings do not persist cached widget snapshot`() async {
+        let (settings, store, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-widget-config-only")
+        defer { controller.releaseStatusItemsForTesting() }
+
+        var widgetSnapshots: [WidgetSnapshot] = []
+        store._test_widgetSnapshotSaveOverride = { widgetSnapshots.append($0) }
+        defer { store._test_widgetSnapshotSaveOverride = nil }
+
+        settings.zaiAPIToken = "test-token"
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await store.widgetSnapshotPersistTask?.value
+
+        #expect(widgetSnapshots.isEmpty)
+    }
+
     @Test
     func `updateIcons reuses a precomputed store icon signature instead of recomputing it`() {
         let (_, _, controller) = self.makeController(
@@ -319,5 +485,35 @@ struct StatusItemIconObservationSignatureTests {
                 accountEmail: "copilot@example.com",
                 accountOrganization: nil,
                 loginMethod: "individual"))
+    }
+
+    private static func makeTokenSnapshot(
+        todayCost: Double,
+        last30DaysCost: Double,
+        sessionTokens: Int? = nil,
+        now: Date = .init())
+        -> CostUsageTokenSnapshot
+    {
+        let formatter = DateFormatter()
+        formatter.calendar = .current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return CostUsageTokenSnapshot(
+            sessionTokens: sessionTokens,
+            sessionCostUSD: nil,
+            last30DaysTokens: nil,
+            last30DaysCostUSD: last30DaysCost,
+            daily: [
+                CostUsageDailyReport.Entry(
+                    date: formatter.string(from: now),
+                    inputTokens: nil,
+                    outputTokens: nil,
+                    totalTokens: nil,
+                    costUSD: todayCost,
+                    modelsUsed: nil,
+                    modelBreakdowns: nil),
+            ],
+            updatedAt: now)
     }
 }

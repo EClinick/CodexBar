@@ -20,13 +20,18 @@ public enum OpenCodeProviderDescriptor {
                 defaultEnabled: false,
                 isPrimaryProvider: false,
                 usesAccountFallback: false,
-                browserCookieOrder: ProviderBrowserCookieDefaults.defaultImportOrder,
+                browserCookieOrder: ProviderBrowserCookieDefaults.opencodeCookieImportOrder,
                 dashboardURL: "https://opencode.ai",
                 statusPageURL: nil),
             branding: ProviderBranding(
                 iconStyle: .opencode,
                 iconResourceName: "ProviderIcon-opencode",
-                color: ProviderColor(red: 59 / 255, green: 130 / 255, blue: 246 / 255)),
+                color: ProviderColor(red: 59 / 255, green: 130 / 255, blue: 246 / 255),
+                confettiPalette: [
+                    ProviderColor(hex: 0x211E1E),
+                    ProviderColor(hex: 0xCFCECD),
+                    ProviderColor(hex: 0xFAB283),
+                ]),
             tokenCost: ProviderTokenCostConfig(
                 supportsTokenCost: false,
                 noDataMessage: { "OpenCode cost summary is not supported." }),

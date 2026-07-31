@@ -6,7 +6,28 @@ import QuartzCore
 import Security
 import SwiftUI
 
+enum CodexBarLaunchMode: Equatable {
+    case application
+    case hookEvent
+
+    static func resolve(arguments: [String]) -> Self {
+        // Other CodexBar installations can leave this app path registered in ~/.codex/hooks.json.
+        // Treat those invocations as a no-op before AppKit creates a second set of status items.
+        arguments.dropFirst().contains("--hook-event") ? .hookEvent : .application
+    }
+}
+
 @main
+enum CodexBarEntryPoint {
+    @MainActor
+    static func main() {
+        guard CodexBarLaunchMode.resolve(arguments: CommandLine.arguments) == .application else {
+            return
+        }
+        CodexBarApp.main()
+    }
+}
+
 struct CodexBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var settings: SettingsStore
@@ -99,23 +120,28 @@ struct CodexBarApp: App {
                     await self.appDelegate.runProviderLoginFlow(provider)
                 })
         }
-        .defaultSize(width: PreferencesTab.general.preferredWidth, height: PreferencesTab.general.preferredHeight)
-        .windowResizability(.contentSize)
+        .defaultSize(width: SettingsPane.windowWidth, height: SettingsPane.windowHeight)
+        .windowResizability(.contentMinSize)
     }
 
-    private func openSettings(tab: PreferencesTab) {
-        self.preferencesSelection.tab = tab
+    private func openSettings(pane: SettingsPane) {
+        self.preferencesSelection.pane = pane
         NSApp.activate(ignoringOtherApps: true)
-        _ = NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        let outcome = SettingsWindowOpener.live().open(preferred: .appKit)
+        let logger = CodexBarLog.logger(LogCategories.app)
+        switch outcome {
+        case .preferred:
+            break
+        case .fallback:
+            logger.warning("Settings AppKit action was not handled; used notification fallback")
+        case .failed:
+            logger.error("Failed to open Settings; AppKit action and notification fallback unavailable")
+        }
     }
 
     private static func applyLanguagePreference(from settings: SettingsStore) {
-        let language = settings.appLanguage
-        if language.isEmpty {
-            UserDefaults.standard.removeObject(forKey: "AppleLanguages")
-        } else {
-            UserDefaults.standard.set([language], forKey: "AppleLanguages")
-        }
+        AppLanguagePreferenceMigration.clearLegacyOverrideIfOwned(storedAppLanguage: settings.appLanguage)
+        resetCodexBarLocalizationCache()
     }
 }
 
@@ -364,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferencesSelection: PreferencesSelection?
     private var managedCodexAccountCoordinator: ManagedCodexAccountCoordinator?
     private var codexAccountPromotionCoordinator: CodexAccountPromotionCoordinator?
-    private var hasInstalledWeeklyLimitResetObserver = false
+    private var hasInstalledLimitResetObservers = false
     #if DEBUG
     private var debugMemoryPressureObserver: NSObjectProtocol?
     #endif
@@ -386,25 +412,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppNotifications.shared.requestAuthorizationOnStartup()
         self.memoryPressureMonitor.start()
         #if DEBUG
         self.installDebugMemoryPressureObserverIfNeeded()
         #endif
         self.ensureStatusController()
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let settings = self?.settings else { return }
+            AdaptiveActivityConsentPresenter.presentIfNeeded(settings: settings)
+            AppNotifications.shared.requestAuthorizationOnStartup()
+            // A persisted non-USD choice opts into the daily exchange-rate refresh. The service
+            // returns before networking for the default USD setting and Auto.
+            guard CurrencyExchange.requiresLiveRates(
+                preferredCurrencyCode: settings.preferredCurrencyCode)
+            else { return }
+            await CurrencyExchange.shared.fetchLatestRatesIfNeeded(
+                preferredCurrencyCode: settings.preferredCurrencyCode)
+        }
         KeyboardShortcuts.onKeyUp(for: .openMenu) { [weak self] in
             // KeyboardShortcuts dispatches both normal and menu-tracking hotkeys on the main event loop.
             MainActor.assumeIsolated {
                 self?.statusController?.openMenuFromShortcut()
             }
         }
-        if !self.hasInstalledWeeklyLimitResetObserver {
+        if !self.hasInstalledLimitResetObservers {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(self.handleSessionLimitResetNotification(_:)),
+                name: .codexbarSessionLimitReset,
+                object: nil)
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(self.handleWeeklyLimitResetNotification(_:)),
                 name: .codexbarWeeklyLimitReset,
                 object: nil)
-            self.hasInstalledWeeklyLimitResetObserver = true
+            self.hasInstalledLimitResetObservers = true
         }
     }
 
@@ -425,18 +468,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await statusController.runLoginFlowFromSettings(provider: provider)
     }
 
+    @objc private func handleSessionLimitResetNotification(_ notification: Notification) {
+        guard let event = notification.object as? SessionLimitResetEvent else { return }
+        guard self.settings?.confettiOnSessionLimitResetsEnabled == true else { return }
+        self.playLimitResetConfetti(
+            provider: event.provider,
+            accountIdentifier: event.accountIdentifier,
+            resetKind: "session")
+    }
+
     @objc private func handleWeeklyLimitResetNotification(_ notification: Notification) {
         guard let event = notification.object as? WeeklyLimitResetEvent else { return }
         guard self.settings?.confettiOnWeeklyLimitResetsEnabled == true else { return }
-        let origin = self.statusController?.celebrationOriginPoint(for: event.provider)
+        self.playLimitResetConfetti(
+            provider: event.provider,
+            accountIdentifier: event.accountIdentifier,
+            resetKind: "weekly")
+    }
+
+    private func playLimitResetConfetti(
+        provider: UsageProvider,
+        accountIdentifier: String,
+        resetKind: String)
+    {
+        let origin = self.statusController?.celebrationOriginPoint(for: provider)
+        let palette = ProviderDescriptorRegistry.descriptor(for: provider).branding.confettiPalette
         self.confettiLogger.info(
             "Triggering confetti",
             metadata: [
-                "provider": event.provider.rawValue,
-                "accountIdentifier": event.accountIdentifier,
+                "provider": provider.rawValue,
+                "accountIdentifier": accountIdentifier,
+                "resetKind": resetKind,
                 "originKnown": origin == nil ? "0" : "1",
             ])
-        self.confettiOverlayController.play(originInScreen: origin)
+        self.confettiOverlayController.play(originInScreen: origin, colors: palette)
     }
 
     /// Use the classic (non-Liquid Glass) app icon on macOS versions before 26.
@@ -472,7 +537,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func ensureStatusController() {
-        if self.statusController != nil { return }
+        if self.statusController != nil {
+            return
+        }
 
         if let store,
            let settings,

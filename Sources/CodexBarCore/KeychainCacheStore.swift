@@ -41,8 +41,32 @@ public enum KeychainCacheStore {
     private static let log = CodexBarLog.logger(LogCategories.keychainCache)
     private static let cacheService = "com.steipete.codexbar.cache"
     private static let cacheLabel = "CodexBar Cache"
-    private nonisolated(unsafe) static var globalServiceOverride: String?
     @TaskLocal private static var serviceOverride: String?
+    @TaskLocal private static var forceImplicitTestStore = false
+    #if DEBUG
+    @TaskLocal private static var operationRecorder: OperationRecorder?
+
+    enum Operation: Equatable, Sendable {
+        case load
+        case store
+        case clear
+    }
+
+    final class OperationRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recordedOperations: [Operation] = []
+
+        var operations: [Operation] {
+            self.lock.withLock { self.recordedOperations }
+        }
+
+        func record(_ operation: Operation) {
+            self.lock.withLock {
+                self.recordedOperations.append(operation)
+            }
+        }
+    }
+    #endif
     #if DEBUG && os(macOS)
     @TaskLocal private static var loadFailureStatusOverride: OSStatus?
     @TaskLocal private static var storeFailureStatusOverride: OSStatus?
@@ -63,13 +87,21 @@ public enum KeychainCacheStore {
         key: Key,
         as type: Entry.Type = Entry.self) -> LoadResult<Entry>
     {
+        #if DEBUG
+        self.operationRecorder?.record(.load)
+        #endif
         #if DEBUG && os(macOS)
         if let status = self.loadFailureStatusOverride {
             return self.loadResultForKeychainReadFailure(status: status, key: key)
         }
         #endif
-        if let testResult = loadFromTestStore(key: key, as: type) {
+        if let testResult = loadFromTestStore(key: key, as: type),
+           !self.prefersDisabledAccessMemoryStoreOverTestStore
+        {
             return testResult
+        }
+        if self.shouldUseDisabledAccessMemoryStore(for: key.category) {
+            return self.loadFromDisabledAccessMemory(key: key, as: type)
         }
         guard self.canUseRealKeychain else { return .missing }
         #if os(macOS)
@@ -83,7 +115,7 @@ public enum KeychainCacheStore {
         KeychainNoUIQuery.apply(to: &query)
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = KeychainSecurity.copyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
             guard let data = result as? Data, !data.isEmpty else {
@@ -110,14 +142,22 @@ public enum KeychainCacheStore {
 
     @discardableResult
     public static func storeResult(key: Key, entry: some Codable) -> Bool {
+        #if DEBUG
+        self.operationRecorder?.record(.store)
+        #endif
         #if DEBUG && os(macOS)
         if let status = self.storeFailureStatusOverride {
             self.log.error("Keychain cache store failed (\(key.account)): \(status)")
             return false
         }
         #endif
-        if let stored = self.storeInTestStore(key: key, entry: entry) {
+        if !self.prefersDisabledAccessMemoryStoreOverTestStore,
+           let stored = self.storeInTestStore(key: key, entry: entry)
+        {
             return stored
+        }
+        if self.shouldUseDisabledAccessMemoryStore(for: key.category) {
+            return self.storeInDisabledAccessMemory(key: key, entry: entry)
         }
         guard self.canUseRealKeychain else { return false }
         #if os(macOS)
@@ -134,7 +174,7 @@ public enum KeychainCacheStore {
         ]
         KeychainNoUIQuery.apply(to: &query)
 
-        let updateStatus = SecItemUpdate(
+        let updateStatus = KeychainSecurity.update(
             query as CFDictionary,
             [kSecValueData as String: data] as CFDictionary)
         if updateStatus == errSecSuccess {
@@ -153,7 +193,7 @@ public enum KeychainCacheStore {
             addQuery[kSecAttrAccess as String] = access
         }
 
-        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        let addStatus = KeychainSecurity.add(addQuery as CFDictionary, nil)
         if addStatus != errSecSuccess {
             self.log.error("Keychain cache add failed (\(key.account)): \(addStatus)")
         }
@@ -169,13 +209,21 @@ public enum KeychainCacheStore {
     }
 
     public static func clearResult(key: Key) -> ClearResult {
+        #if DEBUG
+        self.operationRecorder?.record(.clear)
+        #endif
         #if DEBUG && os(macOS)
         if let status = self.clearFailureStatusOverride {
             return self.clearResultForKeychainDeleteStatus(status, key: key)
         }
         #endif
-        if let removed = self.clearTestStore(key: key) {
+        if !self.prefersDisabledAccessMemoryStoreOverTestStore,
+           let removed = self.clearTestStore(key: key)
+        {
             return removed ? .removed : .missing
+        }
+        if self.shouldUseDisabledAccessMemoryStore(for: key.category) {
+            return self.clearDisabledAccessMemory(key: key) ? .removed : .missing
         }
         guard self.canUseRealKeychain else { return .failed }
         #if os(macOS)
@@ -185,7 +233,7 @@ public enum KeychainCacheStore {
             kSecAttrAccount as String: key.account,
         ]
         KeychainNoUIQuery.apply(to: &query)
-        return self.clearResultForKeychainDeleteStatus(SecItemDelete(query as CFDictionary), key: key)
+        return self.clearResultForKeychainDeleteStatus(KeychainSecurity.delete(query as CFDictionary), key: key)
         #else
         return .failed
         #endif
@@ -206,8 +254,13 @@ public enum KeychainCacheStore {
             return self.keysResultForKeychainStatus(status, category: category, result: nil)
         }
         #endif
-        if let keys = self.keysFromTestStore(category: category) {
+        if !self.prefersDisabledAccessMemoryStoreOverTestStore,
+           let keys = self.keysFromTestStore(category: category)
+        {
             return .found(keys)
+        }
+        if self.shouldUseDisabledAccessMemoryStore(for: category) {
+            return .found(self.keysFromDisabledAccessMemory(category: category))
         }
         guard self.canUseRealKeychain else { return .failed }
         #if os(macOS)
@@ -220,15 +273,11 @@ public enum KeychainCacheStore {
         KeychainNoUIQuery.apply(to: &query)
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = KeychainSecurity.copyMatching(query as CFDictionary, &result)
         return self.keysResultForKeychainStatus(status, category: category, result: result)
         #else
         return .failed
         #endif
-    }
-
-    static func setServiceOverrideForTesting(_ service: String?) {
-        self.globalServiceOverride = service
     }
 
     public static func withServiceOverrideForTesting<T>(
@@ -242,6 +291,7 @@ public enum KeychainCacheStore {
 
     public static func withServiceOverrideForTesting<T>(
         _ service: String?,
+        isolation _: isolated (any Actor)? = #isolation,
         operation: () async throws -> T) async rethrows -> T
     {
         try await self.$serviceOverride.withValue(service) {
@@ -258,9 +308,50 @@ public enum KeychainCacheStore {
         }
     }
 
+    static func withImplicitTestStoreForTesting<T>(
+        operation: () throws -> T) rethrows -> T
+    {
+        try self.$forceImplicitTestStore.withValue(true) {
+            try operation()
+        }
+    }
+
+    static func withImplicitTestStoreForTesting<T>(
+        isolation _: isolated (any Actor)? = #isolation,
+        operation: () async throws -> T) async rethrows -> T
+    {
+        try await self.$forceImplicitTestStore.withValue(true) {
+            try await operation()
+        }
+    }
+
     public static var currentServiceOverrideForTesting: String? {
         self.serviceOverride
     }
+
+    #if DEBUG
+    static func withOperationRecorderForTesting<T>(
+        _ recorder: OperationRecorder?,
+        operation: () throws -> T) rethrows -> T
+    {
+        try self.$operationRecorder.withValue(recorder) {
+            try operation()
+        }
+    }
+
+    static func withOperationRecorderForTesting<T>(
+        _ recorder: OperationRecorder?,
+        operation: () async throws -> T) async rethrows -> T
+    {
+        try await self.$operationRecorder.withValue(recorder) {
+            try await operation()
+        }
+    }
+
+    static var currentOperationRecorderForTesting: OperationRecorder? {
+        self.operationRecorder
+    }
+    #endif
 
     static var canUseRealKeychainForTesting: Bool {
         self.canUseRealKeychain
@@ -334,23 +425,82 @@ public enum KeychainCacheStore {
     }
 
     private static var serviceName: String {
-        serviceOverride ?? self.globalServiceOverride ?? self.cacheService
+        serviceOverride ?? self.cacheService
     }
 
     private static var canUseRealKeychain: Bool {
         !KeychainAccessGate.isDisabled
     }
 
-    #if DEBUG
-    private static var shouldUseImplicitTestStore: Bool {
-        self.isRunningUnderTests && !self.canUseRealKeychain
+    /// When the user disables Keychain access, keep an in-process cache so cookie/session
+    /// reconciliation can still succeed without treating every refresh as a session change.
+    /// Unit tests keep using the isolated test stores instead, unless a test explicitly opts in.
+    private static func shouldUseDisabledAccessMemoryStore(for category: String) -> Bool {
+        guard category == "cookie" else { return false }
+        #if DEBUG
+        if self.disabledAccessMemoryStoreEnabledForTesting == true {
+            return true
+        }
+        if KeychainTestSafety.isRunningUnderTests(
+            processName: ProcessInfo.processInfo.processName,
+            environment: ProcessInfo.processInfo.environment)
+        {
+            return false
+        }
+        #endif
+        return KeychainAccessGate.isExplicitlyDisabled
     }
 
-    private static var isRunningUnderTests: Bool {
-        let processName = ProcessInfo.processInfo.processName
-        return processName == "swiftpm-testing-helper"
-            || processName.hasSuffix("PackageTests")
-            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    #if DEBUG
+    @TaskLocal private static var disabledAccessMemoryStoreEnabledForTesting: Bool?
+
+    static func withDisabledAccessMemoryStoreForTesting<T>(
+        _ enabled: Bool,
+        operation: () throws -> T) rethrows -> T
+    {
+        try self.$disabledAccessMemoryStoreEnabledForTesting.withValue(enabled) {
+            try operation()
+        }
+    }
+
+    static func withDisabledAccessMemoryStoreForTesting<T>(
+        _ enabled: Bool,
+        isolation _: isolated (any Actor)? = #isolation,
+        operation: () async throws -> T) async rethrows -> T
+    {
+        try await self.$disabledAccessMemoryStoreEnabledForTesting.withValue(enabled) {
+            try await operation()
+        }
+    }
+
+    static func resetDisabledAccessMemoryStoreForTesting() {
+        self.clearDisabledAccessMemoryStore()
+    }
+    #endif
+
+    /// Drops the in-process fallback used while Keychain access is explicitly disabled.
+    static func clearDisabledAccessMemoryStore() {
+        self.disabledAccessMemoryLock.lock()
+        self.disabledAccessMemoryStore.removeAll()
+        self.disabledAccessMemoryLock.unlock()
+    }
+
+    private static let disabledAccessMemoryLock = NSLock()
+    private nonisolated(unsafe) static var disabledAccessMemoryStore: [TestStoreKey: Data] = [:]
+
+    private static var prefersDisabledAccessMemoryStoreOverTestStore: Bool {
+        #if DEBUG
+        self.disabledAccessMemoryStoreEnabledForTesting == true
+        #else
+        false
+        #endif
+    }
+
+    #if DEBUG
+    private static var shouldUseImplicitTestStore: Bool {
+        KeychainTestSafety.isRunningUnderTests(
+            processName: ProcessInfo.processInfo.processName,
+            environment: ProcessInfo.processInfo.environment) && !self.canUseRealKeychain
     }
     #else
     private static var shouldUseImplicitTestStore: Bool {
@@ -533,7 +683,9 @@ public enum KeychainCacheStore {
     {
         self.testStoreLock.lock()
         defer { self.testStoreLock.unlock() }
-        guard let store = self.testStore ?? (self.shouldUseImplicitTestStore ? self.implicitTestStore : nil)
+        guard let store = self.forceImplicitTestStore
+            ? self.implicitTestStore
+            : self.testStore ?? (self.shouldUseImplicitTestStore ? self.implicitTestStore : nil)
         else { return nil }
         let testKey = TestStoreKey(service: self.serviceName, account: key.account)
         guard let data = store[testKey] else { return .missing }
@@ -550,6 +702,10 @@ public enum KeychainCacheStore {
         let encoder = Self.makeEncoder()
         guard let data = try? encoder.encode(entry) else { return false }
         let testKey = TestStoreKey(service: self.serviceName, account: key.account)
+        if self.forceImplicitTestStore {
+            self.implicitTestStore[testKey] = data
+            return true
+        }
         if var store = self.testStore {
             store[testKey] = data
             self.testStore = store
@@ -566,6 +722,9 @@ public enum KeychainCacheStore {
         self.testStoreLock.lock()
         defer { self.testStoreLock.unlock() }
         let testKey = TestStoreKey(service: self.serviceName, account: key.account)
+        if self.forceImplicitTestStore {
+            return self.implicitTestStore.removeValue(forKey: testKey) != nil
+        }
         if var store = self.testStore {
             let removed = store.removeValue(forKey: testKey) != nil
             self.testStore = store
@@ -580,9 +739,55 @@ public enum KeychainCacheStore {
     private static func keysFromTestStore(category: String) -> [Key]? {
         self.testStoreLock.lock()
         defer { self.testStoreLock.unlock() }
-        guard let store = self.testStore ?? (self.shouldUseImplicitTestStore ? self.implicitTestStore : nil)
+        guard let store = self.forceImplicitTestStore
+            ? self.implicitTestStore
+            : self.testStore ?? (self.shouldUseImplicitTestStore ? self.implicitTestStore : nil)
         else { return nil }
         return store.keys
+            .filter { $0.service == self.serviceName }
+            .compactMap { self.key(fromAccount: $0.account, category: category) }
+            .sorted { $0.identifier < $1.identifier }
+    }
+
+    private static func loadFromDisabledAccessMemory<Entry: Codable>(
+        key: Key,
+        as type: Entry.Type) -> LoadResult<Entry>
+    {
+        self.disabledAccessMemoryLock.lock()
+        defer { self.disabledAccessMemoryLock.unlock() }
+        let memoryKey = TestStoreKey(service: self.serviceName, account: key.account)
+        guard let data = self.disabledAccessMemoryStore[memoryKey] else { return .missing }
+        let decoder = Self.makeDecoder()
+        guard let decoded = try? decoder.decode(Entry.self, from: data) else {
+            return .invalid
+        }
+        return .found(decoded)
+    }
+
+    private static func storeInDisabledAccessMemory(key: Key, entry: some Codable) -> Bool {
+        let encoder = Self.makeEncoder()
+        guard let data = try? encoder.encode(entry) else { return false }
+        self.disabledAccessMemoryLock.lock()
+        defer { self.disabledAccessMemoryLock.unlock() }
+        let memoryKey = TestStoreKey(service: self.serviceName, account: key.account)
+        self.disabledAccessMemoryStore[memoryKey] = data
+        self.log.debug("Keychain cache stored in memory (Keychain access disabled)", metadata: [
+            "account": key.account,
+        ])
+        return true
+    }
+
+    private static func clearDisabledAccessMemory(key: Key) -> Bool {
+        self.disabledAccessMemoryLock.lock()
+        defer { self.disabledAccessMemoryLock.unlock() }
+        let memoryKey = TestStoreKey(service: self.serviceName, account: key.account)
+        return self.disabledAccessMemoryStore.removeValue(forKey: memoryKey) != nil
+    }
+
+    private static func keysFromDisabledAccessMemory(category: String) -> [Key] {
+        self.disabledAccessMemoryLock.lock()
+        defer { self.disabledAccessMemoryLock.unlock() }
+        return self.disabledAccessMemoryStore.keys
             .filter { $0.service == self.serviceName }
             .compactMap { self.key(fromAccount: $0.account, category: category) }
             .sorted { $0.identifier < $1.identifier }

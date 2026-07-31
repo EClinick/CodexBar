@@ -55,6 +55,7 @@ public struct OpenAIDashboardFetcher {
         let rateLimits: (primary: RateWindow?, secondary: RateWindow?)
         let extraRateWindows: [NamedRateWindow]
         let creditsRemaining: Double?
+        let codexCreditLimit: CodexCreditLimitSnapshot?
         let accountPlan: String?
     }
 
@@ -68,6 +69,7 @@ public struct OpenAIDashboardFetcher {
         let rateLimits: (primary: RateWindow?, secondary: RateWindow?)
         let extraRateWindows: [NamedRateWindow]
         let creditsRemaining: Double?
+        let codexCreditLimit: CodexCreditLimitSnapshot?
         let accountPlan: String?
         let hasDashboardPageSignal: Bool
         let hasReturnableData: Bool
@@ -88,6 +90,7 @@ public struct OpenAIDashboardFetcher {
             secondaryLimit: components.rateLimits.secondary,
             extraRateWindows: components.extraRateWindows.isEmpty ? nil : components.extraRateWindows,
             creditsRemaining: components.creditsRemaining,
+            codexCreditLimit: components.codexCreditLimit,
             accountPlan: components.accountPlan,
             updatedAt: Date())
     }
@@ -109,21 +112,24 @@ public struct OpenAIDashboardFetcher {
         let codeReviewLimit = OpenAIDashboardParser.parseCodeReviewLimit(bodyText: bodyText)
         let parsedCreditsRemaining = OpenAIDashboardParser.parseCreditsRemaining(bodyText: bodyText)
         let creditsRemaining = apiData?.creditsRemaining ?? parsedCreditsRemaining
+        let codexCreditLimit = apiData?.codexCreditLimit
         let accountPlan = scrape.accountPlan ?? apiData?.accountPlan
         let hasParsedUsageLimits = parsedRateLimits.primary != nil || parsedRateLimits.secondary != nil
         let hasUsageLimits = rateLimits.primary != nil || rateLimits.secondary != nil
-        let hasDashboardPageData = self.hasReturnableDashboardData(
+        let hasDashboardPageData = self.hasReturnableDashboardData(.init(
             codeReview: codeReview,
             events: events,
             usageBreakdown: usageBreakdown,
             hasUsageLimits: hasParsedUsageLimits,
-            creditsRemaining: parsedCreditsRemaining)
-        let hasReturnableData = self.hasReturnableDashboardData(
+            creditsRemaining: parsedCreditsRemaining,
+            codexCreditLimit: nil))
+        let hasReturnableData = self.hasReturnableDashboardData(.init(
             codeReview: codeReview,
             events: events,
             usageBreakdown: usageBreakdown,
             hasUsageLimits: hasUsageLimits,
-            creditsRemaining: creditsRemaining)
+            creditsRemaining: creditsRemaining,
+            codexCreditLimit: codexCreditLimit))
 
         // Codex `additional_rate_limits` (e.g. Codex Spark) only ship over the JSON usage API, so the
         // dashboard HTML scrape never contributes here; we just forward what the apiData decoded.
@@ -138,6 +144,7 @@ public struct OpenAIDashboardFetcher {
             rateLimits: rateLimits,
             extraRateWindows: extraRateWindows,
             creditsRemaining: creditsRemaining,
+            codexCreditLimit: codexCreditLimit,
             accountPlan: accountPlan,
             hasDashboardPageSignal: self.hasAnyDashboardSignal(
                 hasReturnableData: hasDashboardPageData,
@@ -150,10 +157,14 @@ public struct OpenAIDashboardFetcher {
         let secondaryLimit: RateWindow?
         let extraRateWindows: [NamedRateWindow]
         let creditsRemaining: Double?
+        let codexCreditLimit: CodexCreditLimitSnapshot?
         let accountPlan: String?
 
         var hasUsageData: Bool {
-            self.primaryLimit != nil || self.secondaryLimit != nil || self.creditsRemaining != nil
+            self.primaryLimit != nil
+                || self.secondaryLimit != nil
+                || self.creditsRemaining != nil
+                || self.codexCreditLimit != nil
         }
     }
 
@@ -302,9 +313,7 @@ public struct OpenAIDashboardFetcher {
             let hasReturnableData = dashboardData.hasReturnableData
 
             if codeReview != nil, codeReviewFirstSeenAt == nil { codeReviewFirstSeenAt = Date() }
-            if anyDashboardSignalAt == nil, hasDashboardPageSignal {
-                anyDashboardSignalAt = Date()
-            }
+            if anyDashboardSignalAt == nil, hasDashboardPageSignal { anyDashboardSignalAt = Date() }
             if codeReview != nil, usageBreakdown.isEmpty,
                let debug = scrape.usageBreakdownDebug, !debug.isEmpty,
                debug != lastUsageBreakdownDebug
@@ -385,6 +394,7 @@ public struct OpenAIDashboardFetcher {
                     rateLimits: dashboardData.rateLimits,
                     extraRateWindows: dashboardData.extraRateWindows,
                     creditsRemaining: dashboardData.creditsRemaining,
+                    codexCreditLimit: dashboardData.codexCreditLimit,
                     accountPlan: dashboardData.accountPlan))
             }
 
@@ -395,23 +405,6 @@ public struct OpenAIDashboardFetcher {
             Self.writeDebugArtifacts(html: html, bodyText: lastBody, logger: log)
         }
         throw FetchError.noDashboardData(body: lastUsageBreakdownError ?? lastBody ?? "")
-    }
-
-    nonisolated static func hasReturnableDashboardData(
-        codeReview: Double?,
-        events: [CreditEvent],
-        usageBreakdown: [OpenAIDashboardDailyBreakdown],
-        hasUsageLimits: Bool,
-        creditsRemaining: Double?) -> Bool
-    {
-        codeReview != nil || !events.isEmpty || !usageBreakdown.isEmpty || hasUsageLimits || creditsRemaining != nil
-    }
-
-    nonisolated static func hasAnyDashboardSignal(
-        hasReturnableData: Bool,
-        creditsHeaderPresent: Bool) -> Bool
-    {
-        hasReturnableData || creditsHeaderPresent
     }
 
     public func clearSessionData(
@@ -726,6 +719,8 @@ public struct OpenAIDashboardFetcher {
             extraRateWindows: CodexAdditionalRateLimitMapper.extraRateWindows(
                 from: response.additionalRateLimits),
             creditsRemaining: response.credits?.balance,
+            codexCreditLimit: (response.individualLimit ?? response.rateLimit?.individualLimit)?
+                .codexCreditLimitSnapshot(updatedAt: Date()),
             accountPlan: response.planType?.rawValue)
     }
 
@@ -765,7 +760,7 @@ public struct OpenAIDashboardFetcher {
         return await self.fetchDashboardUsageAPI(cookieHeader: cookieHeader, deadline: nil, logger: logger)
     }
 
-    private static func fetchDashboardUsageAPI(
+    static func fetchDashboardUsageAPI(
         cookieHeader: String,
         deadline: Date?,
         logger: @escaping (String) -> Void) async -> DashboardAPIData?
@@ -775,7 +770,7 @@ public struct OpenAIDashboardFetcher {
         guard remaining > 0 else { return nil }
 
         do {
-            let (data, response) = try await ProviderHTTPClient.shared.data(
+            let (data, response) = try await CodexAuthenticatedHTTPTransport.current.data(
                 for: self.dashboardUsageAPIRequest(cookieHeader: cookieHeader, timeout: min(4, remaining)))
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             logger("usage api status=\(status)")
@@ -792,7 +787,7 @@ public struct OpenAIDashboardFetcher {
         }
     }
 
-    private static func fetchSignedInEmailFromAPI(
+    static func fetchSignedInEmailFromAPI(
         cookieHeader: String,
         deadline: Date?,
         logger: @escaping (String) -> Void) async -> String?
@@ -808,7 +803,7 @@ public struct OpenAIDashboardFetcher {
             let remaining = deadline.map { self.remainingTimeout(until: $0) } ?? 2
             guard remaining > 0 else { return nil }
             do {
-                let (data, response) = try await ProviderHTTPClient.shared.data(
+                let (data, response) = try await CodexAuthenticatedHTTPTransport.current.data(
                     for: self.dashboardIdentityAPIRequest(
                         url: url,
                         cookieHeader: cookieHeader,
@@ -1009,9 +1004,11 @@ extension OpenAIDashboardFetcher {
         cookieHeader: String,
         timeout: TimeInterval = 4) -> URLRequest
     {
-        var request = URLRequest(url: Self.dashboardUsageAPIURL)
+        var request = URLRequest(
+            url: Self.dashboardUsageAPIURL,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: timeout)
         request.httpMethod = "GET"
-        request.timeoutInterval = timeout
         request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Self.dashboardAcceptLanguage, forHTTPHeaderField: "Accept-Language")
@@ -1024,9 +1021,11 @@ extension OpenAIDashboardFetcher {
         cookieHeader: String,
         timeout: TimeInterval = 2) -> URLRequest
     {
-        var request = URLRequest(url: url)
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: timeout)
         request.httpMethod = "GET"
-        request.timeoutInterval = timeout
         request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Self.dashboardAcceptLanguage, forHTTPHeaderField: "Accept-Language")
