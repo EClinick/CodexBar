@@ -214,6 +214,33 @@ struct CodexResetCreditAutomationTests {
     }
 
     @Test
+    func `mock demo compresses both production lead times to the visual delay`() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let alertSnapshot = CodexResetCreditAutomationDemo.expiryAlertSnapshot(now: now)
+        let autoRedeemSnapshot = CodexResetCreditAutomationDemo.autoRedeemSnapshot(now: now)
+
+        let alertPlan = CodexResetCreditAutomationPlan.make(
+            snapshot: alertSnapshot,
+            settings: .init(expiryAlertsEnabled: true, autoRedeemEnabled: false),
+            now: now)
+        let autoRedeemPlan = CodexResetCreditAutomationPlan.make(
+            snapshot: autoRedeemSnapshot,
+            settings: .init(expiryAlertsEnabled: false, autoRedeemEnabled: true),
+            now: now)
+
+        #expect(alertPlan.expiryAlerts.first?.fireDate == now.addingTimeInterval(2))
+        #expect(alertPlan.autoRedemptions.isEmpty)
+        #expect(autoRedeemPlan.autoRedemptions.first?.fireDate == now.addingTimeInterval(2))
+        #expect(autoRedeemPlan.expiryAlerts.isEmpty)
+        #expect(alertSnapshot.credits.first?.id != autoRedeemSnapshot.credits.first?.id)
+
+        let outcome = try await CodexResetCreditAutomationDemo.redeem(
+            creditID: "mock-stable-id",
+            idempotencyKey: UUID())
+        #expect(outcome == .reset)
+    }
+
+    @Test
     func `controller redeems through injected closure once and reports the mocked result`() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let idempotencyKey = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))

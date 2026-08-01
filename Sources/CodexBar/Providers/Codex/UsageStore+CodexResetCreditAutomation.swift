@@ -3,6 +3,42 @@ import Foundation
 
 @MainActor
 extension UsageStore {
+    func runCodexResetExpiryAlertDemo(now: Date = Date()) {
+        guard !self.settings.codexResetCreditAutomationEnabled else { return }
+        self.codexResetCreditAutomationController.stop()
+        let controller = CodexResetCreditAutomationController(
+            notifier: CodexResetCreditDemoNotifier(kind: .expiryAlert),
+            now: { now })
+        controller.reconcile(
+            snapshot: CodexResetCreditAutomationDemo.expiryAlertSnapshot(now: now),
+            settings: CodexResetCreditAutomationSettings(
+                expiryAlertsEnabled: true,
+                autoRedeemEnabled: false),
+            scopeID: "codex-reset-expiry-demo",
+            redeem: { _, _ in .noCredit },
+            completion: { _, _ in })
+    }
+
+    func runCodexResetAutoRedeemDemo(now: Date = Date()) {
+        guard !self.settings.codexResetCreditAutomationEnabled else { return }
+        self.codexResetCreditAutomationController.stop()
+        self.codexResetCreditAutoRedeemDemoController?.stop(clearExpiryAlerts: false)
+        let controller = CodexResetCreditAutomationController(
+            notifier: CodexResetCreditDemoNotifier(kind: .autoRedeem),
+            now: Date.init)
+        self.codexResetCreditAutoRedeemDemoController = controller
+        controller.reconcile(
+            snapshot: CodexResetCreditAutomationDemo.autoRedeemSnapshot(now: now),
+            settings: CodexResetCreditAutomationSettings(
+                expiryAlertsEnabled: false,
+                autoRedeemEnabled: true),
+            scopeID: "codex-reset-auto-redeem-demo",
+            redeem: CodexResetCreditAutomationDemo.redeem,
+            completion: { [weak self] _, _ in
+                self?.codexResetCreditAutoRedeemDemoController = nil
+            })
+    }
+
     func reconcileCodexResetCreditAutomation(snapshot: UsageSnapshot?) {
         let expectedGuard = self.freshCodexAccountScopedRefreshGuard()
         let expectedAccountEmail = expectedGuard.accountKey

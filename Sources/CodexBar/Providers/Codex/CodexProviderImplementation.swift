@@ -189,6 +189,42 @@ struct CodexProviderImplementation: ProviderImplementation {
     }
 
     @MainActor
+    func settingsActions(context: ProviderSettingsContext) -> [ProviderSettingsActionsDescriptor] {
+        let liveAutomationEnabled = context.settings.codexResetCreditAutomationEnabled
+        let subtitle = liveAutomationEnabled
+            ? "Turn both live reset toggles off to enable these isolated mock tests."
+            : [
+                "Uses synthetic reset data and compressed timing.",
+                "The Codex CLI is never contacted and no real reset can be used.",
+            ].joined(separator: " ")
+        return [
+            ProviderSettingsActionsDescriptor(
+                id: "codex-reset-automation-demo",
+                title: "Safe reset automation demo",
+                subtitle: subtitle,
+                actions: [
+                    ProviderSettingsActionDescriptor(
+                        id: "codex-reset-expiry-alert-demo",
+                        title: "Send mock expiry alert",
+                        style: .bordered,
+                        isVisible: { !context.settings.codexResetCreditAutomationEnabled },
+                        perform: {
+                            context.store.runCodexResetExpiryAlertDemo()
+                        }),
+                    ProviderSettingsActionDescriptor(
+                        id: "codex-reset-auto-redeem-demo",
+                        title: "Run mock auto-use",
+                        style: .bordered,
+                        isVisible: { !context.settings.codexResetCreditAutomationEnabled },
+                        perform: {
+                            context.store.runCodexResetAutoRedeemDemo()
+                        }),
+                ],
+                isVisible: nil),
+        ]
+    }
+
+    @MainActor
     func settingsPickers(context: ProviderSettingsContext) -> [ProviderSettingsPickerDescriptor] {
         let usageBinding = Binding(
             get: { context.settings.codexUsageDataSource.rawValue },

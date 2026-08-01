@@ -280,6 +280,7 @@ final class UsageStore {
     @ObservationIgnored let environmentBase: [String: String]
     @ObservationIgnored let sessionQuotaNotifier: any SessionQuotaNotifying
     @ObservationIgnored let codexResetCreditAutomationController: CodexResetCreditAutomationController
+    @ObservationIgnored var codexResetCreditAutoRedeemDemoController: CodexResetCreditAutomationController?
     @ObservationIgnored let sessionQuotaLogger = CodexBarLog.logger(LogCategories.sessionQuota)
     @ObservationIgnored let openAIWebLogger = CodexBarLog.logger(LogCategories.openAIWeb)
     @ObservationIgnored private let tokenCostLogger = CodexBarLog.logger(LogCategories.tokenCost)
