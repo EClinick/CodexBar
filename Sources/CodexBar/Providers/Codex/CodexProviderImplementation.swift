@@ -192,32 +192,24 @@ struct CodexProviderImplementation: ProviderImplementation {
     func settingsActions(context: ProviderSettingsContext) -> [ProviderSettingsActionsDescriptor] {
         let liveAutomationEnabled = context.settings.codexResetCreditAutomationEnabled
         let subtitle = liveAutomationEnabled
-            ? "Turn both live reset toggles off to enable these isolated mock tests."
-            : [
-                "Uses synthetic reset data and compressed timing.",
-                "The Codex CLI is never contacted and no real reset can be used.",
-            ].joined(separator: " ")
+            ? "Turn both live reset toggles off to enable the isolated App Server test."
+            : context.store.codexResetCreditAutomationDemoState.statusText
         return [
             ProviderSettingsActionsDescriptor(
                 id: "codex-reset-automation-demo",
-                title: "Safe reset automation demo",
+                title: "Reset automation test",
                 subtitle: subtitle,
                 actions: [
                     ProviderSettingsActionDescriptor(
-                        id: "codex-reset-expiry-alert-demo",
-                        title: "Send mock expiry alert",
+                        id: "codex-reset-automation-app-server-demo",
+                        title: "Run isolated end-to-end test",
                         style: .bordered,
-                        isVisible: { !context.settings.codexResetCreditAutomationEnabled },
+                        isVisible: {
+                            !context.settings.codexResetCreditAutomationEnabled &&
+                                !context.store.codexResetCreditAutomationDemoState.isRunning
+                        },
                         perform: {
-                            context.store.runCodexResetExpiryAlertDemo()
-                        }),
-                    ProviderSettingsActionDescriptor(
-                        id: "codex-reset-auto-redeem-demo",
-                        title: "Run mock auto-use",
-                        style: .bordered,
-                        isVisible: { !context.settings.codexResetCreditAutomationEnabled },
-                        perform: {
-                            context.store.runCodexResetAutoRedeemDemo()
+                            await context.store.runCodexResetCreditAutomationDemo()
                         }),
                 ],
                 isVisible: nil),
