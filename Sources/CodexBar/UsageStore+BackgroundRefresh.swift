@@ -28,7 +28,6 @@ extension UsageStore {
         self.providerCleanupRevisions[provider, default: 0] &+= 1
         if provider == .codex {
             self.codexResetCreditAutomationController.stop()
-            self.cancelCodexResetCreditAutomationDemo()
         }
         self.refreshingProviders.remove(provider)
         self.snapshots.removeValue(forKey: provider)

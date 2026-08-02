@@ -41,31 +41,6 @@ struct RPCRateLimitResetCreditConsumeResponse: Decodable {
 }
 
 extension UsageFetcher {
-    /// Creates a Codex RPC fetcher that can launch only the exact executable supplied here.
-    /// If that executable disappears or loses execute permission, resolution fails closed instead
-    /// of falling back to an installed Codex CLI.
-    public init(
-        isolatedCodexExecutableURL: URL,
-        environment: [String: String] = ProcessInfo.processInfo.environment) throws
-    {
-        let executableURL = isolatedCodexExecutableURL.standardizedFileURL
-        let executablePath = executableURL.path
-        guard executableURL.isFileURL,
-              FileManager.default.isExecutableFile(atPath: executablePath)
-        else {
-            throw CocoaError(.fileReadNoSuchFile)
-        }
-
-        self.environment = environment
-        self.initializeTimeoutSeconds = 8.0
-        self.requestTimeoutSeconds = 3.0
-        self.codexExecutableResolver = { _, _ in
-            guard FileManager.default.isExecutableFile(atPath: executablePath) else { return nil }
-            return CodexExecutableResolution(executable: executablePath, loginPATH: nil)
-        }
-        self.codexArguments = ["-s", "read-only", "-a", "untrusted", "app-server"]
-    }
-
     public func consumeRateLimitResetCredit(
         creditID: String,
         idempotencyKey: UUID,

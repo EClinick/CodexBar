@@ -189,34 +189,6 @@ struct CodexProviderImplementation: ProviderImplementation {
     }
 
     @MainActor
-    func settingsActions(context: ProviderSettingsContext) -> [ProviderSettingsActionsDescriptor] {
-        let liveAutomationEnabled = context.settings.codexResetCreditAutomationEnabled
-        let subtitle = liveAutomationEnabled
-            ? "Turn both live reset toggles off to enable the isolated App Server test."
-            : context.store.codexResetCreditAutomationDemoState.statusText
-        return [
-            ProviderSettingsActionsDescriptor(
-                id: "codex-reset-automation-demo",
-                title: "Reset automation test",
-                subtitle: subtitle,
-                actions: [
-                    ProviderSettingsActionDescriptor(
-                        id: "codex-reset-automation-app-server-demo",
-                        title: "Run isolated end-to-end test",
-                        style: .bordered,
-                        isVisible: {
-                            !context.settings.codexResetCreditAutomationEnabled &&
-                                !context.store.codexResetCreditAutomationDemoState.isRunning
-                        },
-                        perform: {
-                            await context.store.runCodexResetCreditAutomationDemo()
-                        }),
-                ],
-                isVisible: nil),
-        ]
-    }
-
-    @MainActor
     func settingsPickers(context: ProviderSettingsContext) -> [ProviderSettingsPickerDescriptor] {
         let usageBinding = Binding(
             get: { context.settings.codexUsageDataSource.rawValue },

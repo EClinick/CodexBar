@@ -163,7 +163,6 @@ final class UsageStore {
     var snapshots: [UsageProvider: UsageSnapshot] = [:]
     var errors: [UsageProvider: String] = [:]
     var diagnostics: [UsageProvider: String] = [:]
-    var codexResetCreditAutomationDemoState: CodexResetCreditAutomationDemoState = .idle
     var geminiObservedConsumerTierDeprecation = false
     var knownLimitsAvailabilityByProvider: [UsageProvider: UsageLimitsAvailability] = [:]
     var lastSourceLabels: [UsageProvider: String] = [:]
@@ -281,9 +280,6 @@ final class UsageStore {
     @ObservationIgnored let environmentBase: [String: String]
     @ObservationIgnored let sessionQuotaNotifier: any SessionQuotaNotifying
     @ObservationIgnored let codexResetCreditAutomationController: CodexResetCreditAutomationController
-    @ObservationIgnored var codexResetCreditAutomationDemoController: CodexResetCreditAutomationController?
-    @ObservationIgnored var codexResetCreditAutomationDemoTask: Task<Void, Never>?
-    @ObservationIgnored var codexResetCreditAutomationDemoRunID: UUID?
     @ObservationIgnored let sessionQuotaLogger = CodexBarLog.logger(LogCategories.sessionQuota)
     @ObservationIgnored let openAIWebLogger = CodexBarLog.logger(LogCategories.openAIWeb)
     @ObservationIgnored private let tokenCostLogger = CodexBarLog.logger(LogCategories.tokenCost)

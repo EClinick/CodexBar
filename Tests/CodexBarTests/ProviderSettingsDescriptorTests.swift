@@ -81,16 +81,6 @@ struct ProviderSettingsDescriptorTests {
         #expect(toggles.contains(where: { $0.id == "codex-historical-tracking" }))
         #expect(toggles.contains(where: { $0.id == "codex-reset-expiry-alerts" }))
         #expect(toggles.contains(where: { $0.id == "codex-reset-auto-redeem" }))
-
-        let demo = try #require(CodexProviderImplementation().settingsActions(context: context).first)
-        #expect(demo.id == "codex-reset-automation-demo")
-        #expect(demo.title == "Reset automation test")
-        #expect(demo.subtitle.contains("fake Codex App Server"))
-        #expect(demo.actions.map(\.id) == ["codex-reset-automation-app-server-demo"])
-        #expect(demo.actions.allSatisfy { $0.isVisible?() == true })
-
-        fixture.settings.codexResetAutoRedeemEnabled = true
-        #expect(demo.actions.allSatisfy { $0.isVisible?() == false })
     }
 
     @Test
