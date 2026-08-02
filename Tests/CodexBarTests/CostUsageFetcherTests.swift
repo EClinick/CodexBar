@@ -2,6 +2,8 @@ import Foundation
 import Testing
 @testable import CodexBarCore
 
+// swiftlint:disable file_length
+
 @Suite(.serialized)
 struct CostUsageFetcherTests {
     @Test
@@ -1460,6 +1462,26 @@ extension CostUsageFetcherTests {
             piScannerOptions: piOptions)
 
         #expect(refreshed.daily.first?.totalTokens == 176)
+    }
+
+    @Test
+    func `app codex refresh bounds its initial scan before background catch up`() {
+        #expect(CostUsageFetcher.resolvedCodexScanDurationPerRefresh(
+            provider: .codex,
+            bypassScannerDebounce: true,
+            configuredDuration: nil) == 2)
+        #expect(CostUsageFetcher.resolvedCodexScanDurationPerRefresh(
+            provider: .codex,
+            bypassScannerDebounce: false,
+            configuredDuration: nil) == nil)
+        #expect(CostUsageFetcher.resolvedCodexScanDurationPerRefresh(
+            provider: .claude,
+            bypassScannerDebounce: true,
+            configuredDuration: nil) == nil)
+        #expect(CostUsageFetcher.resolvedCodexScanDurationPerRefresh(
+            provider: .codex,
+            bypassScannerDebounce: true,
+            configuredDuration: 7) == 7)
     }
 
     private static func writeCodexSessionFile(

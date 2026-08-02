@@ -306,14 +306,12 @@ enum SpendDashboardSource {
         for account in request.codexRequests {
             let sourceID = "codex:\(account.id)"
             do {
-                guard self.currentAuthFingerprint(for: account) == account.authFingerprint else {
+                guard self.codexAuthFingerprintMatches(account) else {
                     failedSourceIDs.insert(sourceID)
                     invalidatedSourceIDs.insert(sourceID)
                     continue
                 }
-                let cacheRoot = UsageStore.costUsageCacheDirectory()
-                    .appendingPathComponent("accounts", isDirectory: true)
-                    .appendingPathComponent(account.cacheIdentity, isDirectory: true)
+                let cacheRoot = self.codexCacheRoot(for: account)
                 let snapshot = try await codexSnapshotLoader(CodexSpendSnapshotLoadContext(
                     account: account,
                     cacheRoot: cacheRoot,
@@ -323,7 +321,7 @@ enum SpendDashboardSource {
                     refreshPricingInBackground: false,
                     includePiSessions: false))
                 try Task.checkCancellation()
-                guard self.currentAuthFingerprint(for: account) == account.authFingerprint else {
+                guard self.codexAuthFingerprintMatches(account) else {
                     failedSourceIDs.insert(sourceID)
                     invalidatedSourceIDs.insert(sourceID)
                     continue
@@ -375,7 +373,7 @@ enum SpendDashboardSource {
             }
         }
         let lateInvalidatedSourceIDs = Set(request.codexRequests.compactMap { account in
-            self.currentAuthFingerprint(for: account) == account.authFingerprint
+            self.codexAuthFingerprintMatches(account)
                 ? nil
                 : "codex:\(account.id)"
         })
@@ -453,7 +451,11 @@ enum SpendDashboardSource {
         settings: SettingsStore,
         store: UsageStore) -> [String]
     {
-        ["settings:\(settings.configRevision)"] + providers.compactMap { provider in
+        var revisions = ["settings:\(settings.configRevision)"]
+        if providers.contains(.codex) {
+            revisions.append("codex-dashboard:\(store.spendDashboardCodexCostCatchUpRevision)")
+        }
+        revisions += providers.compactMap { provider in
             guard provider != .codex else { return nil }
             let current = store.tokenSnapshotPublicationForCurrentProviderConfig(for: provider)
             guard let current else { return "\(provider.rawValue):unavailable" }
@@ -462,6 +464,7 @@ enum SpendDashboardSource {
             }
             return "\(provider.rawValue):snapshot:\(current.publicationRevision):\(self.snapshotRevision(snapshot))"
         }
+        return revisions
     }
 
     private static func snapshotRevision(_ snapshot: CostUsageTokenSnapshot) -> String {
@@ -589,6 +592,16 @@ enum SpendDashboardSource {
 
     private static func sha256(_ value: Data) -> String {
         SHA256.hash(data: value).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func codexCacheRoot(for request: CodexSpendScanRequest) -> URL {
+        UsageStore.costUsageCacheDirectory()
+            .appendingPathComponent("accounts", isDirectory: true)
+            .appendingPathComponent(request.cacheIdentity, isDirectory: true)
+    }
+
+    static func codexAuthFingerprintMatches(_ request: CodexSpendScanRequest) -> Bool {
+        self.currentAuthFingerprint(for: request) == request.authFingerprint
     }
 
     private static func currentAuthFingerprint(for request: CodexSpendScanRequest) -> String? {
