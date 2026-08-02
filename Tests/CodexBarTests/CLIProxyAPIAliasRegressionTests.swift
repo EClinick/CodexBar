@@ -4,7 +4,7 @@ import Testing
 
 struct CLIProxyAPIAliasRegressionTests {
     @Test
-    func `codex oauth model and alias identify routed usage without request logs`() throws {
+    func `codex oauth model and alias do not prove a proxy route`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-alias-\(UUID().uuidString)", isDirectory: true)
@@ -21,12 +21,40 @@ struct CLIProxyAPIAliasRegressionTests {
                 timestampUnixMs: nil,
                 tokens: Self.tokens)
 
+            #expect(attribution.route == .unknown)
+            #expect(attribution.modelProvider == .unknown)
+            #expect(attribution.upstream == nil)
+            #expect(!attribution.evidence.contains(.cliProxyAuthInventory))
+            #expect(!attribution.evidence.contains(.cliProxyModelAlias))
+            #expect(!attribution.evidence.contains(.cliProxyRequestLog))
+        }
+    }
+
+    @Test
+    func `codex oauth model and alias resolve after request route evidence`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        for model in ["gpt-5.5", "proxy-codex-alias"] {
+            let resolver = CLIProxyAPIAttributionResolver(
+                observations: [
+                    .init(sessionID: "proxied-session", model: model, timestamp: timestamp),
+                ],
+                authProviders: [
+                    .init(provider: "codex", authType: .oauth),
+                ],
+                codexOAuthModelAliases: ["proxy-codex-alias": "gpt-5.5"])
+            let attribution = resolver.attribution(
+                model: model,
+                modelProvider: .unknown,
+                sessionID: "proxied-session",
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: Self.tokens)
+
             #expect(attribution.route == .cliProxyAPI)
             #expect(attribution.modelProvider == .openAI)
             #expect(attribution.upstream == .init(provider: "codex", authType: .oauth, model: "gpt-5.5"))
             #expect(attribution.evidence.contains(.cliProxyAuthInventory))
             #expect(attribution.evidence.contains(.cliProxyModelAlias))
-            #expect(!attribution.evidence.contains(.cliProxyRequestLog))
+            #expect(attribution.evidence.contains(.cliProxyRequestLog))
         }
     }
 
@@ -68,14 +96,14 @@ struct CLIProxyAPIAliasRegressionTests {
     }
 
     @Test
-    func `codex oauth model and alias restore historical proxy usage without request logs`() async throws {
+    func `codex oauth alias keeps direct historical usage with Claude`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
 
         let day = try env.makeLocalNoon(year: 2026, month: 7, day: 24)
         _ = try env.writeClaudeProjectFile(
             relativePath: "aliased-proxy/session.jsonl",
-            contents: env.jsonl((0..<2).map { index in
+            contents: env.jsonl((0..<1).map { index in
                 [
                     "type": "assistant",
                     "timestamp": env.isoString(for: day.addingTimeInterval(TimeInterval(index))),
@@ -83,7 +111,7 @@ struct CLIProxyAPIAliasRegressionTests {
                     "requestId": "aliased-request-\(index)",
                     "message": [
                         "id": "aliased-message-\(index)",
-                        "model": index == 0 ? "gpt-5.5" : "proxy-codex-alias",
+                        "model": "proxy-codex-alias",
                         "usage": ["input_tokens": 100, "output_tokens": 5],
                     ],
                 ]
@@ -110,13 +138,12 @@ struct CLIProxyAPIAliasRegressionTests {
             includePiSessions: false,
             scannerOptions: options)
 
-        #expect(codex.daily.first?.totalTokens == 210)
-        #expect(codex.daily.first?.modelBreakdowns?.count == 2)
-        #expect(codex.daily.first?.modelBreakdowns?.allSatisfy { $0.attribution?.upstream?.isCodex == true } == true)
-        #expect(codex.daily.first?.modelBreakdowns?.allSatisfy {
-            $0.attribution?.evidence.contains(.cliProxyModelAlias) == true
+        #expect(codex.daily.isEmpty)
+        #expect(claude.daily.first?.totalTokens == 105)
+        #expect(claude.daily.first?.modelBreakdowns?.count == 1)
+        #expect(claude.daily.first?.modelBreakdowns?.allSatisfy {
+            $0.attribution?.route != .cliProxyAPI
         } == true)
-        #expect(claude.daily.isEmpty)
     }
 
     private static let tokens = CLIProxyAPIAttributionResolver.TokenSignature(

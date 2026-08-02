@@ -226,8 +226,11 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     {
         let canonicalModel = Self.canonicalModel(request.model)
         let configuredCodexModel = self.codexOAuthModelRoutes[canonicalModel]
+        let routeObserved = routeObservation != nil || usageRecord != nil
         let resolvedModelProvider: CostUsageAttribution.ModelProvider =
-            request.modelProvider == .unknown && configuredCodexModel != nil ? .openAI : request.modelProvider
+            request.modelProvider == .unknown && configuredCodexModel != nil && routeObserved
+                ? .openAI
+                : request.modelProvider
         let inventoryUpstream = usageRecord == nil
             ? self.authInventoryUpstream(
                 model: request.model,
@@ -424,7 +427,10 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             $0.provider.caseInsensitiveCompare("codex") == .orderedSame
         }
         if let configuredCodexModel {
-            guard codexProviders.count == 1, let provider = codexProviders.first else { return nil }
+            guard routeObserved,
+                  codexProviders.count == 1,
+                  let provider = codexProviders.first
+            else { return nil }
             return CostUsageAttribution.Upstream(
                 provider: provider.provider,
                 authType: provider.authType,
