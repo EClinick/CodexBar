@@ -1122,6 +1122,12 @@ extension CostUsageFetcher {
         }
 
         guard let home = options.cliProxyAPIHome else { return false }
+        if CLIProxyAPIAttributionResolver.hasCodexOAuthModelAliasRoute(
+            home: home,
+            fileManager: fileManager)
+        {
+            return true
+        }
         let logDirectory = home.appendingPathComponent("logs", isDirectory: true)
         guard let urls = try? fileManager.contentsOfDirectory(
             at: logDirectory,

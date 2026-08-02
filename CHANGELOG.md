@@ -5,6 +5,9 @@
 ### Changed
 - About: link the Website entry to codex.bar.
 
+### Fixed
+- Codex: attribute both configured CLIProxyAPI Codex OAuth base models and their aliases to proxy-routed usage.
+
 ## 0.46.0 — 2026-07-29
 
 ### Added

@@ -351,6 +351,7 @@ public struct CostUsageAttribution: Sendable, Codable, Equatable, Hashable {
 
     public enum Evidence: String, Sendable, Codable, Hashable {
         case cliProxyAuthInventory
+        case cliProxyModelAlias
         case modelProvider
         case cliProxyRequestLog
         case cliProxyUsageTelemetry

@@ -510,7 +510,8 @@ extension CostUsageScanner {
                         cacheRead: row.cacheRead,
                         cacheCreate: row.cacheCreate,
                         output: row.output)),
-                modelProvider: modelProvider)
+                modelProvider: modelProvider,
+                cachedAttribution: row.attribution)
         }
         let requests = items.map(\.request)
         let liveAttributions = attributionResolver.attributions(for: requests)
@@ -522,7 +523,9 @@ extension CostUsageScanner {
             replacementKeys.insert(item.key)
             let liveAttribution = liveAttributions[index]
             let replacement: CostUsageAttribution? = if liveAttribution.route == .cliProxyAPI {
-                liveAttribution
+                Self.preferredCLIProxyAPIAttribution(
+                    live: liveAttribution,
+                    cached: item.cachedAttribution)
             } else if item.modelProvider != .anthropic {
                 liveAttribution
             } else {
@@ -1032,6 +1035,7 @@ extension CostUsageScanner {
         let key: ClaudeAttributionReconciliationKey
         let request: CLIProxyAPIAttributionResolver.Request
         let modelProvider: CostUsageAttribution.ModelProvider
+        let cachedAttribution: CostUsageAttribution?
     }
 
     private struct ClaudeAttributionAggregationContext {
@@ -1090,8 +1094,12 @@ extension CostUsageScanner {
                 } else {
                     row.attribution
                 }
-            let attribution: CostUsageAttribution? = if liveAttribution?.route == .cliProxyAPI {
-                liveAttribution
+            let attribution: CostUsageAttribution? = if let liveAttribution,
+                                                        liveAttribution.route == .cliProxyAPI
+            {
+                Self.preferredCLIProxyAPIAttribution(
+                    live: liveAttribution,
+                    cached: cachedAttribution)
             } else if attributionContext.allowCachedCLIProxyAPIAttribution,
                       row.attribution?.route == .cliProxyAPI,
                       attributionContext.resolver?.hasMatchingObservation(for: request) != true
@@ -1165,6 +1173,20 @@ extension CostUsageScanner {
             result.repricedCosts[key] = cost
         }
         return result
+    }
+
+    static func preferredCLIProxyAPIAttribution(
+        live: CostUsageAttribution,
+        cached: CostUsageAttribution?) -> CostUsageAttribution
+    {
+        guard live.route == .cliProxyAPI,
+              live.upstream == nil,
+              let cached,
+              cached.route == .cliProxyAPI,
+              cached.upstream != nil,
+              cached.evidence.contains(.cliProxyUsageTelemetry)
+        else { return live }
+        return cached
     }
 
     static func resolvedClaudeRowCost(

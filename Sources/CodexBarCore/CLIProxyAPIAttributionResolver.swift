@@ -58,12 +58,14 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     private let observationsByCanonicalModel: [String: [Observation]]
     private let usageRecordsByCanonicalModel: [String: [IndexedUsageRecord]]
     private let authProviders: [AuthProvider]
+    private let codexOAuthModelRoutes: [String: String]
     private let hasConfiguredOpenAIAPIUpstream: Bool
 
     init(
         observations: [Observation],
         usageRecords: [CLIProxyAPIUsageRecord] = [],
         authProviders: [AuthProvider] = [],
+        codexOAuthModelAliases: [String: String] = [:],
         hasConfiguredOpenAIAPIUpstream: Bool = false)
     {
         self.observationsBySessionID = Dictionary(grouping: observations, by: \.sessionID)
@@ -72,6 +74,12 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             by: { Self.canonicalModel($0.model) })
         self.usageRecordsByCanonicalModel = Self.indexUsageRecords(usageRecords)
         self.authProviders = authProviders
+        self.codexOAuthModelRoutes = codexOAuthModelAliases.reduce(into: [:]) { result, entry in
+            let upstreamModel = entry.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !upstreamModel.isEmpty else { return }
+            result[Self.canonicalModel(entry.key)] = upstreamModel
+            result[Self.canonicalModel(upstreamModel)] = upstreamModel
+        }
         self.hasConfiguredOpenAIAPIUpstream = hasConfiguredOpenAIAPIUpstream
     }
 
@@ -91,6 +99,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             observations: observations,
             usageRecords: CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot),
             authProviders: self.loadAuthProviders(home: home, fileManager: fileManager),
+            codexOAuthModelAliases: self.loadCodexOAuthModelAliases(home: home, fileManager: fileManager),
             hasConfiguredOpenAIAPIUpstream: self.hasConfiguredOpenAIAPIUpstream(
                 home: home,
                 fileManager: fileManager))
@@ -215,13 +224,24 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         routeObservation: Observation?,
         usageRecord: CLIProxyAPIUsageRecord?) -> CostUsageAttribution
     {
-        let inventoryUpstream = routeObservation != nil && usageRecord == nil
-            ? self.authInventoryUpstream(model: request.model, modelProvider: request.modelProvider)
+        let canonicalModel = Self.canonicalModel(request.model)
+        let configuredCodexModel = self.codexOAuthModelRoutes[canonicalModel]
+        let resolvedModelProvider: CostUsageAttribution.ModelProvider =
+            request.modelProvider == .unknown && configuredCodexModel != nil ? .openAI : request.modelProvider
+        let inventoryUpstream = usageRecord == nil
+            ? self.authInventoryUpstream(
+                model: request.model,
+                modelProvider: resolvedModelProvider,
+                routeObserved: routeObservation != nil,
+                configuredCodexModel: configuredCodexModel)
             : nil
         let routeConfirmed = routeObservation != nil || inventoryUpstream != nil
         var evidence: Set<CostUsageAttribution.Evidence> = [.modelProvider]
-        if routeObservation != nil || inventoryUpstream != nil {
+        if routeObservation != nil {
             evidence.insert(.cliProxyRequestLog)
+        }
+        if configuredCodexModel != nil, inventoryUpstream != nil {
+            evidence.insert(.cliProxyModelAlias)
         }
         if usageRecord != nil {
             evidence.insert(.cliProxyUsageTelemetry)
@@ -233,7 +253,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         return CostUsageAttribution(
             client: .claudeCode,
             route: routeConfirmed ? .cliProxyAPI : .unknown,
-            modelProvider: request.modelProvider,
+            modelProvider: resolvedModelProvider,
             upstream: usageRecord.map(Self.upstream) ?? inventoryUpstream,
             evidence: evidence.sorted { $0.rawValue < $1.rawValue })
     }
@@ -395,14 +415,27 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 
     private func authInventoryUpstream(
         model: String,
-        modelProvider: CostUsageAttribution.ModelProvider) -> CostUsageAttribution.Upstream?
+        modelProvider: CostUsageAttribution.ModelProvider,
+        routeObserved: Bool,
+        configuredCodexModel: String?) -> CostUsageAttribution.Upstream?
     {
-        guard modelProvider == .openAI,
-              !self.observationsBySessionID.isEmpty,
-              !self.hasConfiguredOpenAIAPIUpstream
-        else { return nil }
         let providers = Array(Set(self.authProviders))
-        guard providers.count == 1,
+        let codexProviders = providers.filter {
+            $0.provider.caseInsensitiveCompare("codex") == .orderedSame
+        }
+        if let configuredCodexModel {
+            guard codexProviders.count == 1, let provider = codexProviders.first else { return nil }
+            return CostUsageAttribution.Upstream(
+                provider: provider.provider,
+                authType: provider.authType,
+                model: configuredCodexModel)
+        }
+
+        guard routeObserved,
+              modelProvider == .openAI,
+              !self.observationsBySessionID.isEmpty,
+              !self.hasConfiguredOpenAIAPIUpstream,
+              providers.count == 1,
               let provider = providers.first,
               provider.provider.caseInsensitiveCompare("codex") == .orderedSame
         else { return nil }
@@ -569,6 +602,87 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 authType: isCodex ? .oauth : .unknown)
         }
         return Array(Set(providers))
+    }
+
+    static func parseCodexOAuthModelAliases(_ text: String) -> [String: String] {
+        var aliases: [String: String] = [:]
+        var rootIndent: Int?
+        var codexIndent: Int?
+        var currentName: String?
+
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = String(rawLine)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+            let indent = line.prefix { $0 == " " }.count
+
+            if rootIndent == nil {
+                if trimmed == "oauth-model-alias:" {
+                    rootIndent = indent
+                }
+                continue
+            }
+
+            guard let rootIndent else { continue }
+            if indent <= rootIndent {
+                break
+            }
+            if codexIndent == nil {
+                if trimmed == "codex:" {
+                    codexIndent = indent
+                }
+                continue
+            }
+
+            guard let codexIndent else { continue }
+            if indent <= codexIndent {
+                break
+            }
+            if trimmed.hasPrefix("- name:") {
+                currentName = self.simpleYAMLScalar(String(trimmed.dropFirst("- name:".count)))
+            } else if trimmed.hasPrefix("alias:"), let currentName {
+                let alias = self.simpleYAMLScalar(String(trimmed.dropFirst("alias:".count)))
+                if !alias.isEmpty, !currentName.isEmpty {
+                    aliases[alias] = currentName
+                }
+            }
+        }
+        return aliases
+    }
+
+    static func hasCodexOAuthModelAliasRoute(
+        home: URL,
+        fileManager: FileManager = .default) -> Bool
+    {
+        guard !self.loadCodexOAuthModelAliases(home: home, fileManager: fileManager).isEmpty else {
+            return false
+        }
+        return self.loadAuthProviders(home: home, fileManager: fileManager).contains {
+            $0.provider.caseInsensitiveCompare("codex") == .orderedSame
+        }
+    }
+
+    private static func loadCodexOAuthModelAliases(
+        home: URL,
+        fileManager: FileManager) -> [String: String]
+    {
+        let url = home.appendingPathComponent("config.yaml", isDirectory: false)
+        guard fileManager.fileExists(atPath: url.path),
+              let text = try? String(contentsOf: url, encoding: .utf8)
+        else { return [:] }
+        return self.parseCodexOAuthModelAliases(text)
+    }
+
+    private static func simpleYAMLScalar(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard let first = trimmed.first else { return "" }
+        if first == "\"" || first == "'" {
+            let remainder = trimmed.dropFirst()
+            guard let end = remainder.firstIndex(of: first) else { return String(remainder) }
+            return String(remainder[..<end])
+        }
+        return trimmed.split(separator: "#", maxSplits: 1).first?
+            .trimmingCharacters(in: .whitespaces) ?? ""
     }
 
     private static func hasConfiguredOpenAIAPIUpstream(
