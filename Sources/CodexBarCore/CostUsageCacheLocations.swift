@@ -16,6 +16,7 @@ public enum CostUsageCacheLocations {
     static let cliProxyAPIUsageFileName = "cliproxyapi-usage-v1.json"
     static let cliProxyAPIPendingFileName = "cliproxyapi-pending-v1.json"
     private static let cliProxyAPIDisconnectedFileName = "cliproxyapi-disconnected-v1"
+    private static let cliProxyAPIConfigurationGenerationFileName = "cliproxyapi-configuration-generation-v1"
 
     public static func directories(fileManager: FileManager = .default) -> [URL] {
         let cacheRoot = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -149,6 +150,39 @@ public enum CostUsageCacheLocations {
             fileManager: fileManager).path)
     }
 
+    public static func cliProxyAPIConfigurationGeneration(
+        stateRoot: URL? = nil,
+        fileManager: FileManager = .default) -> String?
+    {
+        let url = self.cliProxyAPIConfigurationGenerationURL(
+            stateRoot: stateRoot,
+            fileManager: fileManager)
+        guard let data = try? Data(contentsOf: url),
+              let generation = String(data: data, encoding: .utf8),
+              !generation.isEmpty
+        else { return nil }
+        return generation
+    }
+
+    @discardableResult
+    static func advanceCLIProxyAPIConfigurationGeneration(
+        stateRoot: URL? = nil,
+        fileManager: FileManager = .default) -> Bool
+    {
+        let url = self.cliProxyAPIConfigurationGenerationURL(
+            stateRoot: stateRoot,
+            fileManager: fileManager)
+        do {
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try Data(UUID().uuidString.utf8).write(to: url, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
+    }
+
     @discardableResult
     static func setCLIProxyAPIExplicitlyDisconnected(
         _ disconnected: Bool,
@@ -189,6 +223,19 @@ public enum CostUsageCacheLocations {
             in: .userDomainMask).first!
             .appendingPathComponent("CodexBar", isDirectory: true)
         return root.appendingPathComponent(self.cliProxyAPIDisconnectedFileName, isDirectory: false)
+    }
+
+    private static func cliProxyAPIConfigurationGenerationURL(
+        stateRoot: URL?,
+        fileManager: FileManager) -> URL
+    {
+        let root = stateRoot ?? fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first!
+            .appendingPathComponent("CodexBar", isDirectory: true)
+        return root.appendingPathComponent(
+            self.cliProxyAPIConfigurationGenerationFileName,
+            isDirectory: false)
     }
 
     private static func acquireCLIProxyAPILock(

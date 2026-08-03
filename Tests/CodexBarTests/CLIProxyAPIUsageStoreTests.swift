@@ -305,6 +305,40 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
+    func `configuration generation detects a reconnect missed between polls`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let snapshot = Self.tokenSnapshot()
+        store.publishTokenSnapshot(snapshot, for: .codex)
+        store.publishTokenSnapshot(snapshot, for: .claude)
+        var refreshes: [(UsageProvider, Bool)] = []
+
+        let collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .collected(0),
+            collectorState: CLIProxyAPIUsageCollectorState(
+                configurationAvailability: .available,
+                configurationGeneration: "before-removal"),
+            isExplicitlyDisconnected: { false },
+            configurationGeneration: { "after-reconnect" },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
+
+        #expect(collectorState.configurationAvailability == .available)
+        #expect(collectorState.configurationGeneration == "after-reconnect")
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshot(for: .claude) == nil)
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
+    }
+
+    @Test
     func `clearing cost cache drains the active proxy collector before deletion`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         let root = FileManager.default.temporaryDirectory

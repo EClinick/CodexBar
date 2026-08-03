@@ -225,6 +225,39 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
+    func `save and removal advance the durable configuration generation`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-generation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let settings = CLIProxyAPIConnectionSettings(managementKey: "test-management-key")
+
+        #expect(CLIProxyAPIConnectionSettingsStore.saveSerialized(
+            settings,
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                prepareForReconnect: { true },
+                store: { _ in true },
+                clearDisconnectedState: { true },
+                rollback: { true })))
+        let savedGeneration = try #require(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+            stateRoot: root,
+            fileManager: fileManager))
+
+        #expect(CLIProxyAPIConnectionSettingsStore.removeAndPurgeTelemetry(
+            in: [],
+            stateRoot: root,
+            fileManager: fileManager,
+            clearConfiguration: { true }) == .removed)
+        let removedGeneration = try #require(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+            stateRoot: root,
+            fileManager: fileManager))
+
+        #expect(removedGeneration != savedGeneration)
+    }
+
+    @Test
     func `configuration removal waits for an in progress save transaction`() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory

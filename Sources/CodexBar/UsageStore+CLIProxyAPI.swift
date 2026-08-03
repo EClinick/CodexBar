@@ -9,6 +9,7 @@ struct CLIProxyAPIUsageCollectorState: Equatable {
     }
 
     var configurationAvailability: ConfigurationAvailability = .unknown
+    var configurationGeneration: String?
 }
 
 @MainActor
@@ -88,6 +89,9 @@ extension UsageStore {
         isExplicitlyDisconnected: () -> Bool = {
             CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected()
         },
+        configurationGeneration: () -> String? = {
+            CostUsageCacheLocations.cliProxyAPIConfigurationGeneration()
+        },
         refresh: ((UsageProvider, Bool) async -> Void)? = nil) async -> CLIProxyAPIUsageCollectorState
     {
         var collectorState = collectorState
@@ -99,11 +103,17 @@ extension UsageStore {
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
             }
             collectorState.configurationAvailability = .unavailable
+            collectorState.configurationGeneration = configurationGeneration()
         case .collected:
-            if collectorState.configurationAvailability == .unavailable {
+            let currentGeneration = configurationGeneration()
+            if collectorState.configurationAvailability == .unavailable ||
+                (collectorState.configurationAvailability == .available &&
+                    collectorState.configurationGeneration != currentGeneration)
+            {
                 await self.refreshCLIProxyAPICostAttribution(refresh: refresh)
             }
             collectorState.configurationAvailability = .available
+            collectorState.configurationGeneration = currentGeneration
         case .failed, .disabled:
             break
         }

@@ -659,7 +659,11 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 stateRoot: stateRoot,
                 fileManager: fileManager)
             {
-                self.save(
+                guard CostUsageCacheLocations.advanceCLIProxyAPIConfigurationGeneration(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+                else { return false }
+                return self.save(
                     settings,
                     prepareForReconnect: operations.prepareForReconnect,
                     store: operations.store,
@@ -720,6 +724,10 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 stateRoot: stateRoot,
                 fileManager: fileManager)
             {
+                guard CostUsageCacheLocations.advanceCLIProxyAPIConfigurationGeneration(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+                else { return .configurationRemovalFailed }
                 guard clearConfiguration() else { return .configurationRemovalFailed }
                 guard CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
                     in: directories,
