@@ -13,6 +13,15 @@ public struct CostUsageCacheClearResult: Equatable, Sendable {
 }
 
 public enum CostUsageCacheLocations {
+    struct CLIProxyAPIArtifactsUpdate: Sendable {
+        struct Move: Sendable {
+            let originalURL: URL
+            let stagedURL: URL
+        }
+
+        let moves: [Move]
+    }
+
     struct CLIProxyAPIConfigurationGenerationUpdate {
         let stagedURL: URL
         let destinationURL: URL
@@ -126,24 +135,114 @@ public enum CostUsageCacheLocations {
         fileManager: FileManager) -> Bool
     {
         var succeeded = true
-        for directory in directories {
-            let urls = [
+        for url in self.cliProxyAPIArtifactURLs(in: directories) {
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                succeeded = false
+            }
+        }
+        return succeeded
+    }
+
+    static func prepareCLIProxyAPIArtifactsUpdate(
+        in directories: [URL],
+        fileManager: FileManager) -> CLIProxyAPIArtifactsUpdate?
+    {
+        self.prepareCLIProxyAPIArtifactsUpdate(
+            in: directories,
+            fileExists: { fileManager.fileExists(atPath: $0.path) },
+            moveItem: { try fileManager.moveItem(at: $0, to: $1) })
+    }
+
+    static func prepareCLIProxyAPIArtifactsUpdate(
+        in directories: [URL],
+        fileExists: (URL) -> Bool,
+        moveItem: (URL, URL) throws -> Void) -> CLIProxyAPIArtifactsUpdate?
+    {
+        let identifier = UUID().uuidString
+        var moves: [CLIProxyAPIArtifactsUpdate.Move] = []
+        for originalURL in self.cliProxyAPIArtifactURLs(in: directories) where fileExists(originalURL) {
+            let stagedURL = originalURL
+                .deletingLastPathComponent()
+                .appendingPathComponent(
+                    ".\(originalURL.lastPathComponent).\(identifier).replacement-backup",
+                    isDirectory: false)
+            do {
+                try moveItem(originalURL, stagedURL)
+                moves.append(.init(originalURL: originalURL, stagedURL: stagedURL))
+            } catch {
+                _ = self.restoreCLIProxyAPIArtifactsUpdate(
+                    .init(moves: moves),
+                    fileExists: fileExists,
+                    moveItem: moveItem)
+                return nil
+            }
+        }
+        return CLIProxyAPIArtifactsUpdate(moves: moves)
+    }
+
+    @discardableResult
+    static func restoreCLIProxyAPIArtifactsUpdate(
+        _ update: CLIProxyAPIArtifactsUpdate,
+        fileManager: FileManager) -> Bool
+    {
+        self.restoreCLIProxyAPIArtifactsUpdate(
+            update,
+            fileExists: { fileManager.fileExists(atPath: $0.path) },
+            moveItem: { try fileManager.moveItem(at: $0, to: $1) })
+    }
+
+    @discardableResult
+    static func restoreCLIProxyAPIArtifactsUpdate(
+        _ update: CLIProxyAPIArtifactsUpdate,
+        fileExists: (URL) -> Bool,
+        moveItem: (URL, URL) throws -> Void) -> Bool
+    {
+        var succeeded = true
+        for move in update.moves.reversed() where fileExists(move.stagedURL) {
+            guard !fileExists(move.originalURL) else {
+                succeeded = false
+                continue
+            }
+            do {
+                try moveItem(move.stagedURL, move.originalURL)
+            } catch {
+                succeeded = false
+            }
+        }
+        return succeeded
+    }
+
+    @discardableResult
+    static func discardCLIProxyAPIArtifactsUpdate(
+        _ update: CLIProxyAPIArtifactsUpdate,
+        fileManager: FileManager) -> Bool
+    {
+        var succeeded = true
+        for move in update.moves {
+            guard fileManager.fileExists(atPath: move.stagedURL.path) else { continue }
+            do {
+                try fileManager.removeItem(at: move.stagedURL)
+            } catch {
+                succeeded = false
+            }
+        }
+        return succeeded
+    }
+
+    private static func cliProxyAPIArtifactURLs(in directories: [URL]) -> [URL] {
+        var seenPaths: Set<String> = []
+        return directories.flatMap { directory in
+            [
                 directory.appendingPathComponent(self.cliProxyAPIUsageFileName, isDirectory: false),
                 directory.appendingPathComponent(self.cliProxyAPIPendingFileName, isDirectory: false),
                 CostUsageCacheIO.cacheFileURL(
                     provider: .claude,
                     cacheRoot: directory.deletingLastPathComponent()),
             ]
-            for url in urls {
-                guard fileManager.fileExists(atPath: url.path) else { continue }
-                do {
-                    try fileManager.removeItem(at: url)
-                } catch {
-                    succeeded = false
-                }
-            }
-        }
-        return succeeded
+        }.filter { seenPaths.insert($0.path).inserted }
     }
 
     public static func isCLIProxyAPIExplicitlyDisconnected(

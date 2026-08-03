@@ -904,6 +904,60 @@ struct CLIProxyAPIAttributionTimestampTests {
     }
 }
 
+struct CLIProxyAPIAttributionEqualTimestampTests {
+    @Test
+    func `equal timestamp logs retain distinct observations for token matched telemetry`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let firstTokens = CLIProxyAPIAttributionResolver.TokenSignature(
+            input: 10,
+            cacheRead: 0,
+            cacheCreate: 0,
+            output: 20)
+        let secondTokens = CLIProxyAPIAttributionResolver.TokenSignature(
+            input: 30,
+            cacheRead: 0,
+            cacheCreate: 0,
+            output: 40)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sourceID: "first.log", sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
+                .init(sourceID: "second.log", sessionID: "session-1", model: "gpt-5.5", timestamp: timestamp),
+            ],
+            usageRecords: [
+                CLIProxyAPIUsageRecord(
+                    timestamp: timestamp,
+                    provider: "codex",
+                    model: "gpt-5.5",
+                    alias: "gpt-5.5",
+                    endpoint: "POST /v1/messages",
+                    authType: "oauth",
+                    requestID: "request-first",
+                    tokens: .init(input: 10, output: 20, total: 30)),
+                CLIProxyAPIUsageRecord(
+                    timestamp: timestamp,
+                    provider: "openrouter",
+                    model: "gpt-5.5",
+                    alias: "gpt-5.5",
+                    endpoint: "POST /v1/messages",
+                    authType: "api_key",
+                    requestID: "request-second",
+                    tokens: .init(input: 30, output: 40, total: 70)),
+            ])
+        let attributions = resolver.attributions(for: [firstTokens, secondTokens].map { tokens in
+            CLIProxyAPIAttributionResolver.Request(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "session-1",
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: tokens)
+        })
+
+        #expect(attributions.map(\.route) == [.cliProxyAPI, .cliProxyAPI])
+        #expect(attributions.map(\.upstream?.provider) == ["codex", "openrouter"])
+        #expect(attributions.allSatisfy { $0.evidence.contains(.cliProxyUsageTelemetry) })
+    }
+}
+
 struct CLIProxyAPIAttributionEndpointTests {
     @Test(arguments: [
         "/v1/messages",

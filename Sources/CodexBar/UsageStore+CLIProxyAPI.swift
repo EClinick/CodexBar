@@ -114,7 +114,15 @@ extension UsageStore {
             }
             collectorState.configurationAvailability = .available
             collectorState.configurationGeneration = currentGeneration
-        case .failed, .disabled:
+        case .failed:
+            let currentGeneration = configurationGeneration()
+            if collectorState.configurationAvailability == .available,
+               collectorState.configurationGeneration != currentGeneration
+            {
+                self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-configuration-changed")
+                collectorState.configurationGeneration = currentGeneration
+            }
+        case .disabled:
             break
         }
         return collectorState

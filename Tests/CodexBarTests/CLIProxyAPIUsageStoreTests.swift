@@ -339,6 +339,41 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
+    func `failed collection invalidates stale snapshots after configuration changes`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let snapshot = Self.tokenSnapshot()
+        store.publishTokenSnapshot(snapshot, for: .codex)
+        store.publishTokenSnapshot(snapshot, for: .claude)
+
+        var collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .failed("replacement endpoint unavailable"),
+            collectorState: CLIProxyAPIUsageCollectorState(
+                configurationAvailability: .available,
+                configurationGeneration: "before-replacement"),
+            configurationGeneration: { "after-replacement" })
+
+        #expect(collectorState.configurationAvailability == .available)
+        #expect(collectorState.configurationGeneration == "after-replacement")
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshot(for: .claude) == nil)
+
+        store.publishTokenSnapshot(snapshot, for: .codex)
+        collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .failed("still unavailable"),
+            collectorState: collectorState,
+            configurationGeneration: { "after-replacement" })
+
+        #expect(store.tokenSnapshot(for: .codex) == snapshot)
+    }
+
+    @Test
     func `clearing cost cache drains the active proxy collector before deletion`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         let root = FileManager.default.temporaryDirectory

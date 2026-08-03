@@ -144,52 +144,63 @@ struct CLIProxyAPIUsageCacheTests {
 
     @Test
     func `reconnect rolls back saved credentials when disconnect state cannot be cleared`() {
-        var didStore = false
-        var didRollback = false
-
-        let saved = CLIProxyAPIConnectionSettingsStore.save(
-            artifactDisposition: .preserve,
-            store: {
-                didStore = true
-                return true
-            },
-            purgeArtifacts: { true },
-            clearDisconnectedState: { false },
-            rollback: {
-                didRollback = true
-                return true
-            })
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-disconnect-clear-failure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let didStore = LockIsolated(false)
+        let didRollback = LockIsolated(false)
+        let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
+            CLIProxyAPIConnectionSettings(managementKey: "test-management-key"),
+            stateRoot: root,
+            fileManager: .default,
+            operations: .init(
+                isDisconnected: { true },
+                loadStored: { .missing },
+                store: { _ in
+                    didStore.setValue(true)
+                    return true
+                },
+                setDisconnectedState: { disconnected in disconnected },
+                restore: { _ in
+                    didRollback.setValue(true)
+                    return true
+                }))
 
         #expect(!saved)
-        #expect(didStore)
-        #expect(didRollback)
+        #expect(didStore.value)
+        #expect(didRollback.value)
     }
 
     @Test
-    func `reconnect purges stranded telemetry after storing credentials`() {
-        var operations: [String] = []
+    func `reconnect stages stranded telemetry before storing credentials`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-reconnect-stage-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
 
-        let saved = CLIProxyAPIConnectionSettingsStore.save(
-            artifactDisposition: .purge,
-            store: {
-                operations.append("store")
-                return true
-            },
-            purgeArtifacts: {
-                operations.append("purge")
-                return true
-            },
-            clearDisconnectedState: {
-                operations.append("clear")
-                return true
-            },
-            rollback: {
-                operations.append("rollback")
-                return true
-            })
+        let artifactWasStagedAtStore = LockIsolated(false)
+        let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
+            CLIProxyAPIConnectionSettings(managementKey: "test-management-key"),
+            artifactDirectories: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                isDisconnected: { true },
+                loadStored: { .missing },
+                store: { _ in
+                    artifactWasStagedAtStore.setValue(!FileManager.default.fileExists(atPath: usageFile.path))
+                    return true
+                },
+                setDisconnectedState: { _ in true },
+                restore: { _ in true }))
 
         #expect(saved)
-        #expect(operations == ["store", "purge", "clear"])
+        #expect(artifactWasStagedAtStore.value)
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
     }
 
     @Test
@@ -212,53 +223,62 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `replacement keeps prior telemetry when credential storage fails`() {
-        var didStore = false
-        var didPurge = false
+    func `replacement keeps prior telemetry when credential storage fails`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-replacement-store-failure-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+        let existing = CLIProxyAPIConnectionSettings(managementKey: "old-management-key")
+        let replacement = CLIProxyAPIConnectionSettings(managementKey: "new-management-key")
 
-        let saved = CLIProxyAPIConnectionSettingsStore.save(
-            artifactDisposition: .purge,
-            store: {
-                didStore = true
-                return false
-            },
-            purgeArtifacts: {
-                didPurge = true
-                return true
-            },
-            clearDisconnectedState: { true },
-            rollback: { true })
+        let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
+            replacement,
+            artifactDirectories: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                isDisconnected: { false },
+                loadStored: { .found(existing) },
+                store: { _ in false },
+                setDisconnectedState: { _ in true },
+                restore: { _ in true }))
 
         #expect(!saved)
-        #expect(didStore)
-        #expect(!didPurge)
+        #expect(fileManager.fileExists(atPath: usageFile.path))
     }
 
     @Test
-    func `replacement restores prior credentials when telemetry purge fails`() {
-        var operations: [String] = []
+    func `failed replacement staging restores already moved telemetry`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-replacement-stage-failure-\(UUID().uuidString)", isDirectory: true)
+        let firstDirectory = root.appendingPathComponent("first/cost-usage", isDirectory: true)
+        let secondDirectory = root.appendingPathComponent("second/cost-usage", isDirectory: true)
+        let firstURL = firstDirectory.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        let secondURL = secondDirectory.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        for url in [firstURL, secondURL] {
+            try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("telemetry".utf8).write(to: url)
+        }
+        defer { try? fileManager.removeItem(at: root) }
 
-        let saved = CLIProxyAPIConnectionSettingsStore.save(
-            artifactDisposition: .purge,
-            store: {
-                operations.append("store")
-                return true
-            },
-            purgeArtifacts: {
-                operations.append("purge")
-                return false
-            },
-            clearDisconnectedState: {
-                operations.append("clear")
-                return true
-            },
-            rollback: {
-                operations.append("restore")
-                return true
+        let update = CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
+            in: [firstDirectory, secondDirectory],
+            fileExists: { fileManager.fileExists(atPath: $0.path) },
+            moveItem: { source, destination in
+                if source == secondURL {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                try fileManager.moveItem(at: source, to: destination)
             })
 
-        #expect(!saved)
-        #expect(operations == ["store", "purge", "restore"])
+        #expect(update == nil)
+        #expect(fileManager.fileExists(atPath: firstURL.path))
+        #expect(fileManager.fileExists(atPath: secondURL.path))
     }
 
     @Test
@@ -277,8 +297,7 @@ struct CLIProxyAPIUsageCacheTests {
                 isDisconnected: { false },
                 loadStored: { .missing },
                 store: { _ in true },
-                purgeArtifacts: { true },
-                clearDisconnectedState: { true },
+                setDisconnectedState: { _ in true },
                 restore: { _ in true })))
         let savedGeneration = try #require(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
             stateRoot: root,
@@ -288,7 +307,12 @@ struct CLIProxyAPIUsageCacheTests {
             in: [],
             stateRoot: root,
             fileManager: fileManager,
-            clearConfiguration: { true }) == .removed)
+            operations: .init(
+                isDisconnected: { false },
+                loadStored: { .missing },
+                clearConfiguration: { true },
+                setDisconnectedState: { _ in true },
+                restore: { _ in true })) == .removed)
         let removedGeneration = try #require(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
             stateRoot: root,
             fileManager: fileManager))
@@ -311,12 +335,106 @@ struct CLIProxyAPIUsageCacheTests {
                 isDisconnected: { false },
                 loadStored: { .missing },
                 store: { _ in false },
-                purgeArtifacts: { true },
-                clearDisconnectedState: { true },
+                setDisconnectedState: { _ in true },
                 restore: { _ in true })))
         #expect(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
             stateRoot: root,
             fileManager: fileManager) == nil)
+    }
+
+    @Test
+    func `generation publication failure restores replacement credentials state and telemetry`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-generation-commit-failure-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        let generationURL = root.appendingPathComponent(
+            "cliproxyapi-configuration-generation-v1",
+            isDirectory: false)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+        let existing = CLIProxyAPIConnectionSettings(managementKey: "old-management-key")
+        let replacement = CLIProxyAPIConnectionSettings(managementKey: "new-management-key")
+        let storedSettings = LockIsolated(existing)
+        let disconnected = LockIsolated(true)
+
+        let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
+            replacement,
+            artifactDirectories: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                isDisconnected: { disconnected.value },
+                loadStored: { .found(storedSettings.value) },
+                store: { settings in
+                    storedSettings.setValue(settings)
+                    return true
+                },
+                setDisconnectedState: { value in
+                    disconnected.setValue(value)
+                    if !value {
+                        try? FileManager.default.createDirectory(at: generationURL, withIntermediateDirectories: true)
+                    }
+                    return true
+                },
+                restore: { snapshot in
+                    guard case let .found(settings) = snapshot else { return false }
+                    storedSettings.setValue(settings)
+                    return true
+                }))
+
+        #expect(!saved)
+        #expect(storedSettings.value == existing)
+        #expect(disconnected.value)
+        #expect(fileManager.fileExists(atPath: usageFile.path))
+    }
+
+    @Test
+    func `generation publication failure rolls back configuration removal and telemetry`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-removal-generation-failure-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        let generationURL = root.appendingPathComponent(
+            "cliproxyapi-configuration-generation-v1",
+            isDirectory: false)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+        let existing = CLIProxyAPIConnectionSettings(managementKey: "old-management-key")
+        let storedSettings = LockIsolated<CLIProxyAPIConnectionSettings?>(existing)
+        let disconnected = LockIsolated(false)
+
+        let result = CLIProxyAPIConnectionSettingsStore.removeAndPurgeTelemetry(
+            in: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                isDisconnected: { disconnected.value },
+                loadStored: { .found(existing) },
+                clearConfiguration: {
+                    storedSettings.setValue(nil)
+                    disconnected.setValue(true)
+                    try? FileManager.default.createDirectory(at: generationURL, withIntermediateDirectories: true)
+                    return true
+                },
+                setDisconnectedState: { value in
+                    disconnected.setValue(value)
+                    return true
+                },
+                restore: { snapshot in
+                    guard case let .found(settings) = snapshot else { return false }
+                    storedSettings.setValue(settings)
+                    return true
+                }))
+
+        #expect(result == .configurationRemovalFailed)
+        #expect(storedSettings.value == existing)
+        #expect(!disconnected.value)
+        #expect(fileManager.fileExists(atPath: usageFile.path))
     }
 
     @Test
@@ -347,8 +465,7 @@ struct CLIProxyAPIUsageCacheTests {
                         releaseSave.wait()
                         return true
                     },
-                    purgeArtifacts: { true },
-                    clearDisconnectedState: { true },
+                    setDisconnectedState: { _ in true },
                     restore: { _ in true }))
         }
         #expect(await Self.waitForSignal(saveEntered, timeout: .now() + 1))
@@ -358,10 +475,15 @@ struct CLIProxyAPIUsageCacheTests {
                 in: [costUsage],
                 stateRoot: root,
                 fileManager: .default,
-                clearConfiguration: {
-                    removalEntered.signal()
-                    return true
-                })
+                operations: .init(
+                    isDisconnected: { false },
+                    loadStored: { .missing },
+                    clearConfiguration: {
+                        removalEntered.signal()
+                        return true
+                    },
+                    setDisconnectedState: { _ in true },
+                    restore: { _ in true }))
         }
         let removalEnteredBeforeSaveFinished = await Self.waitForSignal(
             removalEntered,
