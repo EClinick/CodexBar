@@ -61,6 +61,7 @@ struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
     let endpoint: String
     let authType: String
     let requestID: String
+    let localOccurrenceID: String?
     let failed: Bool
     let generate: Bool
     let tokens: Tokens
@@ -74,6 +75,7 @@ struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
         case endpoint
         case authType = "auth_type"
         case requestID = "request_id"
+        case localOccurrenceID = "codexbar_occurrence_id"
         case failed
         case generate
         case tokens
@@ -88,6 +90,7 @@ struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
         endpoint: String,
         authType: String,
         requestID: String,
+        localOccurrenceID: String? = nil,
         failed: Bool = false,
         generate: Bool = true,
         tokens: Tokens)
@@ -100,6 +103,7 @@ struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
         self.endpoint = endpoint
         self.authType = authType
         self.requestID = requestID
+        self.localOccurrenceID = localOccurrenceID
         self.failed = failed
         self.generate = generate
         self.tokens = tokens
@@ -115,10 +119,28 @@ struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
         self.endpoint = try container.decodeIfPresent(String.self, forKey: .endpoint) ?? ""
         self.authType = try container.decodeIfPresent(String.self, forKey: .authType) ?? ""
         self.requestID = try container.decodeIfPresent(String.self, forKey: .requestID) ?? ""
+        self.localOccurrenceID = try container.decodeIfPresent(String.self, forKey: .localOccurrenceID)
         self.failed = try container.decodeIfPresent(Bool.self, forKey: .failed) ?? false
         self.generate = try container.decodeIfPresent(Bool.self, forKey: .generate) ?? true
         self.tokens = try container.decodeIfPresent(Tokens.self, forKey: .tokens)
             ?? Tokens(input: 0, output: 0, total: 0)
+    }
+
+    func assigningNewLocalOccurrenceID() -> Self {
+        guard self.requestID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return self }
+        return Self(
+            timestamp: self.timestamp,
+            provider: self.provider,
+            executorType: self.executorType,
+            model: self.model,
+            alias: self.alias,
+            endpoint: self.endpoint,
+            authType: self.authType,
+            requestID: self.requestID,
+            localOccurrenceID: UUID().uuidString.lowercased(),
+            failed: self.failed,
+            generate: self.generate,
+            tokens: self.tokens)
     }
 }
 
@@ -310,6 +332,10 @@ enum CLIProxyAPIUsageCacheIO {
         if !requestID.isEmpty {
             return "request:\(requestID)"
         }
+        let localOccurrenceID = record.localOccurrenceID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !localOccurrenceID.isEmpty {
+            return "occurrence:\(localOccurrenceID)"
+        }
         let timestamp = Int64(record.timestamp.timeIntervalSince1970 * 1000)
         return [
             "fallback",
@@ -334,7 +360,9 @@ enum CLIProxyAPIUsageCacheIO {
         for record in records {
             let baseKey = self.recordKey(record)
             let requestID = record.requestID.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !requestID.isEmpty {
+            let localOccurrenceID = record.localOccurrenceID?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !requestID.isEmpty || !localOccurrenceID.isEmpty {
                 recordsByKey[baseKey] = record
                 continue
             }
@@ -848,16 +876,17 @@ public enum CLIProxyAPIUsageCollector {
                 let poppedBatch = try await Task.detached(priority: .utility) {
                     try await client.pop(count: self.batchSize)
                 }.value
+                let stagedRecords = poppedBatch.records.map { $0.assigningNewLocalOccurrenceID() }
                 if !poppedBatch.records.isEmpty {
                     guard CLIProxyAPIUsagePendingIO.save(
-                        poppedBatch.records,
+                        stagedRecords,
                         pendingRoot: effectivePendingRoot)
                     else {
                         return .failed("Could not stage CLIProxyAPI usage telemetry.")
                     }
                 }
                 guard let batchAdded = CLIProxyAPIUsageCacheIO.merge(
-                    poppedBatch.records,
+                    stagedRecords,
                     cacheRoot: cacheRoot)
                 else {
                     return .failed("Could not save CLIProxyAPI usage telemetry.")

@@ -60,7 +60,7 @@ struct CLIProxyAPIUsageCollectorTests {
     }
 
     @Test
-    func `persists a popped batch outside a failed cache for the next collection`() async throws {
+    func `persists an idless popped batch outside a failed cache for the next collection`() async throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-blocked-\(UUID().uuidString)", isDirectory: false)
@@ -79,7 +79,7 @@ struct CLIProxyAPIUsageCollectorTests {
             alias: "gpt-5.5",
             endpoint: "POST /v1/messages",
             authType: "oauth",
-            requestID: "request-1",
+            requestID: "",
             tokens: .init(input: 10, output: 20, total: 30))
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -102,12 +102,16 @@ struct CLIProxyAPIUsageCollectorTests {
             client: client)
 
         #expect(result == .failed("Could not save CLIProxyAPI usage telemetry."))
-        #expect(CLIProxyAPIUsagePendingIO.load(pendingRoot: pendingRoot)?.map(\.requestID) == ["request-1"])
+        let pendingOccurrenceID = try #require(
+            CLIProxyAPIUsagePendingIO.load(pendingRoot: pendingRoot)?.first?.localOccurrenceID)
+        #expect(!pendingOccurrenceID.isEmpty)
         try fileManager.removeItem(at: cacheRoot)
         let retryClient = CLIProxyAPIUsageQueueClient(
             settings: .init(managementKey: "management-secret"),
             dataLoader: { request in
-                #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID) == ["request-1"])
+                #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.localOccurrenceID) == [
+                    pendingOccurrenceID,
+                ])
                 let url = try #require(request.url)
                 let response = try #require(HTTPURLResponse(
                     url: url,
@@ -123,7 +127,7 @@ struct CLIProxyAPIUsageCollectorTests {
             client: retryClient)
 
         #expect(retryResult == .collected(1))
-        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.requestID) == ["request-1"])
+        #expect(CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot).map(\.localOccurrenceID) == [pendingOccurrenceID])
         #expect(!fileManager.fileExists(
             atPath: CLIProxyAPIUsagePendingIO.pendingFileURL(pendingRoot: pendingRoot).path))
     }

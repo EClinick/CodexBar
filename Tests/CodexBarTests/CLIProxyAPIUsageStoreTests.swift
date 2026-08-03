@@ -168,6 +168,40 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
+    func `reconnecting invalidates and force refreshes both proxy affected token snapshots`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = [
+            "HOME": root.path,
+            "CODEX_HOME": root.appendingPathComponent(".codex", isDirectory: true).path,
+        ]
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: environment),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: environment)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .claude)
+        let codexPublicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
+        let claudePublicationRevision = store.tokenSnapshotPublicationRevision(for: .claude)
+        var refreshes: [(UsageProvider, Bool)] = []
+
+        await store.refreshCLIProxyAPICostAttribution { provider, force in
+            refreshes.append((provider, force))
+        }
+
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
+        #expect(store.tokenSnapshot(for: .claude) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
+    }
+
+    @Test
     func `clearing cost cache drains the active proxy collector before deletion`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         let root = FileManager.default.temporaryDirectory

@@ -139,7 +139,7 @@ extension UsageStore {
         self.publishTokenSnapshotState(nil, for: provider)
     }
 
-    func invalidateCLIProxyAPICostAttribution() {
+    func invalidateCLIProxyAPICostAttribution(widgetReason: String = "cliproxyapi-removed") {
         self.cancelCodexCostCatchUp()
         self.cancelSpendDashboardCodexCostCatchUp()
         for provider in [UsageProvider.codex, .claude] {
@@ -149,7 +149,7 @@ extension UsageStore {
             self.lastTokenFetchAt.removeValue(forKey: provider)
             self.lastTokenFetchScope.removeValue(forKey: provider)
         }
-        self.persistWidgetSnapshot(reason: "cliproxyapi-removed")
+        self.persistWidgetSnapshot(reason: widgetReason)
     }
 
     private func publishTokenSnapshotState(_ snapshot: CostUsageTokenSnapshot?, for provider: UsageProvider) {

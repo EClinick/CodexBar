@@ -505,6 +505,7 @@ struct SpendDashboardPane: View {
         case let .failed(message):
             self.cliProxyAPIStatus = "Saved, but test failed: \(message)"
         }
+        await self.store.refreshCLIProxyAPICostAttribution()
         self.store.startCLIProxyAPIUsageCollector()
     }
 

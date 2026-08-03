@@ -463,30 +463,40 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `fallback record identity preserves identical occurrences across cache replay`() throws {
+    func `fallback record identity preserves identical occurrences across batches and replay`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-usage-identical-\(UUID().uuidString)", isDirectory: true)
         defer { try? fileManager.removeItem(at: root) }
         let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00.123Z"))
         let records = [
-            Self.record(id: "", timestamp: timestamp),
-            Self.record(id: "", timestamp: timestamp),
+            Self.record(id: "", timestamp: timestamp).assigningNewLocalOccurrenceID(),
+            Self.record(id: "", timestamp: timestamp).assigningNewLocalOccurrenceID(),
         ]
+        #expect(records[0].localOccurrenceID != records[1].localOccurrenceID)
 
         #expect(CLIProxyAPIUsageCacheIO.merge(
-            records,
+            [records[0]],
             cacheRoot: root,
-            now: timestamp) == 2)
+            now: timestamp) == 1)
         #expect(CLIProxyAPIUsageCacheIO.merge(
-            records,
+            [records[0]],
+            cacheRoot: root,
+            now: timestamp) == 0)
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            [records[1]],
+            cacheRoot: root,
+            now: timestamp) == 1)
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            [records[1]],
             cacheRoot: root,
             now: timestamp) == 0)
 
         let roundTripped = CLIProxyAPIUsageCacheIO.load(
             cacheRoot: root,
             now: timestamp)
-        #expect(roundTripped == records)
+        #expect(roundTripped.count == 2)
+        #expect(Set(roundTripped.compactMap(\.localOccurrenceID)) == Set(records.compactMap(\.localOccurrenceID)))
     }
 
     @Test

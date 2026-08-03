@@ -67,4 +67,17 @@ extension UsageStore {
             await self?.settings.costUsageEnabled == true
         })
     }
+
+    func refreshCLIProxyAPICostAttribution(
+        refresh: ((UsageProvider, Bool) async -> Void)? = nil) async
+    {
+        self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-reconnected")
+        for provider in [UsageProvider.claude, .codex] {
+            if let refresh {
+                await refresh(provider, true)
+            } else {
+                await self.refreshTokenUsageNow(for: provider, force: true)
+            }
+        }
+    }
 }
