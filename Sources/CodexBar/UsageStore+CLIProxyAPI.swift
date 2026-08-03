@@ -1,6 +1,16 @@
 import CodexBarCore
 import Foundation
 
+struct CLIProxyAPIUsageCollectorState: Equatable {
+    enum ConfigurationAvailability: Equatable {
+        case unknown
+        case available
+        case unavailable
+    }
+
+    var configurationAvailability: ConfigurationAvailability = .unknown
+}
+
 @MainActor
 extension UsageStore {
     private static let cliProxyAPIUsageCollectionInterval: Duration = .seconds(30)
@@ -11,7 +21,7 @@ extension UsageStore {
         let pendingPruneInterval = Self.cliProxyAPIPendingPruneInterval
         self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) { [weak self] in
             var nextPendingPruneAt: ContinuousClock.Instant?
-            var handledUnavailableConfiguration = false
+            var collectorState = CLIProxyAPIUsageCollectorState()
             while !Task.isCancelled {
                 let now = ContinuousClock.now
                 if nextPendingPruneAt.map({ now >= $0 }) ?? true {
@@ -19,10 +29,9 @@ extension UsageStore {
                     nextPendingPruneAt = now.advanced(by: pendingPruneInterval)
                 }
                 guard let result = await self?.collectCLIProxyAPIUsageNow() else { return }
-                handledUnavailableConfiguration = await self?.handleCLIProxyAPIUsageCollectionResult(
+                collectorState = await self?.handleCLIProxyAPIUsageCollectionResult(
                     result,
-                    handledUnavailableConfiguration: handledUnavailableConfiguration) ??
-                    handledUnavailableConfiguration
+                    collectorState: collectorState) ?? collectorState
                 do {
                     try await Task.sleep(for: Self.cliProxyAPIUsageCollectionInterval)
                 } catch {
@@ -75,25 +84,30 @@ extension UsageStore {
 
     func handleCLIProxyAPIUsageCollectionResult(
         _ result: CLIProxyAPIUsageCollectionResult,
-        handledUnavailableConfiguration: Bool,
-        refresh: ((UsageProvider, Bool) async -> Void)? = nil) async -> Bool
+        collectorState: CLIProxyAPIUsageCollectorState,
+        isExplicitlyDisconnected: () -> Bool = {
+            CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected()
+        },
+        refresh: ((UsageProvider, Bool) async -> Void)? = nil) async -> CLIProxyAPIUsageCollectorState
     {
+        var collectorState = collectorState
         switch result {
         case .notConfigured:
-            if !handledUnavailableConfiguration {
+            if collectorState.configurationAvailability == .available ||
+                (collectorState.configurationAvailability == .unknown && isExplicitlyDisconnected())
+            {
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
             }
-            return true
+            collectorState.configurationAvailability = .unavailable
         case .collected:
-            if handledUnavailableConfiguration {
+            if collectorState.configurationAvailability == .unavailable {
                 await self.refreshCLIProxyAPICostAttribution(refresh: refresh)
             }
-            return false
-        case .failed:
-            return handledUnavailableConfiguration
-        case .disabled:
-            return handledUnavailableConfiguration
+            collectorState.configurationAvailability = .available
+        case .failed, .disabled:
+            break
         }
+        return collectorState
     }
 
     func refreshCLIProxyAPICostAttribution(

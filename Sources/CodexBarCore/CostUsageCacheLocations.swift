@@ -140,7 +140,7 @@ public enum CostUsageCacheLocations {
         return succeeded
     }
 
-    static func isCLIProxyAPIExplicitlyDisconnected(
+    public static func isCLIProxyAPIExplicitlyDisconnected(
         stateRoot: URL? = nil,
         fileManager: FileManager = .default) -> Bool
     {
