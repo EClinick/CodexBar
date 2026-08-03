@@ -561,7 +561,7 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `collector maintenance prunes pending journal independently of collection`() throws {
+    func `collector maintenance prunes pending and durable usage independently of collection`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-pending-maintenance-\(UUID().uuidString)", isDirectory: true)
@@ -573,12 +573,20 @@ struct CLIProxyAPIUsageCacheTests {
         ]
 
         #expect(CLIProxyAPIUsagePendingIO.save(records, pendingRoot: root))
-        #expect(CLIProxyAPIUsageCollector.prunePendingUsage(
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            records,
+            cacheRoot: root,
+            now: records[0].timestamp) == 2)
+        #expect(CLIProxyAPIUsageCollector.pruneExpiredUsage(
+            cacheRoot: root,
             pendingRoot: root,
             stateRoot: root,
             now: now,
             fileManager: fileManager))
         #expect(CLIProxyAPIUsagePendingIO.load(pendingRoot: root, now: now)?.map(\.requestID) == ["retained"])
+        #expect(CLIProxyAPIUsageCacheIO.load(
+            cacheRoot: root,
+            now: now.addingTimeInterval(-365 * 24 * 60 * 60)).map(\.requestID) == ["retained"])
     }
 
     private static func record(id: String, timestamp: Date) -> CLIProxyAPIUsageRecord {

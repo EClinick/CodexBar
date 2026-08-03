@@ -14,7 +14,7 @@ extension UsageStore {
             while !Task.isCancelled {
                 let now = ContinuousClock.now
                 if nextPendingPruneAt.map({ now >= $0 }) ?? true {
-                    _ = CLIProxyAPIUsageCollector.prunePendingUsage()
+                    _ = CLIProxyAPIUsageCollector.pruneExpiredUsage()
                     nextPendingPruneAt = now.advanced(by: pendingPruneInterval)
                 }
                 guard await self?.collectCLIProxyAPIUsageNow() != nil else { return }

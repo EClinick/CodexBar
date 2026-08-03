@@ -163,6 +163,22 @@ enum CLIProxyAPIUsageCacheIO {
         try self.cacheLock.withLock(body)
     }
 
+    static func pruneUnserialized(
+        cacheRoot: URL?,
+        now: Date) -> Bool
+    {
+        let legacyCacheRoot = cacheRoot == nil ? self.defaultLegacyCacheRoot() : nil
+        return self.withExclusiveAccess {
+            guard let currentCache = self.loadCache(
+                cacheRoot: cacheRoot,
+                legacyCacheRoot: legacyCacheRoot)
+            else { return false }
+            let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+            let retainedCache = Cache(records: currentCache.records.filter { $0.timestamp >= cutoff })
+            return retainedCache == currentCache || self.save(retainedCache, cacheRoot: cacheRoot)
+        }
+    }
+
     static func load(
         cacheRoot: URL? = nil,
         now: Date = Date()) -> [CLIProxyAPIUsageRecord]
@@ -773,15 +789,17 @@ public enum CLIProxyAPIUsageCollector {
     private static let collectionGate = CLIProxyAPIUsageCollectionGate()
 
     @discardableResult
-    public static func prunePendingUsage(now: Date = Date()) -> Bool {
-        self.prunePendingUsage(
+    public static func pruneExpiredUsage(now: Date = Date()) -> Bool {
+        self.pruneExpiredUsage(
+            cacheRoot: nil,
             pendingRoot: nil,
             stateRoot: nil,
             now: now)
     }
 
     @discardableResult
-    static func prunePendingUsage(
+    static func pruneExpiredUsage(
+        cacheRoot: URL?,
         pendingRoot: URL?,
         stateRoot: URL?,
         now: Date,
@@ -792,7 +810,9 @@ public enum CLIProxyAPIUsageCollector {
                 stateRoot: stateRoot,
                 fileManager: fileManager)
             {
-                CLIProxyAPIUsagePendingIO.load(pendingRoot: pendingRoot, now: now) != nil
+                let pendingPruned = CLIProxyAPIUsagePendingIO.load(pendingRoot: pendingRoot, now: now) != nil
+                let durablePruned = CLIProxyAPIUsageCacheIO.pruneUnserialized(cacheRoot: cacheRoot, now: now)
+                return pendingPruned && durablePruned
             }
         } catch {
             return false
