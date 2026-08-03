@@ -109,6 +109,71 @@ struct CostUsageScannerClaudeFableTests {
     }
 
     @Test
+    func `claude cached proxy row reprices when reconciliation discovers google upstream`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let day = try env.makeLocalNoon(year: 2026, month: 6, day: 9)
+        let cachedRow = CostUsageScanner.ClaudeUsageRow(
+            dayKey: "2026-06-09",
+            model: "proxy-gemini-alias",
+            sessionId: "session_proxy_google_cached",
+            messageId: "msg_proxy_google_cached",
+            requestId: "req_proxy_google_cached",
+            timestampUnixMs: Int64(day.timeIntervalSince1970 * 1000),
+            isSidechain: false,
+            pathRole: .parent,
+            input: 100,
+            cacheRead: 20,
+            cacheCreate: 10,
+            cacheCreate1h: nil,
+            output: 5,
+            costNanos: 1_000_000,
+            costPriced: true,
+            attribution: nil)
+        var cache = CostUsageCache()
+        cache.files["cached-proxy-google.jsonl"] = CostUsageFileUsage(
+            mtimeUnixMs: 0,
+            size: 0,
+            days: [:],
+            claudeRows: [cachedRow])
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "session_proxy_google_cached", model: cachedRow.model, timestamp: day),
+            ],
+            usageRecords: [
+                CLIProxyAPIUsageRecord(
+                    timestamp: day,
+                    provider: "google",
+                    executorType: "GeminiExecutor",
+                    model: "gemini-test-pro",
+                    alias: cachedRow.model,
+                    endpoint: "POST /v1/messages",
+                    authType: "oauth",
+                    requestID: cachedRow.requestId ?? "",
+                    tokens: .init(
+                        input: cachedRow.input,
+                        output: cachedRow.output,
+                        cacheRead: cachedRow.cacheRead,
+                        cacheCreation: cachedRow.cacheCreate,
+                        total: cachedRow.input + cachedRow.output + cachedRow.cacheRead + cachedRow.cacheCreate)),
+            ])
+
+        let report = try CostUsageScanner.buildClaudeReportFromCache(
+            cache: cache,
+            range: .init(since: day, until: day),
+            attributionResolver: resolver,
+            modelsDevCatalog: Self.googleModelsDevCatalog(model: "gemini-test-pro"))
+
+        let expected = 0.000279
+        #expect(abs((report.summary?.totalCostUSD ?? 0) - expected) < 0.000000001)
+        let breakdown = try #require(report.data.first?.modelBreakdowns?.first)
+        #expect(breakdown.attribution?.upstream?.provider == "google")
+        #expect(breakdown.attribution?.upstream?.model == "gemini-test-pro")
+        #expect(abs((breakdown.costUSD ?? 0) - expected) < 0.000000001)
+    }
+
+    @Test
     func `claude transcript refusal remains priced without billing provenance`() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

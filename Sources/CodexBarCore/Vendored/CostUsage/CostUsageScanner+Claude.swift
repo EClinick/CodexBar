@@ -1237,6 +1237,16 @@ extension CostUsageScanner {
                 modelsDevCatalog: modelsDevCatalog,
                 modelsDevCacheRoot: modelsDevCacheRoot)
         }
+        if pricingProvider == .google {
+            return CostUsagePricing.claudeProxyGoogleCostUSD(
+                model: pricingModel,
+                inputTokens: row.input,
+                cacheReadInputTokens: row.cacheRead,
+                cacheCreationInputTokens: row.cacheCreate,
+                outputTokens: row.output,
+                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCacheRoot: modelsDevCacheRoot)
+        }
         guard pricingProvider == .anthropic else { return nil }
         return CostUsagePricing.claudeCostUSD(
             model: pricingModel,
