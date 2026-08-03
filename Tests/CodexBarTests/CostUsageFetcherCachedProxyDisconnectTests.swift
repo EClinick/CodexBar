@@ -60,6 +60,54 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
     }
 
     @Test
+    func `configuration replacement rejects a report built from the previous generation`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let day = try env.makeLocalNoon(year: 2026, month: 7, day: 24)
+        let calendar = Calendar(identifier: .gregorian)
+        var cache = CostUsageCache()
+        cache.lastScanUnixMs = Int64(day.timeIntervalSince1970 * 1000)
+        cache.scanSinceKey = "2026-07-24"
+        cache.scanUntilKey = "2026-07-24"
+        cache.days = ["2026-07-24": ["claude-sonnet-4-6": [100, 0, 0, 5, 0, 1]]]
+        CostUsageCacheIO.save(
+            provider: .claude,
+            cache: cache,
+            cacheRoot: env.cacheRoot,
+            calendar: calendar)
+
+        let initialGeneration = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(
+                stateRoot: env.cacheRoot,
+                fileManager: .default))
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(initialGeneration))
+
+        var options = CostUsageScanner.Options(cacheRoot: env.cacheRoot)
+        options.refreshMinIntervalSeconds = 3600
+        var replacedConfiguration = false
+
+        #expect(throws: CancellationError.self) {
+            _ = try CostUsageScanner.loadClaudeDaily(
+                provider: .claude,
+                range: CostUsageScanner.CostUsageDayRange(since: day, until: day),
+                now: day,
+                options: options,
+                checkCancellation: {
+                    guard !replacedConfiguration else { return }
+                    replacedConfiguration = true
+                    let replacementGeneration = try #require(CostUsageCacheLocations
+                        .prepareCLIProxyAPIConfigurationGenerationUpdate(
+                            stateRoot: env.cacheRoot,
+                            fileManager: .default))
+                    #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+                        replacementGeneration))
+                })
+        }
+        #expect(replacedConfiguration)
+    }
+
+    @Test
     func `disconnect during proxy scan excludes the stale Codex report`() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

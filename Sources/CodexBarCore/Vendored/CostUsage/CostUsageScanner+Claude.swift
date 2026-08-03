@@ -1019,29 +1019,38 @@ extension CostUsageScanner {
             }
         }
 
-        guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
-            stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
-        else { throw CancellationError() }
-
         let modelsDevCatalog = CostUsagePricing.modelsDevCatalog(now: now, cacheRoot: options.cacheRoot)
-        let reportAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+        return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
             stateRoot: options.cacheRoot)
-        let reportAttributionFilter: ClaudeAttributionFilter = if reportAttributionEnabled {
-            options.claudeAttributionFilter
-        } else {
-            switch options.claudeAttributionFilter {
-            case .all, .excludeCodexBackend: .all
-            case .codexBackendOnly: .codexBackendOnly
+        {
+            guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+                stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
+            else { throw CancellationError() }
+
+            let reportAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+                stateRoot: options.cacheRoot)
+            let reportAttributionFilter: ClaudeAttributionFilter = if reportAttributionEnabled {
+                options.claudeAttributionFilter
+            } else {
+                switch options.claudeAttributionFilter {
+                case .all, .excludeCodexBackend: .all
+                case .codexBackendOnly: .codexBackendOnly
+                }
             }
+            let report = Self.buildClaudeReportFromCache(
+                cache: cache,
+                range: range,
+                attributionFilter: reportAttributionFilter,
+                attributionResolver: reportAttributionEnabled ? attributionResolver : nil,
+                allowCachedCLIProxyAPIAttribution: reportAttributionEnabled,
+                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCacheRoot: options.cacheRoot)
+            try checkCancellation?()
+            guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+                stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
+            else { throw CancellationError() }
+            return report
         }
-        return Self.buildClaudeReportFromCache(
-            cache: cache,
-            range: range,
-            attributionFilter: reportAttributionFilter,
-            attributionResolver: reportAttributionEnabled ? attributionResolver : nil,
-            allowCachedCLIProxyAPIAttribution: reportAttributionEnabled,
-            modelsDevCatalog: modelsDevCatalog,
-            modelsDevCacheRoot: options.cacheRoot)
     }
 
     private struct ClaudeReportAggregation {
