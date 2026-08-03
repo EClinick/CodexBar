@@ -831,3 +831,65 @@ struct CLIProxyAPIUsageCacheTests {
         }
     }
 }
+
+struct CLIProxyAPITransactionRecoveryTests {
+    @Test
+    func `interrupted uncommitted replacement restores staged artifacts on the next lock`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-replacement-recovery-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let generationUpdate = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root, fileManager: fileManager))
+        let artifactsUpdate = try #require(CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
+            in: [costUsage],
+            stateRoot: root,
+            expectedGeneration: generationUpdate.generation,
+            fileManager: fileManager))
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
+        #expect(artifactsUpdate.manifestURL.map { fileManager.fileExists(atPath: $0.path) } == true)
+
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root, fileManager: fileManager) {}
+
+        #expect(fileManager.fileExists(atPath: usageFile.path))
+        #expect(artifactsUpdate.moves.allSatisfy { !fileManager.fileExists(atPath: $0.stagedURL.path) })
+        #expect(artifactsUpdate.manifestURL.map { !fileManager.fileExists(atPath: $0.path) } == true)
+        CostUsageCacheLocations.discardCLIProxyAPIConfigurationGenerationUpdate(
+            generationUpdate,
+            fileManager: fileManager)
+    }
+
+    @Test
+    func `interrupted committed replacement discards staged artifacts on the next lock`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-replacement-finalize-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let generationUpdate = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root, fileManager: fileManager))
+        let artifactsUpdate = try #require(CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
+            in: [costUsage],
+            stateRoot: root,
+            expectedGeneration: generationUpdate.generation,
+            fileManager: fileManager))
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+            generationUpdate,
+            fileManager: fileManager))
+
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root, fileManager: fileManager) {}
+
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
+        #expect(artifactsUpdate.moves.allSatisfy { !fileManager.fileExists(atPath: $0.stagedURL.path) })
+        #expect(artifactsUpdate.manifestURL.map { !fileManager.fileExists(atPath: $0.path) } == true)
+    }
+}

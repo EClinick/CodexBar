@@ -20,17 +20,35 @@ public enum CostUsageCacheLocations {
         }
 
         let moves: [Move]
+        let manifestURL: URL?
+
+        init(moves: [Move], manifestURL: URL? = nil) {
+            self.moves = moves
+            self.manifestURL = manifestURL
+        }
     }
 
     struct CLIProxyAPIConfigurationGenerationUpdate {
         let stagedURL: URL
         let destinationURL: URL
+        let generation: String
+    }
+
+    private struct CLIProxyAPIArtifactsTransactionManifest: Codable {
+        struct Move: Codable {
+            let originalPath: String
+            let stagedPath: String
+        }
+
+        let expectedGeneration: String
+        let moves: [Move]
     }
 
     static let cliProxyAPIUsageFileName = "cliproxyapi-usage-v1.json"
     static let cliProxyAPIPendingFileName = "cliproxyapi-pending-v1.json"
     private static let cliProxyAPIDisconnectedFileName = "cliproxyapi-disconnected-v1"
     private static let cliProxyAPIConfigurationGenerationFileName = "cliproxyapi-configuration-generation-v1"
+    private static let cliProxyAPIArtifactsTransactionFileName = "cliproxyapi-artifacts-transaction-v1.json"
 
     public static func directories(fileManager: FileManager = .default) -> [URL] {
         let cacheRoot = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -88,6 +106,9 @@ public enum CostUsageCacheLocations {
     {
         let descriptor = try self.acquireCLIProxyAPILock(stateRoot: stateRoot, fileManager: fileManager)
         defer { self.releaseCLIProxyAPILock(descriptor) }
+        guard self.recoverCLIProxyAPIArtifactsTransaction(stateRoot: stateRoot, fileManager: fileManager) else {
+            throw CocoaError(.fileReadUnknown)
+        }
         return try operation()
     }
 
@@ -98,6 +119,9 @@ public enum CostUsageCacheLocations {
     {
         let descriptor = try self.acquireCLIProxyAPILock(stateRoot: stateRoot, fileManager: fileManager)
         defer { self.releaseCLIProxyAPILock(descriptor) }
+        guard self.recoverCLIProxyAPIArtifactsTransaction(stateRoot: stateRoot, fileManager: fileManager) else {
+            throw CocoaError(.fileReadUnknown)
+        }
         return try await operation()
     }
 
@@ -148,12 +172,51 @@ public enum CostUsageCacheLocations {
 
     static func prepareCLIProxyAPIArtifactsUpdate(
         in directories: [URL],
+        stateRoot: URL?,
+        expectedGeneration: String,
         fileManager: FileManager) -> CLIProxyAPIArtifactsUpdate?
     {
-        self.prepareCLIProxyAPIArtifactsUpdate(
-            in: directories,
-            fileExists: { fileManager.fileExists(atPath: $0.path) },
-            moveItem: { try fileManager.moveItem(at: $0, to: $1) })
+        let identifier = UUID().uuidString
+        let moves = self.cliProxyAPIArtifactURLs(in: directories)
+            .filter { fileManager.fileExists(atPath: $0.path) }
+            .map { originalURL in
+                CLIProxyAPIArtifactsUpdate.Move(
+                    originalURL: originalURL,
+                    stagedURL: originalURL
+                        .deletingLastPathComponent()
+                        .appendingPathComponent(
+                            ".\(originalURL.lastPathComponent).\(identifier).replacement-backup",
+                            isDirectory: false))
+            }
+        guard !moves.isEmpty else { return CLIProxyAPIArtifactsUpdate(moves: []) }
+
+        let manifestURL = self.cliProxyAPIArtifactsTransactionURL(
+            stateRoot: stateRoot,
+            fileManager: fileManager)
+        let manifest = CLIProxyAPIArtifactsTransactionManifest(
+            expectedGeneration: expectedGeneration,
+            moves: moves.map {
+                .init(originalPath: $0.originalURL.path, stagedPath: $0.stagedURL.path)
+            })
+        do {
+            try fileManager.createDirectory(
+                at: manifestURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try JSONEncoder().encode(manifest).write(to: manifestURL, options: [.atomic])
+        } catch {
+            return nil
+        }
+
+        let update = CLIProxyAPIArtifactsUpdate(moves: moves, manifestURL: manifestURL)
+        for move in moves {
+            do {
+                try fileManager.moveItem(at: move.originalURL, to: move.stagedURL)
+            } catch {
+                _ = self.restoreCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+                return nil
+            }
+        }
+        return update
     }
 
     static func prepareCLIProxyAPIArtifactsUpdate(
@@ -188,10 +251,12 @@ public enum CostUsageCacheLocations {
         _ update: CLIProxyAPIArtifactsUpdate,
         fileManager: FileManager) -> Bool
     {
-        self.restoreCLIProxyAPIArtifactsUpdate(
+        let restored = self.restoreCLIProxyAPIArtifactsUpdate(
             update,
             fileExists: { fileManager.fileExists(atPath: $0.path) },
             moveItem: { try fileManager.moveItem(at: $0, to: $1) })
+        guard restored else { return false }
+        return self.removeCLIProxyAPIArtifactsManifest(update.manifestURL, fileManager: fileManager)
     }
 
     @discardableResult
@@ -229,7 +294,48 @@ public enum CostUsageCacheLocations {
                 succeeded = false
             }
         }
-        return succeeded
+        guard succeeded else { return false }
+        return self.removeCLIProxyAPIArtifactsManifest(update.manifestURL, fileManager: fileManager)
+    }
+
+    @discardableResult
+    static func recoverCLIProxyAPIArtifactsTransaction(
+        stateRoot: URL?,
+        fileManager: FileManager = .default) -> Bool
+    {
+        let manifestURL = self.cliProxyAPIArtifactsTransactionURL(
+            stateRoot: stateRoot,
+            fileManager: fileManager)
+        guard fileManager.fileExists(atPath: manifestURL.path) else { return true }
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(CLIProxyAPIArtifactsTransactionManifest.self, from: data)
+        else { return false }
+        let update = CLIProxyAPIArtifactsUpdate(
+            moves: manifest.moves.map {
+                .init(
+                    originalURL: URL(fileURLWithPath: $0.originalPath),
+                    stagedURL: URL(fileURLWithPath: $0.stagedPath))
+            },
+            manifestURL: manifestURL)
+        if self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
+            manifest.expectedGeneration
+        {
+            return self.discardCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+        }
+        return self.restoreCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+    }
+
+    private static func removeCLIProxyAPIArtifactsManifest(
+        _ manifestURL: URL?,
+        fileManager: FileManager) -> Bool
+    {
+        guard let manifestURL, fileManager.fileExists(atPath: manifestURL.path) else { return true }
+        do {
+            try fileManager.removeItem(at: manifestURL)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static func cliProxyAPIArtifactURLs(in directories: [URL]) -> [URL] {
@@ -278,14 +384,16 @@ public enum CostUsageCacheLocations {
         let stagedURL = destinationURL
             .deletingLastPathComponent()
             .appendingPathComponent(".cliproxyapi-generation-\(UUID().uuidString).tmp", isDirectory: false)
+        let generation = UUID().uuidString
         do {
             try fileManager.createDirectory(
                 at: destinationURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
-            try Data(UUID().uuidString.utf8).write(to: stagedURL, options: [.atomic])
+            try Data(generation.utf8).write(to: stagedURL, options: [.atomic])
             return CLIProxyAPIConfigurationGenerationUpdate(
                 stagedURL: stagedURL,
-                destinationURL: destinationURL)
+                destinationURL: destinationURL,
+                generation: generation)
         } catch {
             try? fileManager.removeItem(at: stagedURL)
             return nil
@@ -359,6 +467,17 @@ public enum CostUsageCacheLocations {
         return root.appendingPathComponent(
             self.cliProxyAPIConfigurationGenerationFileName,
             isDirectory: false)
+    }
+
+    private static func cliProxyAPIArtifactsTransactionURL(
+        stateRoot: URL?,
+        fileManager: FileManager) -> URL
+    {
+        let root = stateRoot ?? fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask).first!
+            .appendingPathComponent("CodexBar", isDirectory: true)
+        return root.appendingPathComponent(self.cliProxyAPIArtifactsTransactionFileName, isDirectory: false)
     }
 
     private static func acquireCLIProxyAPILock(

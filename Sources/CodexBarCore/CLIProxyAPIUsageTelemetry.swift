@@ -748,6 +748,8 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 case .purge:
                     guard let update = CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
                         in: artifactDirectories,
+                        stateRoot: stateRoot,
+                        expectedGeneration: generationUpdate.generation,
                         fileManager: fileManager)
                     else { return false }
                     artifactsUpdate = update
@@ -876,6 +878,8 @@ public enum CLIProxyAPIConnectionSettingsStore {
         }
         guard let artifactsUpdate = CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
             in: directories,
+            stateRoot: stateRoot,
+            expectedGeneration: generationUpdate.generation,
             fileManager: fileManager)
         else { return .configurationRemovalFailed }
 

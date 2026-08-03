@@ -892,6 +892,9 @@ extension CostUsageScanner {
         options: Options,
         checkCancellation: CancellationCheck?) throws -> CostUsageDailyReport
     {
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: options.cacheRoot) {}
+        let cliProxyAPIConfigurationGeneration = CostUsageCacheLocations
+            .cliProxyAPIConfigurationGeneration(stateRoot: options.cacheRoot)
         var cache = CostUsageCacheIO.load(
             provider: provider,
             cacheRoot: options.cacheRoot,
@@ -975,8 +978,11 @@ extension CostUsageScanner {
             cache.lastScanUnixMs = nowMs
             try checkCancellation?()
             try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
-                stateRoot: options.cacheRoot?.deletingLastPathComponent())
+                stateRoot: options.cacheRoot)
             {
+                guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+                    stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
+                else { throw CancellationError() }
                 if CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
                     stateRoot: options.cacheRoot)
                 {
@@ -1012,6 +1018,10 @@ extension CostUsageScanner {
                     calendar: range.calendar)
             }
         }
+
+        guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+            stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
+        else { throw CancellationError() }
 
         let modelsDevCatalog = CostUsagePricing.modelsDevCatalog(now: now, cacheRoot: options.cacheRoot)
         let reportAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
