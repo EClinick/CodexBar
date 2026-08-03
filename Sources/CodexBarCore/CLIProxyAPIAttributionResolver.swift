@@ -238,7 +238,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 routeObserved: routeObservation != nil,
                 configuredCodexModel: configuredCodexModel)
             : nil
-        let routeConfirmed = routeObservation != nil || inventoryUpstream != nil
+        let routeConfirmed = routeObservation != nil || usageRecord != nil || inventoryUpstream != nil
         var evidence: Set<CostUsageAttribution.Evidence> = [.modelProvider]
         if routeObservation != nil {
             evidence.insert(.cliProxyRequestLog)

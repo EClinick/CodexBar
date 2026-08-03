@@ -114,6 +114,47 @@ struct CLIProxyAPIAttributionBatchTests {
         #expect(!attributions[1].evidence.contains(.cliProxyRequestLog))
     }
 
+    @Test
+    func `uniquely matched telemetry confirms both requests sharing one route observation`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let otherTokens = CLIProxyAPIAttributionResolver.TokenSignature(
+            input: 100,
+            cacheRead: 300,
+            cacheCreate: 400,
+            output: 200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "resumed-session", model: "gpt-5.5", timestamp: timestamp),
+            ],
+            usageRecords: [
+                Self.record(timestamp: timestamp, provider: "codex", authType: "oauth"),
+                Self.record(
+                    timestamp: timestamp.addingTimeInterval(1),
+                    provider: "openrouter",
+                    authType: "api_key",
+                    tokens: otherTokens),
+            ])
+        let attributions = resolver.attributions(for: [
+            .init(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "resumed-session",
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: Self.tokens),
+            .init(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "resumed-session",
+                timestampUnixMs: Int64(timestamp.addingTimeInterval(1).timeIntervalSince1970 * 1000),
+                tokens: otherTokens),
+        ])
+
+        #expect(attributions.map(\.route) == [.cliProxyAPI, .cliProxyAPI])
+        #expect(attributions.map(\.upstream?.provider) == ["codex", "openrouter"])
+        #expect(attributions.allSatisfy { $0.evidence.contains(.cliProxyUsageTelemetry) })
+        #expect(attributions.count(where: { $0.evidence.contains(.cliProxyRequestLog) }) == 1)
+    }
+
     private static let tokens = CLIProxyAPIAttributionResolver.TokenSignature(
         input: 10,
         cacheRead: 30,
