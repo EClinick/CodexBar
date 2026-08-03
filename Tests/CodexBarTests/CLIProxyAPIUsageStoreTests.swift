@@ -404,7 +404,7 @@ struct CLIProxyAPIUsageStoreTests {
 
         let error = await store.clearCostUsageCache(clearDirectories: {
             deletionStartedAfterDrain.setValue(collectorFinished.value)
-            return nil
+            return (cleared: 0, errorMessage: nil)
         })
         store.stopCLIProxyAPIUsageCollector()
 
@@ -451,7 +451,7 @@ struct CLIProxyAPIUsageStoreTests {
 
         let error = await store.clearCostUsageCache(clearDirectories: {
             deletionStartedAfterDrain.setValue(refreshFinished.value)
-            return nil
+            return (cleared: 0, errorMessage: nil)
         })
         await refreshTask.value
 
@@ -489,6 +489,25 @@ struct CLIProxyAPIUsageStoreTests {
 
         #expect(error == nil)
         #expect(!FileManager.default.fileExists(atPath: cacheDirectory.path))
+    }
+
+    @Test
+    func `partial cost cache clear invalidates in memory snapshots`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        let store = UsageStore(
+            fetcher: UsageFetcher(),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+
+        let error = await store.clearCostUsageCache(clearDirectories: {
+            (cleared: 1, errorMessage: "Could not remove every cache directory")
+        })
+
+        #expect(error != nil)
+        #expect(store.tokenSnapshot(for: .codex) == nil)
     }
 
     private static func tokenSnapshot() -> CostUsageTokenSnapshot {

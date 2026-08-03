@@ -265,6 +265,8 @@ struct CLIProxyAPIUsageCacheTests {
         defer { try? fileManager.removeItem(at: root) }
         let existing = CLIProxyAPIConnectionSettings(managementKey: "old-management-key")
         let replacement = CLIProxyAPIConnectionSettings(managementKey: "new-management-key")
+        let disconnected = LockIsolated(false)
+        let wasIsolatedAtStore = LockIsolated(false)
 
         let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
             replacement,
@@ -272,13 +274,21 @@ struct CLIProxyAPIUsageCacheTests {
             stateRoot: root,
             fileManager: fileManager,
             operations: .init(
-                isDisconnected: { false },
+                isDisconnected: { disconnected.value },
                 loadStored: { .found(existing) },
-                store: { _ in false },
-                setDisconnectedState: { _ in true },
+                store: { _ in
+                    wasIsolatedAtStore.setValue(disconnected.value)
+                    return false
+                },
+                setDisconnectedState: {
+                    disconnected.setValue($0)
+                    return true
+                },
                 restore: { _ in true }))
 
         #expect(!saved)
+        #expect(wasIsolatedAtStore.value)
+        #expect(!disconnected.value)
         #expect(fileManager.fileExists(atPath: usageFile.path))
     }
 
@@ -352,7 +362,7 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `failed save still invalidates in flight work before credential mutation`() {
+    func `failed save does not publish its staged configuration generation`() {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-generation-failure-\(UUID().uuidString)", isDirectory: true)
@@ -370,11 +380,11 @@ struct CLIProxyAPIUsageCacheTests {
                 restore: { _ in true })))
         #expect(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
             stateRoot: root,
-            fileManager: fileManager) != nil)
+            fileManager: fileManager) == nil)
     }
 
     @Test
-    func `generation publication failure prevents replacement credential mutation and restores telemetry`() throws {
+    func `generation publication failure restores replacement credentials state and telemetry`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-generation-commit-failure-\(UUID().uuidString)", isDirectory: true)
@@ -391,7 +401,6 @@ struct CLIProxyAPIUsageCacheTests {
         let storedSettings = LockIsolated(existing)
         let disconnected = LockIsolated(true)
         let didStore = LockIsolated(false)
-        try fileManager.createDirectory(at: generationURL, withIntermediateDirectories: true)
 
         let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
             replacement,
@@ -404,6 +413,7 @@ struct CLIProxyAPIUsageCacheTests {
                 store: { settings in
                     didStore.setValue(true)
                     storedSettings.setValue(settings)
+                    try? FileManager.default.createDirectory(at: generationURL, withIntermediateDirectories: true)
                     return true
                 },
                 setDisconnectedState: { value in
@@ -417,7 +427,7 @@ struct CLIProxyAPIUsageCacheTests {
                 }))
 
         #expect(!saved)
-        #expect(!didStore.value)
+        #expect(didStore.value)
         #expect(storedSettings.value == existing)
         #expect(disconnected.value)
         #expect(fileManager.fileExists(atPath: usageFile.path))

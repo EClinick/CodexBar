@@ -474,7 +474,7 @@ extension UsageStore {
     }
 
     func clearCostUsageCache(
-        clearDirectories: (@Sendable () async -> String?)? = nil,
+        clearDirectories: (@Sendable () async -> (cleared: Int, errorMessage: String?))? = nil,
         fileManager: FileManager = .default) async -> String?
     {
         guard !self.costUsageCacheClearInProgress else { return nil }
@@ -495,17 +495,20 @@ extension UsageStore {
 
         let cacheDirectories = CostUsageCacheLocations.directories(fileManager: fileManager)
         let cliProxyAPIStateRoot = cacheDirectories[1].deletingLastPathComponent()
-        let errorMessage: String? = if let clearDirectories {
-            await clearDirectories()
+        let clearResult: (didClear: Bool, errorMessage: String?)
+        if let clearDirectories {
+            let result = await clearDirectories()
+            clearResult = (result.errorMessage == nil || result.cleared > 0, result.errorMessage)
         } else {
-            await Task.detached(priority: .utility) {
+            let result = await Task.detached(priority: .utility) {
                 CostUsageCacheLocations.clearAllCostUsageCaches(
                     in: cacheDirectories,
-                    stateRoot: cliProxyAPIStateRoot).errorDescription
+                    stateRoot: cliProxyAPIStateRoot)
             }.value
+            clearResult = (result.errorDescription == nil || result.cleared > 0, result.errorDescription)
         }
 
-        guard errorMessage == nil else { return errorMessage }
+        guard clearResult.didClear else { return clearResult.errorMessage }
 
         self.clearTokenSnapshots()
         self.spendDashboardCodexCostCatchUpRevision &+= 1
@@ -514,7 +517,7 @@ extension UsageStore {
         self.lastTokenFetchScope.removeAll()
         self.tokenFailureGates[.codex]?.reset()
         self.tokenFailureGates[.claude]?.reset()
-        return nil
+        return clearResult.errorMessage
     }
 
     nonisolated static func tokenCostNoDataMessage(for provider: UsageProvider) -> String {

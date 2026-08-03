@@ -741,6 +741,13 @@ public enum CLIProxyAPIConnectionSettingsStore {
                         generationUpdate,
                         fileManager: fileManager)
                 }
+                let requiresIsolation = artifactDisposition == .purge
+                if requiresIsolation,
+                   !operations.setDisconnectedState(true)
+                {
+                    _ = operations.setDisconnectedState(wasDisconnected)
+                    return false
+                }
                 let artifactsUpdate: CostUsageCacheLocations.CLIProxyAPIArtifactsUpdate?
                 switch artifactDisposition {
                 case .preserve:
@@ -751,7 +758,10 @@ public enum CLIProxyAPIConnectionSettingsStore {
                         stateRoot: stateRoot,
                         expectedGeneration: generationUpdate.generation,
                         fileManager: fileManager)
-                    else { return false }
+                    else {
+                        _ = operations.setDisconnectedState(wasDisconnected)
+                        return false
+                    }
                     artifactsUpdate = update
                 }
 
@@ -765,17 +775,14 @@ public enum CLIProxyAPIConnectionSettingsStore {
                     }
                 }
 
-                // Publish the new generation before mutating credentials. If the process exits after
-                // the credential write, recovery will see the committed generation and finalize the
-                // staged purge instead of restoring artifacts from the previous configuration.
+                guard operations.store(settings) else {
+                    rollback()
+                    return false
+                }
                 guard CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
                     generationUpdate,
                     fileManager: fileManager)
                 else {
-                    rollback()
-                    return false
-                }
-                guard operations.store(settings) else {
                     rollback()
                     return false
                 }
