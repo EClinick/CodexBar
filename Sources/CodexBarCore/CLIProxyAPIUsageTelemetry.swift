@@ -719,6 +719,33 @@ public enum CLIProxyAPIUsageCollector {
     private static let batchSize = 100
     private static let collectionGate = CLIProxyAPIUsageCollectionGate()
 
+    @discardableResult
+    public static func prunePendingUsage(now: Date = Date()) -> Bool {
+        self.prunePendingUsage(
+            pendingRoot: nil,
+            stateRoot: nil,
+            now: now)
+    }
+
+    @discardableResult
+    static func prunePendingUsage(
+        pendingRoot: URL?,
+        stateRoot: URL?,
+        now: Date,
+        fileManager: FileManager = .default) -> Bool
+    {
+        do {
+            return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            {
+                CLIProxyAPIUsagePendingIO.load(pendingRoot: pendingRoot, now: now) != nil
+            }
+        } catch {
+            return false
+        }
+    }
+
     public static func collect(
         cacheRoot: URL? = nil,
         settings: CLIProxyAPIConnectionSettings? = CLIProxyAPIConnectionSettingsStore.load(),

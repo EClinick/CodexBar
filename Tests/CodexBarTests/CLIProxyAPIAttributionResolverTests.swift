@@ -904,6 +904,28 @@ struct CLIProxyAPIAttributionTimestampTests {
     }
 }
 
+struct CLIProxyAPIAttributionEndpointTests {
+    @Test(arguments: [
+        "/v1/messages",
+        "/v1/messages?beta=true",
+        "POST /v1/messages",
+        "https://localhost:8317/v1/messages?beta=true",
+    ])
+    func `accepts Claude generation endpoint URL variants`(_ endpoint: String) {
+        #expect(CLIProxyAPIAttributionResolver.isClaudeMessagesGenerationEndpoint(endpoint))
+    }
+
+    @Test(arguments: [
+        "/v1/messages/count_tokens",
+        "/v1/messages/batches",
+        "/v1/messageship",
+        "POST /v1/messages/count_tokens",
+    ])
+    func `rejects non generation Claude endpoint variants`(_ endpoint: String) {
+        #expect(!CLIProxyAPIAttributionResolver.isClaudeMessagesGenerationEndpoint(endpoint))
+    }
+}
+
 private actor CLIProxyAPICollectionConcurrencyProbe {
     private var activeCallCount = 0
     private var maximumActiveCount = 0

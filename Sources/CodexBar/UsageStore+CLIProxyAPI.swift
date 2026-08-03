@@ -4,11 +4,19 @@ import Foundation
 @MainActor
 extension UsageStore {
     private static let cliProxyAPIUsageCollectionInterval: Duration = .seconds(30)
+    private static let cliProxyAPIPendingPruneInterval: Duration = .seconds(24 * 60 * 60)
 
     func startCLIProxyAPIUsageCollector() {
         self.stopCLIProxyAPIUsageCollector()
+        let pendingPruneInterval = Self.cliProxyAPIPendingPruneInterval
         self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) { [weak self] in
+            var nextPendingPruneAt: ContinuousClock.Instant?
             while !Task.isCancelled {
+                let now = ContinuousClock.now
+                if nextPendingPruneAt.map({ now >= $0 }) ?? true {
+                    _ = CLIProxyAPIUsageCollector.prunePendingUsage()
+                    nextPendingPruneAt = now.advanced(by: pendingPruneInterval)
+                }
                 guard await self?.collectCLIProxyAPIUsageNow() != nil else { return }
                 do {
                     try await Task.sleep(for: Self.cliProxyAPIUsageCollectionInterval)

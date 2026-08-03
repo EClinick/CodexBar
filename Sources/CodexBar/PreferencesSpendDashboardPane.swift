@@ -481,7 +481,10 @@ struct SpendDashboardPane: View {
         }
         let collectorTask = self.store.stopCLIProxyAPIUsageCollector()
         await collectorTask?.value
-        guard CLIProxyAPIConnectionSettingsStore.save(configuration) else {
+        let saved = await Task.detached(priority: .utility) {
+            CLIProxyAPIConnectionSettingsStore.save(configuration)
+        }.value
+        guard saved else {
             self.store.startCLIProxyAPIUsageCollector()
             self.cliProxyAPIStatus = "Could not save the management key."
             return

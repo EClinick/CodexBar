@@ -385,7 +385,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         var recordsByModel: [String: [IndexedUsageRecord]] = [:]
         for (sourceID, record) in records.enumerated() where !record.failed
             && record.generate
-            && record.endpoint.lowercased().contains("/v1/messages")
+            && self.isClaudeMessagesGenerationEndpoint(record.endpoint)
         {
             let models = Set([self.canonicalModel(record.alias), self.canonicalModel(record.model)])
             for model in models where !model.isEmpty {
@@ -734,7 +734,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 
         let info = String(text[..<bodyMarkerRange.lowerBound])
         guard let requestURL = self.field("URL", in: info),
-              requestURL.contains("/v1/messages"),
+              self.isClaudeMessagesGenerationEndpoint(requestURL),
               let sessionID = self.field("X-Claude-Code-Session-Id", in: info)?
                   .trimmingCharacters(in: .whitespacesAndNewlines),
                   !sessionID.isEmpty
@@ -748,6 +748,12 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         guard let model = self.topLevelJSONStringValue(forKey: "model", in: requestBody) else { return nil }
         let timestamp = self.field("Timestamp", in: info).flatMap(CostUsageDateParser.parse)
         return Observation(sessionID: sessionID, model: model, timestamp: timestamp)
+    }
+
+    static func isClaudeMessagesGenerationEndpoint(_ value: String) -> Bool {
+        let candidate = value.split(whereSeparator: \.isWhitespace).last.map(String.init) ?? value
+        guard let components = URLComponents(string: candidate) else { return false }
+        return components.path == "/v1/messages"
     }
 
     private static func field(_ name: String, in text: String) -> String? {
