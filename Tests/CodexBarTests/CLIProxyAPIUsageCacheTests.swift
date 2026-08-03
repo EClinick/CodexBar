@@ -152,6 +152,7 @@ struct CLIProxyAPIUsageCacheTests {
 
         let saved = CLIProxyAPIConnectionSettingsStore.save(
             settings,
+            prepareForReconnect: { true },
             store: { _ in
                 didStore = true
                 return true
@@ -165,6 +166,62 @@ struct CLIProxyAPIUsageCacheTests {
         #expect(!saved)
         #expect(didStore)
         #expect(didRollback)
+    }
+
+    @Test
+    func `reconnect purges stranded telemetry before storing credentials`() {
+        let settings = CLIProxyAPIConnectionSettings(
+            baseURL: "http://127.0.0.1:8317",
+            managementKey: "test-management-key")
+        var operations: [String] = []
+
+        let saved = CLIProxyAPIConnectionSettingsStore.save(
+            settings,
+            prepareForReconnect: {
+                operations.append("purge")
+                return true
+            },
+            store: { _ in
+                operations.append("store")
+                return true
+            },
+            clearDisconnectedState: {
+                operations.append("clear")
+                return true
+            },
+            rollback: {
+                operations.append("rollback")
+                return true
+            })
+
+        #expect(saved)
+        #expect(operations == ["purge", "store", "clear"])
+    }
+
+    @Test
+    func `reconnect preserves disconnect state when stranded telemetry purge fails`() {
+        let settings = CLIProxyAPIConnectionSettings(
+            baseURL: "http://127.0.0.1:8317",
+            managementKey: "test-management-key")
+        var didStore = false
+        var didClearDisconnectedState = false
+
+        let saved = CLIProxyAPIConnectionSettingsStore.save(
+            settings,
+            prepareForReconnect: { false },
+            store: { _ in
+                didStore = true
+                return true
+            },
+            clearDisconnectedState: {
+                didClearDisconnectedState = true
+                return true
+            },
+            rollback: { true })
+
+        #expect(!saved)
+        #expect(!didStore)
+        #expect(!didClearDisconnectedState)
     }
 
     @Test
@@ -188,6 +245,7 @@ struct CLIProxyAPIUsageCacheTests {
                 stateRoot: root,
                 fileManager: .default,
                 operations: .init(
+                    prepareForReconnect: { true },
                     store: { _ in
                         saveEntered.signal()
                         releaseSave.wait()
@@ -402,6 +460,33 @@ struct CLIProxyAPIUsageCacheTests {
         #expect(
             roundTripped.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) }
                 == records.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) })
+    }
+
+    @Test
+    func `fallback record identity preserves identical occurrences across cache replay`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-identical-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00.123Z"))
+        let records = [
+            Self.record(id: "", timestamp: timestamp),
+            Self.record(id: "", timestamp: timestamp),
+        ]
+
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            records,
+            cacheRoot: root,
+            now: timestamp) == 2)
+        #expect(CLIProxyAPIUsageCacheIO.merge(
+            records,
+            cacheRoot: root,
+            now: timestamp) == 0)
+
+        let roundTripped = CLIProxyAPIUsageCacheIO.load(
+            cacheRoot: root,
+            now: timestamp)
+        #expect(roundTripped == records)
     }
 
     @Test

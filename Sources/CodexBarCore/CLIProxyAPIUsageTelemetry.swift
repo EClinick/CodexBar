@@ -247,13 +247,10 @@ enum CLIProxyAPIUsageCacheIO {
                 cacheRoot: cacheRoot,
                 legacyCacheRoot: legacyCacheRoot)
             else { return nil }
-            var byKey: [String: CLIProxyAPIUsageRecord] = [:]
-            for record in existingCache.records where record.timestamp >= cutoff {
-                byKey[self.recordKey(record)] = record
-            }
+            var byKey = self.recordsByKey(existingCache.records.filter { $0.timestamp >= cutoff })
             let priorCount = byKey.count
-            for record in records where record.timestamp >= cutoff {
-                byKey[self.recordKey(record)] = record
+            for (key, record) in self.recordsByKey(records.filter { $0.timestamp >= cutoff }) {
+                byKey[key] = record
             }
             let cache = Cache(records: byKey.values.sorted { $0.timestamp < $1.timestamp })
             if cache == existingCache {
@@ -329,6 +326,25 @@ enum CLIProxyAPIUsageCacheIO {
         ].joined(separator: ":")
     }
 
+    private static func recordsByKey(
+        _ records: [CLIProxyAPIUsageRecord]) -> [String: CLIProxyAPIUsageRecord]
+    {
+        var fallbackOccurrences: [String: Int] = [:]
+        var recordsByKey: [String: CLIProxyAPIUsageRecord] = [:]
+        for record in records {
+            let baseKey = self.recordKey(record)
+            let requestID = record.requestID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !requestID.isEmpty {
+                recordsByKey[baseKey] = record
+                continue
+            }
+            let occurrence = fallbackOccurrences[baseKey, default: 0]
+            fallbackOccurrences[baseKey] = occurrence + 1
+            recordsByKey["\(baseKey):occurrence:\(occurrence)"] = record
+        }
+        return recordsByKey
+    }
+
     private static func defaultLegacyCacheRoot() -> URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             .appendingPathComponent("CodexBar", isDirectory: true)
@@ -388,12 +404,9 @@ enum CLIProxyAPIUsageCacheIO {
     }
 
     private static func mergedCaches(legacy: Cache, durable: Cache?) -> Cache {
-        var byKey: [String: CLIProxyAPIUsageRecord] = [:]
-        for record in legacy.records {
-            byKey[self.recordKey(record)] = record
-        }
-        for record in durable?.records ?? [] {
-            byKey[self.recordKey(record)] = record
+        var byKey = self.recordsByKey(legacy.records)
+        for (key, record) in self.recordsByKey(durable?.records ?? []) {
+            byKey[key] = record
         }
         return Cache(records: byKey.values.sorted { $0.timestamp < $1.timestamp })
     }
@@ -533,6 +546,7 @@ public struct CLIProxyAPIConnectionSettings: Codable, Equatable, Sendable {
 
 public enum CLIProxyAPIConnectionSettingsStore {
     struct SerializedSaveOperations: Sendable {
+        let prepareForReconnect: @Sendable () -> Bool
         let store: @Sendable (CLIProxyAPIConnectionSettings) -> Bool
         let clearDisconnectedState: @Sendable () -> Bool
         let rollback: @Sendable () -> Bool
@@ -563,11 +577,19 @@ public enum CLIProxyAPIConnectionSettingsStore {
 
     @discardableResult
     public static func save(_ settings: CLIProxyAPIConnectionSettings) -> Bool {
-        self.saveSerialized(
+        let fileManager = FileManager.default
+        let directories = CostUsageCacheLocations.directories(fileManager: fileManager)
+        return self.saveSerialized(
             settings,
-            stateRoot: nil,
-            fileManager: .default,
+            stateRoot: directories[1].deletingLastPathComponent(),
+            fileManager: fileManager,
             operations: SerializedSaveOperations(
+                prepareForReconnect: {
+                    guard CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected() else { return true }
+                    return CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
+                        in: directories,
+                        fileManager: .default)
+                },
                 store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
                 clearDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false) },
                 rollback: { KeychainCacheStore.clear(key: self.key) }))
@@ -586,6 +608,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
             {
                 self.save(
                     settings,
+                    prepareForReconnect: operations.prepareForReconnect,
                     store: operations.store,
                     clearDisconnectedState: operations.clearDisconnectedState,
                     rollback: operations.rollback)
@@ -597,11 +620,13 @@ public enum CLIProxyAPIConnectionSettingsStore {
 
     static func save(
         _ settings: CLIProxyAPIConnectionSettings,
+        prepareForReconnect: () -> Bool,
         store: (CLIProxyAPIConnectionSettings) -> Bool,
         clearDisconnectedState: () -> Bool,
         rollback: () -> Bool) -> Bool
     {
         guard settings.isConfigured else { return false }
+        guard prepareForReconnect() else { return false }
         guard store(settings) else { return false }
         guard clearDisconnectedState() else {
             _ = rollback()
