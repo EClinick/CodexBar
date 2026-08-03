@@ -275,6 +275,14 @@ struct CLIProxyAPIUsageCollectorTests {
     }
 
     @Test
+    func `temporary credential unavailability remains retryable`() async {
+        let result = await CLIProxyAPIUsageCollector.collect(
+            settingsResult: .temporarilyUnavailable)
+
+        #expect(result == .failed("CLIProxyAPI configuration is temporarily unavailable."))
+    }
+
+    @Test
     func `collector rechecks configuration before every destructive pop`() async throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory

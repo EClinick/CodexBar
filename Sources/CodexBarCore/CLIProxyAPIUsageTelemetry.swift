@@ -601,14 +601,23 @@ public enum CLIProxyAPIConnectionSettingsStore {
         identifier: "cliproxyapi-management")
 
     public static func load() -> CLIProxyAPIConnectionSettings? {
-        self.load(
+        guard case let .found(settings) = self.loadResult() else { return nil }
+        return settings
+    }
+
+    public static func loadResult() -> KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings> {
+        self.loadResult(
             isDisconnected: { CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected() },
-            loadStored: {
-                switch KeychainCacheStore.load(key: self.key, as: CLIProxyAPIConnectionSettings.self) {
-                case let .found(settings): settings
-                case .missing, .temporarilyUnavailable, .invalid: nil
-                }
-            })
+            loadStored: { KeychainCacheStore.load(key: self.key, as: CLIProxyAPIConnectionSettings.self) })
+    }
+
+    static func loadResult(
+        isDisconnected: () -> Bool,
+        loadStored: () -> KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings>)
+        -> KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings>
+    {
+        guard !isDisconnected() else { return .missing }
+        return loadStored()
     }
 
     static func load(
@@ -821,7 +830,37 @@ public enum CLIProxyAPIUsageCollector {
 
     public static func collect(
         cacheRoot: URL? = nil,
-        settings: CLIProxyAPIConnectionSettings? = CLIProxyAPIConnectionSettingsStore.load(),
+        shouldContinue: @escaping @Sendable () async -> Bool = { true }) async
+        -> CLIProxyAPIUsageCollectionResult
+    {
+        await self.collect(
+            cacheRoot: cacheRoot,
+            settingsResult: CLIProxyAPIConnectionSettingsStore.loadResult(),
+            shouldContinue: shouldContinue)
+    }
+
+    static func collect(
+        cacheRoot: URL? = nil,
+        settingsResult: KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings>,
+        shouldContinue: @escaping @Sendable () async -> Bool = { true }) async
+        -> CLIProxyAPIUsageCollectionResult
+    {
+        switch settingsResult {
+        case let .found(settings):
+            await self.collect(
+                cacheRoot: cacheRoot,
+                settings: settings,
+                shouldContinue: shouldContinue)
+        case .temporarilyUnavailable:
+            .failed("CLIProxyAPI configuration is temporarily unavailable.")
+        case .missing, .invalid:
+            .notConfigured
+        }
+    }
+
+    public static func collect(
+        cacheRoot: URL? = nil,
+        settings: CLIProxyAPIConnectionSettings?,
         shouldContinue: @escaping @Sendable () async -> Bool = { true }) async
         -> CLIProxyAPIUsageCollectionResult
     {
@@ -831,7 +870,11 @@ public enum CLIProxyAPIUsageCollector {
             configurationIsCurrent: {
                 guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: cacheRoot)
                 else { return false }
-                return CLIProxyAPIConnectionSettingsStore.load() == settings
+                return switch CLIProxyAPIConnectionSettingsStore.loadResult() {
+                case let .found(currentSettings): currentSettings == settings
+                case .temporarilyUnavailable: true
+                case .missing, .invalid: false
+                }
             },
             shouldContinue: shouldContinue,
             client: CLIProxyAPIUsageQueueClient(settings: settings))
