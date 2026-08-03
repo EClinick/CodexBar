@@ -885,6 +885,41 @@ extension CostUsageScanner {
         // Root mtime caching removed — see comment above.
     }
 
+    private struct ClaudeCLIProxyAPIAttributionState {
+        let configurationGeneration: String?
+        let resolver: CLIProxyAPIAttributionResolver?
+    }
+
+    private static func captureClaudeCLIProxyAPIAttributionState(
+        options: Options,
+        checkCancellation: CancellationCheck?) throws -> ClaudeCLIProxyAPIAttributionState
+    {
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: options.cacheRoot)
+        {
+            let configurationGeneration = CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+                stateRoot: options.cacheRoot)
+            let attributionResolver: CLIProxyAPIAttributionResolver?
+            if !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: options.cacheRoot),
+               let home = options.cliProxyAPIHome
+            {
+                let usageRecords = CLIProxyAPIUsageCacheIO.loadAssumingInterprocessLockHeld(
+                    cacheRoot: options.cacheRoot)
+                attributionResolver = try CLIProxyAPIAttributionResolver.load(
+                    home: home,
+                    cacheRoot: options.cacheRoot,
+                    forceReload: options.forceRescan,
+                    usageRecords: usageRecords,
+                    checkCancellation: checkCancellation)
+            } else {
+                attributionResolver = nil
+            }
+            return ClaudeCLIProxyAPIAttributionState(
+                configurationGeneration: configurationGeneration,
+                resolver: attributionResolver)
+        }
+    }
+
     static func loadClaudeDaily(
         provider: UsageProvider,
         range: CostUsageDayRange,
@@ -892,9 +927,11 @@ extension CostUsageScanner {
         options: Options,
         checkCancellation: CancellationCheck?) throws -> CostUsageDailyReport
     {
-        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: options.cacheRoot) {}
-        let cliProxyAPIConfigurationGeneration = CostUsageCacheLocations
-            .cliProxyAPIConfigurationGeneration(stateRoot: options.cacheRoot)
+        let cliProxyAPIAttributionState = try self.captureClaudeCLIProxyAPIAttributionState(
+            options: options,
+            checkCancellation: checkCancellation)
+        let cliProxyAPIConfigurationGeneration = cliProxyAPIAttributionState.configurationGeneration
+        let attributionResolver = cliProxyAPIAttributionState.resolver
         var cache = CostUsageCacheIO.load(
             provider: provider,
             cacheRoot: options.cacheRoot,
@@ -914,19 +951,6 @@ extension CostUsageScanner {
             || nowMs - cache.lastScanUnixMs > refreshMs
 
         let providerFilter = options.claudeLogProviderFilter
-        let cliProxyAPIAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
-            stateRoot: options.cacheRoot)
-        let attributionResolver: CLIProxyAPIAttributionResolver? = if cliProxyAPIAttributionEnabled,
-                                                                      let home = options.cliProxyAPIHome
-        {
-            try CLIProxyAPIAttributionResolver.load(
-                home: home,
-                cacheRoot: options.cacheRoot,
-                forceReload: options.forceRescan,
-                checkCancellation: checkCancellation)
-        } else {
-            nil
-        }
 
         var touched: Set<String> = []
 

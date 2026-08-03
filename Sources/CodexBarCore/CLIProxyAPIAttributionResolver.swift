@@ -97,6 +97,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         cacheRoot: URL? = nil,
         fileManager: FileManager = .default,
         forceReload: Bool = false,
+        usageRecords: [CLIProxyAPIUsageRecord]? = nil,
         checkCancellation: (() throws -> Void)? = nil) throws -> Self
     {
         let observations = try self.loadObservations(
@@ -106,7 +107,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             checkCancellation: checkCancellation)
         return Self(
             observations: observations,
-            usageRecords: CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot),
+            usageRecords: usageRecords ?? CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot),
             authProviders: self.loadAuthProviders(home: home, fileManager: fileManager),
             codexOAuthModelAliases: self.loadCodexOAuthModelAliases(home: home, fileManager: fileManager),
             hasConfiguredOpenAIAPIUpstream: self.hasConfiguredOpenAIAPIUpstream(

@@ -190,6 +190,27 @@ enum CLIProxyAPIUsageCacheIO {
             now: now)
     }
 
+    /// Reads and prunes the cache while the caller already owns the CLIProxyAPI interprocess lock.
+    static func loadAssumingInterprocessLockHeld(
+        cacheRoot: URL?,
+        now: Date = Date()) -> [CLIProxyAPIUsageRecord]
+    {
+        let legacyCacheRoot = cacheRoot == nil ? self.defaultLegacyCacheRoot() : nil
+        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+        return self.withExclusiveAccess {
+            guard let currentCache = self.loadCache(
+                cacheRoot: cacheRoot,
+                legacyCacheRoot: legacyCacheRoot)
+            else { return [] }
+            let retainedRecords = currentCache.records.filter { $0.timestamp >= cutoff }
+            let retainedCache = Cache(records: retainedRecords)
+            if retainedCache != currentCache {
+                _ = self.save(retainedCache, cacheRoot: cacheRoot)
+            }
+            return retainedRecords
+        }
+    }
+
     static func load(
         cacheRoot: URL?,
         legacyCacheRoot: URL?,
