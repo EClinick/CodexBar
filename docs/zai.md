@@ -1,13 +1,13 @@
 ---
-summary: "z.ai provider data sources: API token in config/env and quota API response parsing."
+summary: "z.ai / GLM provider data sources, regions, and Coding Plan quota mapping."
 read_when:
   - Debugging z.ai token storage or quota parsing
   - Updating z.ai API endpoints
 ---
 
-# z.ai provider
+# z.ai / GLM provider
 
-z.ai is API-token based. No browser cookies.
+z.ai and China-mainland GLM Coding Plan are API-token based. No browser cookies.
 
 ## Token sources (fallback order)
 1) Config token (`~/.config/codexbar/config.json` or legacy `~/.codexbar/config.json` → `providers[].apiKey`).
@@ -126,10 +126,11 @@ Copy each value once, on one line. Multi-line or duplicated IDs can make the API
 ## Parsing + mapping
 - Response fields:
   - `data.limits[]` → each limit entry.
-  - `data.planName` (or `plan`, `plan_type`, `packageName`) → plan label.
+  - `data.planName` (or `plan`, `plan_type`, `packageName`, `level`) → plan label.
 - Limit types:
-  - `TOKENS_LIMIT` → primary (tokens window).
-  - `TIME_LIMIT` → secondary (MCP/time window) if tokens also present.
+  - Shortest `TOKENS_LIMIT` (normally 5 hours) → primary Coding Plan window.
+  - Longer `TOKENS_LIMIT` (normally weekly) → secondary window.
+  - `TIME_LIMIT` → a separate MCP lane, never a fabricated monthly Coding Plan window.
 - Window duration:
   - Unit + number → minutes/hours/days.
 - Reset:

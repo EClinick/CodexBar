@@ -810,7 +810,7 @@
 "Pace: %@" = "사용 속도: %@";
 "Pace: %@ · %@" = "사용 속도: %@ · %@";
 "%@ · %@" = "%@ · %@";
-"≈ %d%% run-out risk" = "≈ %d%% 소진 위험";
+"(%d%% risk)" = "(%d%% 소진 위험)";
 "%d%% in deficit" = "%d%% 부족";
 "%d%% in reserve" = "%d%% 여유";
 "usage_percent_suffix_left" = "남음";
@@ -1314,6 +1314,7 @@
 "menu_bar_layout_token_account" = "계정";
 "menu_bar_layout_token_session" = "세션 %";
 "menu_bar_layout_token_weekly" = "주간 %";
+"menu_bar_layout_token_scoped_weekly" = "범위별 주간 %";
 "menu_bar_layout_token_auto" = "자동 %";
 "menu_bar_layout_token_session_pace" = "세션 속도";
 "menu_bar_layout_token_weekly_pace" = "주간 속도";

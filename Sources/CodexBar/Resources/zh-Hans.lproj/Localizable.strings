@@ -805,7 +805,7 @@
 "Pace: %@" = "节奏：%@";
 "Pace: %@ · %@" = "节奏：%@ · %@";
 "%@ · %@" = "%@ · %@";
-"≈ %d%% run-out risk" = "≈ %d%% 耗尽风险";
+"(%d%% risk)" = "(%d%% 耗尽风险)";
 "%d%% in deficit" = "超额 %d%%";
 "%d%% in reserve" = "余量 %d%%";
 "usage_percent_suffix_left" = "剩余";
@@ -1325,6 +1325,7 @@
 "menu_bar_layout_token_account" = "账户";
 "menu_bar_layout_token_session" = "会话 %";
 "menu_bar_layout_token_weekly" = "每周 %";
+"menu_bar_layout_token_scoped_weekly" = "范围每周 %";
 "menu_bar_layout_token_auto" = "自动 %";
 "menu_bar_layout_token_session_pace" = "会话节奏";
 "menu_bar_layout_token_weekly_pace" = "每周节奏";

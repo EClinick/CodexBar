@@ -847,7 +847,7 @@
 "Pace: %@" = "Pace: %@";
 "Pace: %@ · %@" = "Pace: %@ · %@";
 "%@ · %@" = "%@ · %@";
-"≈ %d%% run-out risk" = "≈ %d%% risiko habis";
+"(%d%% risk)" = "(%d%% risiko habis)";
 "%d%% in deficit" = "%d%% defisit";
 "%d%% in reserve" = "%d%% cadangan";
 "usage_percent_suffix_left" = "tersisa";
@@ -1350,6 +1350,7 @@
 "menu_bar_layout_token_account" = "Akun";
 "menu_bar_layout_token_session" = "Sesi %";
 "menu_bar_layout_token_weekly" = "Mingguan %";
+"menu_bar_layout_token_scoped_weekly" = "Mingguan terbatas %";
 "menu_bar_layout_token_auto" = "% otomatis";
 "menu_bar_layout_token_session_pace" = "Laju sesi";
 "menu_bar_layout_token_weekly_pace" = "Laju mingguan";

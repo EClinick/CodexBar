@@ -532,7 +532,7 @@ extension UsageStore {
         case .primary:
             guard let minutes = resolved.window.windowMinutes else { return false }
             return minutes > 0 && minutes <= 6 * 60
-        case .copilotSecondaryFallback, .zaiTertiary, .antigravityQuotaSummary, .antigravityLegacy:
+        case .copilotSecondaryFallback, .antigravityQuotaSummary, .antigravityLegacy:
             return true
         }
     }

@@ -1134,7 +1134,7 @@
 "%d%% in deficit" = "%d%% de déficit";
 "%d%% in reserve" = "%d%% de reserva";
 "%dd" = "%d d";
-"≈ %d%% run-out risk" = "≈ %d%% de riesgo de agotamiento";
+"(%d%% risk)" = "(%d%% de riesgo de agotamiento)";
 "About CodexBar" = "Acerca de CodexBar";
 "Add Account..." = "Añadir cuenta...";
 "Add accounts via GitHub OAuth Device Flow on the selected host." = "Añade cuentas mediante el flujo de dispositivo OAuth de GitHub en el host seleccionado.";
@@ -1345,6 +1345,7 @@
 "menu_bar_layout_token_account" = "Cuenta";
 "menu_bar_layout_token_session" = "Sesión %";
 "menu_bar_layout_token_weekly" = "Semanal %";
+"menu_bar_layout_token_scoped_weekly" = "Semanal con ámbito %";
 "menu_bar_layout_token_auto" = "% automático";
 "menu_bar_layout_token_session_pace" = "Ritmo de sesión";
 "menu_bar_layout_token_weekly_pace" = "Ritmo semanal";

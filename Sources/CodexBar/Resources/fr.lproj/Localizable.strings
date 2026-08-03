@@ -839,7 +839,7 @@
 "Pace: %@" = "Rythme : %@";
 "Pace: %@ · %@" = "Rythme : %@ · %@";
 "%@ · %@" = "%@ · %@";
-"≈ %d%% run-out risk" = "≈ %d%% risque d'épuisement";
+"(%d%% risk)" = "(%d%% risque d'épuisement)";
 "%d%% in deficit" = "%d%% en déficit";
 "%d%% in reserve" = "%d%% en réserve";
 "usage_percent_suffix_left" = "restant";
@@ -1346,6 +1346,7 @@
 "menu_bar_layout_token_account" = "Compte";
 "menu_bar_layout_token_session" = "Session %";
 "menu_bar_layout_token_weekly" = "Hebdomadaire %";
+"menu_bar_layout_token_scoped_weekly" = "Hebdomadaire ciblé %";
 "menu_bar_layout_token_auto" = "% auto";
 "menu_bar_layout_token_session_pace" = "Rythme de session";
 "menu_bar_layout_token_weekly_pace" = "Rythme hebdomadaire";

@@ -845,7 +845,7 @@
 "Pace: %@" = "سرعت: %@";
 "Pace: %@ · %@" = "سرعت: %@ · %@";
 "%@ · %@" = "%@ · %@";
-"≈ %d%% run-out risk" = "≈ %d%% خطر تمام شدن";
+"(%d%% risk)" = "(%d%% خطر تمام شدن)";
 "%d%% in deficit" = "%d%% در کسری بودجه";
 "%d%% in reserve" = "%d%% در ذخیره";
 "usage_percent_suffix_left" = "باقی مانده";
@@ -1350,6 +1350,7 @@
 "menu_bar_layout_token_account" = "حساب";
 "menu_bar_layout_token_session" = "جلسه %";
 "menu_bar_layout_token_weekly" = "هفتگی %";
+"menu_bar_layout_token_scoped_weekly" = "هفتگی با دامنه %";
 "menu_bar_layout_token_auto" = "درصد خودکار";
 "menu_bar_layout_token_session_pace" = "سرعت جلسه";
 "menu_bar_layout_token_weekly_pace" = "سرعت هفتگی";

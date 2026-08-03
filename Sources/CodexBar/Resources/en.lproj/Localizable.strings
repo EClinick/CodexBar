@@ -822,7 +822,7 @@
 "Pace: %@" = "Pace: %@";
 "Pace: %@ · %@" = "Pace: %@ · %@";
 "%@ · %@" = "%@ · %@";
-"≈ %d%% run-out risk" = "≈ %d%% run-out risk";
+"(%d%% risk)" = "(%d%% risk)";
 "%d%% in deficit" = "%d%% in deficit";
 "%d%% in reserve" = "%d%% in reserve";
 "usage_percent_suffix_left" = "left";
@@ -1328,6 +1328,7 @@
 "menu_bar_layout_token_account" = "Account";
 "menu_bar_layout_token_session" = "Session %";
 "menu_bar_layout_token_weekly" = "Weekly %";
+"menu_bar_layout_token_scoped_weekly" = "Scoped weekly %";
 "menu_bar_layout_token_auto" = "Auto %";
 "menu_bar_layout_token_session_pace" = "Session pace";
 "menu_bar_layout_token_weekly_pace" = "Weekly pace";

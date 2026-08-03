@@ -24,11 +24,27 @@ enum ProviderChoice: String, AppEnum {
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Provider")
 
-    static let caseDisplayRepresentations: [ProviderChoice: DisplayRepresentation] = Dictionary(
-        uniqueKeysWithValues: Self.allCases.map { choice in
-            let name = ProviderDescriptorRegistry.descriptor(for: choice.provider).metadata.displayName
-            return (choice, DisplayRepresentation(title: "\(name)"))
-        })
+    /// AppIntents extracts this metadata statically; it must stay a literal, exhaustive
+    /// dictionary. WidgetProviderChoiceTests pins these titles to the descriptor registry.
+    static let caseDisplayRepresentations: [ProviderChoice: DisplayRepresentation] = [
+        .codex: DisplayRepresentation(title: "Codex"),
+        .claude: DisplayRepresentation(title: "Claude"),
+        .gemini: DisplayRepresentation(title: "Gemini"),
+        .alibaba: DisplayRepresentation(title: "Alibaba"),
+        .alibabatokenplan: DisplayRepresentation(title: "Alibaba Token Plan"),
+        .qwencloud: DisplayRepresentation(title: "Qwen Cloud"),
+        .antigravity: DisplayRepresentation(title: "Antigravity"),
+        .cursor: DisplayRepresentation(title: "Cursor"),
+        .zai: DisplayRepresentation(title: "z.ai / GLM"),
+        .copilot: DisplayRepresentation(title: "Copilot"),
+        .devin: DisplayRepresentation(title: "Devin"),
+        .minimax: DisplayRepresentation(title: "MiniMax"),
+        .kilo: DisplayRepresentation(title: "Kilo"),
+        .opencode: DisplayRepresentation(title: "OpenCode"),
+        .opencodego: DisplayRepresentation(title: "OpenCode Go"),
+        .mistral: DisplayRepresentation(title: "Mistral"),
+        .kimi: DisplayRepresentation(title: "Kimi Code"),
+    ]
 
     var provider: UsageProvider {
         UsageProvider(rawValue: self.rawValue)!

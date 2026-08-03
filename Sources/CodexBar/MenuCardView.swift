@@ -25,6 +25,12 @@ struct UsageMenuCardView: View {
         }
 
         struct Metric: Identifiable {
+            struct LinePresentation: Equatable {
+                let titleText: String
+                let resetText: String?
+                let metaText: String?
+            }
+
             let id: String
             let title: String
             let percent: Double
@@ -77,6 +83,25 @@ struct UsageMenuCardView: View {
 
             var percentLabel: String {
                 UsageFormatter.percentText(self.percent, suffix: self.percentStyle.labelSuffix)
+            }
+
+            func linePresentation(title: String) -> LinePresentation {
+                let usedPercent = self.percentStyle == .used ? self.percent : 100 - self.percent
+                let metaParts = [
+                    self.detailLeftText,
+                    self.detailRightText,
+                    self.sessionEquivalentDetail?.leftText,
+                    self.sessionEquivalentDetail?.rightText,
+                ].compactMap { text -> String? in
+                    guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+                        return nil
+                    }
+                    return text
+                }
+                return LinePresentation(
+                    titleText: "\(title) \(UsageFormatter.percentString(usedPercent))",
+                    resetText: self.resetText,
+                    metaText: metaParts.isEmpty ? nil : metaParts.joined(separator: " · "))
             }
         }
 
@@ -137,6 +162,7 @@ struct UsageMenuCardView: View {
         let metrics: [Metric]
         let usageNotes: [String]
         var subscriptionNotes: [String] = []
+        var providerDetails: [ProviderDetailSection] = []
         let openAIAPIUsage: OpenAIAPIUsageSnapshot?
         let inlineUsageDashboard: InlineUsageDashboardModel?
         let creditsText: String?
@@ -188,6 +214,11 @@ struct UsageMenuCardView: View {
                     Text(placeholder)
                         .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
                         .font(.subheadline)
+                }
+                if !liveModel.providerDetails.isEmpty {
+                    ProviderDetailSectionsContent(
+                        sections: liveModel.providerDetails,
+                        chartColor: liveModel.progressColor)
                 }
             } else {
                 let hasUsage = liveModel.hasUsageContent
@@ -476,16 +507,31 @@ private struct MetricRow: View {
     @Environment(\.menuItemHighlighted) private var isHighlighted
 
     var body: some View {
+        let presentation = self.metric.linePresentation(title: self.title)
         VStack(alignment: .leading, spacing: 6) {
-            Text(self.title)
-                .font(.body)
-                .fontWeight(.medium)
             if let statusText = self.metric.statusText {
+                Text(self.title)
+                    .font(.body)
+                    .fontWeight(.medium)
                 Text(statusText)
                     .font(.footnote)
                     .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
                     .lineLimit(1)
             } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(presentation.titleText)
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    Spacer(minLength: 8)
+                    if let resetText = presentation.resetText {
+                        Text(resetText)
+                            .font(.footnote)
+                            .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
+                            .lineLimit(1)
+                    }
+                }
                 UsageProgressBar(
                     percent: self.metric.percent,
                     tint: self.progressColor,
@@ -494,53 +540,13 @@ private struct MetricRow: View {
                     paceOnTop: self.metric.paceOnTop,
                     warningMarkerPercents: self.metric.warningMarkerPercents,
                     workdayMarkerPercents: self.metric.workdayMarkerPercents)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(self.metric.percentLabel)
-                            .font(.footnote)
-                            .lineLimit(1)
-                        Spacer()
-                        if let rightLabel = self.metric.resetText {
-                            Text(rightLabel)
-                                .font(.footnote)
-                                .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                                .lineLimit(1)
-                        }
-                    }
-                    if self.metric.detailLeftText != nil || self.metric.detailRightText != nil {
-                        HStack(alignment: .firstTextBaseline) {
-                            if let detailLeft = self.metric.detailLeftText {
-                                Text(detailLeft)
-                                    .font(.footnote)
-                                    .foregroundStyle(MenuHighlightStyle.primary(self.isHighlighted))
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            if let detailRight = self.metric.detailRightText {
-                                Text(detailRight)
-                                    .font(.footnote)
-                                    .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                    if let sessionEquivalentDetail = self.metric.sessionEquivalentDetail {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(sessionEquivalentDetail.leftText)
-                                .font(.footnote)
-                                .foregroundStyle(MenuHighlightStyle.primary(self.isHighlighted))
-                                .lineLimit(1)
-                            Spacer()
-                            Text(sessionEquivalentDetail.rightText)
-                                .font(.footnote)
-                                .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                                .lineLimit(1)
-                        }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(sessionEquivalentDetail.accessibilityLabel)
-                    }
+                if let metaText = presentation.metaText {
+                    Text(metaText)
+                        .font(.footnote)
+                        .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
                 if let detail = self.metric.detailText {
                     Text(detail)
                         .font(.footnote)
@@ -673,6 +679,11 @@ private struct UsageMenuCardUsageContentView: View {
                 Text(placeholder)
                     .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
                     .font(.subheadline)
+            }
+            if !self.model.providerDetails.isEmpty {
+                ProviderDetailSectionsContent(
+                    sections: self.model.providerDetails,
+                    chartColor: self.model.progressColor)
             }
             if self.showBottomDivider {
                 Divider()
@@ -960,6 +971,7 @@ extension UsageMenuCardView.Model {
             metrics: metrics,
             usageNotes: usageNotes,
             subscriptionNotes: Self.subscriptionMetadataNotes(snapshot: input.snapshot, provider: input.provider),
+            providerDetails: input.snapshot?.details ?? [],
             openAIAPIUsage: openAIAPIUsage,
             inlineUsageDashboard: inlineUsageDashboard,
             creditsText: creditsText,
@@ -1181,9 +1193,10 @@ extension UsageMenuCardView.Model {
         var metrics: [Metric] = []
         let percentStyle: PercentStyle = input.usageBarsShowUsed ? .used : .left
         let zaiUsage = input.provider == .zai ? snapshot.zaiUsage : nil
-        let zaiTokenDetail = Self.zaiLimitDetailText(limit: zaiUsage?.tokenLimit)
-        let zaiTimeDetail = Self.zaiLimitDetailText(limit: zaiUsage?.timeLimit)
-        let zaiSessionDetail = Self.zaiLimitDetailText(limit: zaiUsage?.sessionTokenLimit)
+        let zaiPrimaryDetail = Self.zaiLimitDetailText(limit: zaiUsage?.sessionTokenLimit ?? zaiUsage?.tokenLimit)
+        let zaiSecondaryDetail = zaiUsage?.sessionTokenLimit == nil
+            ? nil
+            : Self.zaiLimitDetailText(limit: zaiUsage?.tokenLimit)
         let openRouterQuotaDetail = Self.openRouterQuotaDetail(
             provider: input.provider,
             snapshot: snapshot,
@@ -1214,7 +1227,7 @@ extension UsageMenuCardView.Model {
                 primary: primary,
                 percentStyle: percentStyle,
                 title: labels.primary,
-                zaiTokenDetail: zaiTokenDetail,
+                zaiTokenDetail: zaiPrimaryDetail,
                 openRouterQuotaDetail: openRouterQuotaDetail))
         }
         if input.provider != .codex, let weekly = snapshot.secondary {
@@ -1223,7 +1236,7 @@ extension UsageMenuCardView.Model {
                 weekly: weekly,
                 percentStyle: percentStyle,
                 title: labels.secondary,
-                zaiTimeDetail: zaiTimeDetail))
+                zaiTimeDetail: zaiSecondaryDetail))
         }
         if input.provider == .mimo, let mimoUsage = snapshot.mimoUsage {
             metrics.append(Metric(
@@ -1245,9 +1258,6 @@ extension UsageMenuCardView.Model {
                let detail = opus.resetDescription,
                !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             {
-                tertiaryDetailText = detail
-            }
-            if input.provider == .zai, let detail = zaiSessionDetail {
                 tertiaryDetailText = detail
             }
             // Perplexity purchased credits don't reset; show balance without "Resets" prefix.

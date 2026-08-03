@@ -301,6 +301,7 @@ final class UsageStore {
         TimeInterval) async throws -> Void)?
     @ObservationIgnored var widgetSnapshotPersistTask: Task<Void, Never>?
     @ObservationIgnored var lastQueuedWidgetSnapshot: WidgetSnapshot?
+    @ObservationIgnored let widgetSnapshotURL: URL?
     @ObservationIgnored var widgetUsagePreservationBlockedProviders: Set<UsageProvider> = []
 
     @ObservationIgnored let codexFetcher: UsageFetcher
@@ -459,6 +460,7 @@ final class UsageStore {
         sessionQuotaNotifier: any SessionQuotaNotifying = SessionQuotaNotifier(),
         startupBehavior: StartupBehavior = .automatic,
         environmentBase: [String: String] = ProcessInfo.processInfo.environment,
+        widgetSnapshotURL: URL? = nil,
         planUtilizationHistoryLoadGateForTesting: PlanUtilizationHistoryLoadGate? = nil)
     {
         self.codexFetcher = fetcher
@@ -468,6 +470,7 @@ final class UsageStore {
         self.settings = settings
         self.registry = registry
         self.environmentBase = environmentBase
+        self.widgetSnapshotURL = widgetSnapshotURL
         self.historicalUsageHistoryStore = historicalUsageHistoryStore
         self.startupBehavior = startupBehavior.resolved(isRunningTests: Self.isRunningTestsProcess())
         let planHistoryStore = Self.resolvedPlanHistoryStore(planUtilizationHistoryStore, startup: self.startupBehavior)
@@ -929,7 +932,6 @@ final class UsageStore {
     enum SessionQuotaWindowSource: String {
         case primary
         case copilotSecondaryFallback
-        case zaiTertiary
         case antigravityQuotaSummary
         case antigravityLegacy
     }
@@ -1014,6 +1016,9 @@ extension UsageStore {
         let ampCookieHeader = self.settings.ampCookieHeader
         let ollamaCookieSource = self.settings.ollamaCookieSource
         let ollamaCookieHeader = self.settings.ollamaCookieHeader
+        let notionCookieSource = self.settings.notionCookieSource
+        let notionCookieHeader = self.settings.notionCookieHeader
+        let notionWorkspaceID = self.settings.notionWorkspaceID
         let processEnvironment = self.environmentBase
         let openAIDebugContext = self.openAIAPIKeyDebugContext(processEnvironment: processEnvironment)
         let azureOpenAIDebugContext = self.azureOpenAIAPIKeyDebugContext(processEnvironment: processEnvironment)
@@ -1074,10 +1079,10 @@ extension UsageStore {
                 switch provider {
                 case .codex:
                     return await codexFetcher.debugRawRateLimits()
-                case .openai:
-                    return Self.apiKeyDebugLine(openAIDebugContext)
-                case .azureopenai:
-                    return Self.apiKeyDebugLine(azureOpenAIDebugContext)
+                // Folded into one case: both read the same helper, and keeping them apart pushed this
+                // switch past the cyclomatic-complexity cap when the Notion case was added.
+                case .openai, .azureopenai:
+                    return Self.apiKeyDebugLine(provider == .openai ? openAIDebugContext : azureOpenAIDebugContext)
                 case .claude:
                     guard let claudeDebugConfiguration else {
                         return "Claude debug log configuration unavailable"
@@ -1127,6 +1132,12 @@ extension UsageStore {
                         browserDetection: browserDetection,
                         ollamaCookieSource: ollamaCookieSource,
                         ollamaCookieHeader: ollamaCookieHeader)
+                case .notion:
+                    return await Self.debugNotionLog(
+                        browserDetection: browserDetection,
+                        notionCookieSource: notionCookieSource,
+                        notionCookieHeader: notionCookieHeader,
+                        notionWorkspaceID: notionWorkspaceID)
                 case .openrouter:
                     return Self.apiKeyDebugLine(openRouterDebugContext)
                 case .elevenlabs:

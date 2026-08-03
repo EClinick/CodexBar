@@ -1163,7 +1163,7 @@
 "Manual cleanup: temporary data" = "手動清理：暫存資料";
 "minimax_used_percent_format" = "已使用 %@";
 "minimax_service_coding_plan_vlm" = "Coding Plan VLM";
-"≈ %d%% run-out risk" = "約 %d%% 機率會用完";
+"(%d%% risk)" = "(%d%% 機率會用完)";
 "No available fetch strategy for %@." = "%@ 沒有可用的取得策略。";
 "%@ left" = "剩餘 %@";
 "Manual cleanup: cache" = "手動清理：快取";
@@ -1377,6 +1377,7 @@
 "menu_bar_layout_token_account" = "帳號";
 "menu_bar_layout_token_session" = "工作階段 %";
 "menu_bar_layout_token_weekly" = "每週 %";
+"menu_bar_layout_token_scoped_weekly" = "範圍每週 %";
 "menu_bar_layout_token_auto" = "自動 %";
 "menu_bar_layout_token_session_pace" = "工作階段節奏";
 "menu_bar_layout_token_weekly_pace" = "每週節奏";

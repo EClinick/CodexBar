@@ -838,7 +838,7 @@
 "Pace: %@" = "Takt: %@";
 "Pace: %@ · %@" = "Takt: %@ · %@";
 "%@ · %@" = "%@ · %@";
-"≈ %d%% run-out risk" = "≈ %d %% risk att ta slut";
+"(%d%% risk)" = "(%d %% risk att ta slut)";
 "%d%% in deficit" = "%d %% underskott";
 "%d%% in reserve" = "%d %% reserv";
 "usage_percent_suffix_left" = "kvar";
@@ -1345,6 +1345,7 @@
 "menu_bar_layout_token_account" = "Konto";
 "menu_bar_layout_token_session" = "Session %";
 "menu_bar_layout_token_weekly" = "Vecka %";
+"menu_bar_layout_token_scoped_weekly" = "Avgränsad vecka %";
 "menu_bar_layout_token_auto" = "Automatiskt %";
 "menu_bar_layout_token_session_pace" = "Sessionstakt";
 "menu_bar_layout_token_weekly_pace" = "Veckotakt";

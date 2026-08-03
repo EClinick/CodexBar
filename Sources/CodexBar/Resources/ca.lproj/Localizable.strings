@@ -1245,7 +1245,7 @@
 "usage_percent_suffix_used" = "usat";
 "Weekly" = "Setmanal";
 "z.ai API token not found. Set apiKey in ~/.codexbar/config.json or Z_AI_API_KEY." = "No s'ha trobat el token d'API de z.ai. Definiu apiKey a ~/.codexbar/config.json o Z_AI_API_KEY.";
-"≈ %d%% run-out risk" = "≈ %d%% risc d'esgotament";
+"(%d%% risk)" = "(%d%% risc d'esgotament)";
 
 /* Settings sidebar redesign */
 "Enable" = "Activa";
@@ -1349,6 +1349,7 @@
 "menu_bar_layout_token_account" = "Compte";
 "menu_bar_layout_token_session" = "Sessió %";
 "menu_bar_layout_token_weekly" = "Setmanal %";
+"menu_bar_layout_token_scoped_weekly" = "Setmanal amb àmbit %";
 "menu_bar_layout_token_auto" = "% automàtic";
 "menu_bar_layout_token_session_pace" = "Ritme de sessió";
 "menu_bar_layout_token_weekly_pace" = "Ritme setmanal";

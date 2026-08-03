@@ -72,7 +72,9 @@ public struct CodexBarConfig: Codable, Sendable {
         UsageProvider.allCases.sorted { lhs, rhs in
             let lhsEnabled = enablement(lhs)
             let rhsEnabled = enablement(rhs)
-            if lhsEnabled != rhsEnabled { return lhsEnabled }
+            if lhsEnabled != rhsEnabled {
+                return lhsEnabled
+            }
             let lhsName = metadata[lhs]?.displayName ?? lhs.rawValue
             let rhsName = metadata[rhs]?.displayName ?? rhs.rawValue
             switch lhsName.localizedCaseInsensitiveCompare(rhsName) {
@@ -96,6 +98,12 @@ public struct CodexBarConfig: Codable, Sendable {
             if provider.id == .deepseek {
                 provider.deepseekProfileID = provider.sanitizedDeepSeekProfileID
                 provider.deepseekProfileScope = provider.sanitizedDeepSeekProfileScope
+            }
+            if provider.id == .moonshot,
+               provider.sanitizedAPIKey != nil,
+               provider.sanitizedAPIKeyRegion == nil
+            {
+                provider.apiKeyRegion = provider.sanitizedRegion ?? MoonshotRegion.international.rawValue
             }
             normalized.append(provider)
         }
@@ -183,6 +191,8 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
     public var awsAuthMode: String?
     public var deepseekProfileID: String?
     public var deepseekProfileScope: String?
+    /// Region that owns `apiKey`. Region-routed providers use this to keep credentials host-scoped.
+    public var apiKeyRegion: String?
 
     public init(
         id: UsageProvider,
@@ -209,7 +219,8 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
         awsProfile: String? = nil,
         awsAuthMode: String? = nil,
         deepseekProfileID: String? = nil,
-        deepseekProfileScope: String? = nil)
+        deepseekProfileScope: String? = nil,
+        apiKeyRegion: String? = nil)
     {
         self.id = id
         self.enabled = enabled
@@ -236,6 +247,7 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
         self.awsAuthMode = awsAuthMode
         self.deepseekProfileID = deepseekProfileID
         self.deepseekProfileScope = deepseekProfileScope
+        self.apiKeyRegion = apiKeyRegion
     }
 
     public var sanitizedAPIKey: String? {
@@ -252,6 +264,10 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
 
     public var sanitizedRegion: String? {
         Self.clean(self.region)
+    }
+
+    public var sanitizedAPIKeyRegion: String? {
+        Self.clean(self.apiKeyRegion)
     }
 
     public var sanitizedWorkspaceID: String? {

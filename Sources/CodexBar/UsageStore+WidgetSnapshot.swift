@@ -6,6 +6,14 @@ import WidgetKit
 
 extension UsageStore {
     func persistWidgetSnapshot(reason: String) {
+        #if DEBUG
+        // Unsigned test processes must not cross into the real app-group container. Snapshot tests
+        // opt in with an in-memory save override or an injected file URL.
+        guard !SettingsStore.isRunningTests ||
+            self._test_widgetSnapshotSaveOverride != nil ||
+            self.widgetSnapshotURL != nil
+        else { return }
+        #endif
         // A fresh process has token-cost data before a user-authorized Claude OAuth refresh can run.
         // Keep the last queued snapshot in memory so back-to-back writes cannot race the on-disk cache.
         let previousSnapshot = self.lastQueuedWidgetSnapshot ?? {
@@ -13,6 +21,9 @@ extension UsageStore {
             // Snapshot-save overrides must stay isolated from a developer's real app-group data.
             guard self._test_widgetSnapshotSaveOverride == nil else { return nil }
             #endif
+            if let widgetSnapshotURL = self.widgetSnapshotURL {
+                return WidgetSnapshotStore.load(from: widgetSnapshotURL)
+            }
             return WidgetSnapshotStore.load()
         }()
         let snapshot = self.makeWidgetSnapshot(previousSnapshot: previousSnapshot)
@@ -29,8 +40,13 @@ extension UsageStore {
                 return
             }
 
+            let widgetSnapshotURL = self.widgetSnapshotURL
             await Task.detached(priority: .utility) {
-                WidgetSnapshotStore.save(snapshot)
+                if let widgetSnapshotURL {
+                    WidgetSnapshotStore.save(snapshot, to: widgetSnapshotURL)
+                } else {
+                    WidgetSnapshotStore.save(snapshot)
+                }
             }.value
             #if canImport(WidgetKit)
             WidgetCenter.shared.reloadAllTimelines()

@@ -146,6 +146,7 @@ public struct UsageSnapshot: Codable, Sendable {
     public let tertiary: RateWindow?
     public let extraRateWindows: [NamedRateWindow]?
     public let providerCost: ProviderCostSnapshot?
+    public let details: [ProviderDetailSection]
     public let kiroUsage: KiroUsageDetails?
     public let ampUsage: AmpUsageDetails?
     public let zaiUsage: ZaiUsageSnapshot?
@@ -188,6 +189,7 @@ public struct UsageSnapshot: Codable, Sendable {
         case tertiary
         case extraRateWindows
         case providerCost
+        case details
         case kiroUsage
         case ampUsage
         case mimoUsage
@@ -222,6 +224,7 @@ public struct UsageSnapshot: Codable, Sendable {
         kiroUsage: KiroUsageDetails? = nil,
         ampUsage: AmpUsageDetails? = nil,
         providerCost: ProviderCostSnapshot? = nil,
+        details: [ProviderDetailSection] = [],
         zaiUsage: ZaiUsageSnapshot? = nil,
         zoommateCreditsHistory: ZoomMateCreditsHistorySnapshot? = nil,
         minimaxUsage: MiniMaxUsageSnapshot? = nil,
@@ -253,6 +256,9 @@ public struct UsageSnapshot: Codable, Sendable {
         identity: ProviderIdentitySnapshot? = nil,
         dataConfidence: UsageDataConfidence = .unknown)
     {
+        precondition(
+            details.count <= ProviderDetailSection.maximumSectionsPerSnapshot,
+            "UsageSnapshot details exceeds \(ProviderDetailSection.maximumSectionsPerSnapshot) sections")
         self.primary = primary
         self.secondary = secondary
         self.tertiary = tertiary
@@ -260,6 +266,7 @@ public struct UsageSnapshot: Codable, Sendable {
         self.kiroUsage = kiroUsage
         self.ampUsage = ampUsage
         self.providerCost = providerCost
+        self.details = details
         self.zaiUsage = zaiUsage
         self.zoommateCreditsHistory = zoommateCreditsHistory
         self.minimaxUsage = minimaxUsage
@@ -319,6 +326,8 @@ public struct UsageSnapshot: Codable, Sendable {
         self.tertiary = try container.decodeIfPresent(RateWindow.self, forKey: .tertiary)
         self.extraRateWindows = try container.decodeIfPresent([NamedRateWindow].self, forKey: .extraRateWindows)
         self.providerCost = try container.decodeIfPresent(ProviderCostSnapshot.self, forKey: .providerCost)
+        self.details = try container.decodeIfPresent([ProviderDetailSection].self, forKey: .details) ?? []
+        try ProviderDetailSection.validateSections(self.details)
         self.kiroUsage = try container.decodeIfPresent(KiroUsageDetails.self, forKey: .kiroUsage)
         self.ampUsage = try container.decodeIfPresent(AmpUsageDetails.self, forKey: .ampUsage)
         self.zaiUsage = nil // Not persisted, fetched fresh each time
@@ -388,6 +397,9 @@ public struct UsageSnapshot: Codable, Sendable {
         try container.encode(self.tertiary, forKey: .tertiary)
         try container.encodeIfPresent(self.extraRateWindows, forKey: .extraRateWindows)
         try container.encodeIfPresent(self.providerCost, forKey: .providerCost)
+        if !self.details.isEmpty {
+            try container.encode(self.details, forKey: .details)
+        }
         try container.encodeIfPresent(self.kiroUsage, forKey: .kiroUsage)
         try container.encodeIfPresent(self.ampUsage, forKey: .ampUsage)
         try container.encodeIfPresent(self.mimoUsage, forKey: .mimoUsage)
@@ -564,6 +576,7 @@ public struct UsageSnapshot: Codable, Sendable {
             kiroUsage: self.kiroUsage,
             ampUsage: self.ampUsage,
             providerCost: self.providerCost,
+            details: self.details,
             zaiUsage: self.zaiUsage,
             zoommateCreditsHistory: self.zoommateCreditsHistory,
             minimaxUsage: self.minimaxUsage,

@@ -193,9 +193,14 @@ struct MenuDescriptor {
         now: Date) -> String
     {
         let state = session.state == .active ? "●" : "○"
-        let providerGlyph = session.provider == .codex ? "⌘" : "✦"
+        let providerGlyph = switch session.provider {
+        case .codex: "⌘"
+        case .claude: "✦"
+        case .pi: "π"
+        }
         let label = labelStyle.label(for: session)
-        return "\(state) \(providerGlyph) \(label) — \(session.provider.rawValue) · " +
+        let providerTag = session.dialect?.rawValue ?? session.provider.rawValue
+        return "\(state) \(providerGlyph) \(label) — \(providerTag) · " +
             "\(session.source.rawValue) · \(self.agentSessionAge(session, now: now))"
     }
 
@@ -322,6 +327,16 @@ struct MenuDescriptor {
                     resetStyle: resetStyle,
                     showUsed: settings.usageBarsShowUsed,
                     resetOverride: opusResetOverride)
+            }
+            if provider == .zai {
+                for extra in snap.extraRateWindows ?? [] where extra.id == "zai-mcp" {
+                    Self.appendRateWindow(
+                        entries: &entries,
+                        title: extra.title,
+                        window: extra.window,
+                        resetStyle: resetStyle,
+                        showUsed: settings.usageBarsShowUsed)
+                }
             }
 
             Self.appendProviderUsageSummaries(

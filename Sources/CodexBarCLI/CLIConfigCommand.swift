@@ -251,6 +251,9 @@ extension CodexBarCLI {
             return updated
         }
         providerConfig.apiKey = apiKey
+        if provider == .moonshot {
+            providerConfig.apiKeyRegion = providerConfig.sanitizedRegion ?? MoonshotRegion.international.rawValue
+        }
         if enableProvider {
             providerConfig.enabled = true
         }

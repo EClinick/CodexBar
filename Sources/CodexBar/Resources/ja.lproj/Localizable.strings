@@ -836,7 +836,7 @@
 "Pace: %@" = "ペース: %@";
 "Pace: %@ · %@" = "ペース: %@ · %@";
 "%@ · %@" = "%@ · %@";
-"≈ %d%% run-out risk" = "枯渇リスク ≈ %d%%";
+"(%d%% risk)" = "(枯渇リスク %d%%)";
 "%d%% in deficit" = "%d%% 不足";
 "%d%% in reserve" = "%d%% 余裕";
 "usage_percent_suffix_left" = "残り";
@@ -1347,6 +1347,7 @@
 "menu_bar_layout_token_account" = "アカウント";
 "menu_bar_layout_token_session" = "セッション %";
 "menu_bar_layout_token_weekly" = "週間 %";
+"menu_bar_layout_token_scoped_weekly" = "スコープ別週間 %";
 "menu_bar_layout_token_auto" = "自動 %";
 "menu_bar_layout_token_session_pace" = "セッションペース";
 "menu_bar_layout_token_weekly_pace" = "週間ペース";
