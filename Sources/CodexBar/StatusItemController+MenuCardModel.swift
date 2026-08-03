@@ -124,6 +124,7 @@ extension StatusItemController {
             usageBarsShowUsed: self.settings.usageBarsShowUsed,
             resetTimeDisplayStyle: self.settings.resetTimeDisplayStyle,
             tokenCostUsageEnabled: self.settings.isCostUsageEffectivelyEnabled(for: target),
+            tokenCostIsRefreshing: self.store.tokenCostRefreshIsActive(for: target),
             codexLocalSessionCostLedgerEnabled: self.settings.codexLocalSessionCostLedgerEnabled,
             tokenCostInlineDashboardEnabled: self.settings.costSummaryShowsInlineDashboard(for: target),
             // openai/mistral's cost history always surfaces via the inline dashboard or a

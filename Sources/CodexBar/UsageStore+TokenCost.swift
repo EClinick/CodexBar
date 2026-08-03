@@ -300,6 +300,13 @@ extension UsageStore {
         self.tokenRefreshInFlight.contains(provider)
     }
 
+    func tokenCostRefreshIsActive(for provider: UsageProvider) -> Bool {
+        if self.tokenRefreshInFlight.contains(provider) {
+            return true
+        }
+        return provider == .codex && self.codexCostCatchUpActivity?.phase == .indexing
+    }
+
     func tokenCostScope(for provider: UsageProvider) -> (codexHomePath: String?, signature: String) {
         if provider == .vertexai {
             return (nil, "vertexai:allow-claude-fallback=\(!self.isEnabled(.claude))")

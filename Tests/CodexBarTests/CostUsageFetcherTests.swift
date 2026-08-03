@@ -820,6 +820,13 @@ extension CostUsageFetcherTests {
         let cachedCodex = try #require(await CostUsageFetcher.loadCachedCodexTokenSnapshot(
             now: day,
             scannerOptions: options))
+        let cachedScopedCodex = await CostUsageFetcher.loadCachedCodexTokenSnapshot(
+            now: day,
+            codexHomePath: scopedHome.path,
+            allowScopedCodexHome: true,
+            includePiSessions: false,
+            includeProjectAndSessionBreakdowns: false,
+            scannerOptions: options)
 
         let expectedCodexCost = try #require(CostUsagePricing.claudeProxyCodexCostUSD(
             model: "gpt-5.5",
@@ -851,6 +858,7 @@ extension CostUsageFetcherTests {
 
         #expect(cachedCodex.daily.first?.totalTokens == 135)
         #expect(cachedCodex.daily.first?.modelBreakdowns?.first?.attribution == codexBreakdown.attribution)
+        #expect(cachedScopedCodex == nil)
 
         try FileManager.default.removeItem(at: cliProxyLogs)
         try FileManager.default.removeItem(at: cliProxyHome.appendingPathComponent("codex-auth.json"))

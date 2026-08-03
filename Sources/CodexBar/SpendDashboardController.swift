@@ -129,6 +129,9 @@ enum SpendDashboardSource {
         -> CostUsageTokenSnapshot
     typealias CodexProxySnapshotLoader = @Sendable (CodexProxySpendSnapshotLoadContext) async throws
         -> CostUsageTokenSnapshot
+    typealias CachedCodexSnapshotLoader = @Sendable (CodexSpendSnapshotLoadContext) async
+        -> CostUsageTokenSnapshot?
+    typealias CodexCacheRootResolver = @Sendable (CodexSpendScanRequest) -> URL
 
     static let scanDays = 30
     static let codexProxySourceID = "codex:cliproxyapi"
@@ -283,6 +286,70 @@ enum SpendDashboardSource {
                 try await self.loadCodexSnapshot(context)
             },
             codexProxySnapshotLoader: codexProxySnapshotLoader)
+    }
+
+    static func loadCached(_ request: SpendDashboardLoadRequest) async -> SpendDashboardLoadResult {
+        await self.loadCached(request, cacheRootResolver: { self.codexCacheRoot(for: $0) })
+    }
+
+    static func loadCached(
+        _ request: SpendDashboardLoadRequest,
+        cacheRootResolver: @escaping CodexCacheRootResolver) async -> SpendDashboardLoadResult
+    {
+        await self.loadCached(
+            request,
+            cacheRootResolver: cacheRootResolver,
+            cachedCodexSnapshotLoader: { context in
+                await CostUsageFetcher(cacheRoot: context.cacheRoot)
+                    .loadCachedCodexTokenSnapshotForScopedHome(
+                        now: context.now,
+                        codexHomePath: context.account.homePath,
+                        historyDays: context.historyDays,
+                        includePiSessions: false,
+                        includeProjectAndSessionBreakdowns: false)
+            })
+    }
+
+    static func loadCached(
+        _ request: SpendDashboardLoadRequest,
+        cachedCodexSnapshotLoader: CachedCodexSnapshotLoader) async -> SpendDashboardLoadResult
+    {
+        await self.loadCached(
+            request,
+            cacheRootResolver: { self.codexCacheRoot(for: $0) },
+            cachedCodexSnapshotLoader: cachedCodexSnapshotLoader)
+    }
+
+    private static func loadCached(
+        _ request: SpendDashboardLoadRequest,
+        cacheRootResolver: CodexCacheRootResolver,
+        cachedCodexSnapshotLoader: CachedCodexSnapshotLoader) async -> SpendDashboardLoadResult
+    {
+        var inputs = request.capturedInputs
+        for account in request.codexRequests {
+            guard !Task.isCancelled,
+                  self.currentAuthFingerprint(for: account) == account.authFingerprint
+            else { continue }
+            let snapshot = await cachedCodexSnapshotLoader(CodexSpendSnapshotLoadContext(
+                account: account,
+                cacheRoot: cacheRootResolver(account),
+                now: request.now,
+                force: false,
+                historyDays: Self.scanDays,
+                refreshPricingInBackground: false,
+                includePiSessions: false))
+            guard !Task.isCancelled,
+                  let snapshot,
+                  self.currentAuthFingerprint(for: account) == account.authFingerprint
+            else { continue }
+            inputs.append(SpendDashboardModel.ProviderInput(
+                id: "codex:\(account.id)",
+                provider: .codex,
+                displayName: account.displayName,
+                modelProviderName: ProviderDescriptorRegistry.descriptor(for: .codex).metadata.displayName,
+                snapshot: snapshot))
+        }
+        return SpendDashboardLoadResult(inputs: inputs, failedSourceIDs: request.unavailableSourceIDs)
     }
 
     static func load(
@@ -595,7 +662,11 @@ enum SpendDashboardSource {
     }
 
     static func codexCacheRoot(for request: CodexSpendScanRequest) -> URL {
-        UsageStore.costUsageCacheDirectory()
+        let costUsageDirectory = UsageStore.costUsageCacheDirectory()
+        if request.source == .liveSystem {
+            return costUsageDirectory.deletingLastPathComponent()
+        }
+        return costUsageDirectory
             .appendingPathComponent("accounts", isDirectory: true)
             .appendingPathComponent(request.cacheIdentity, isDirectory: true)
     }
@@ -674,6 +745,7 @@ final class SpendDashboardController {
     typealias RequestBuilder = @MainActor @Sendable (SpendDashboardRequestBuildMode) async
         -> SpendDashboardLoadRequest
     typealias Loader = @Sendable (SpendDashboardLoadRequest) async -> SpendDashboardLoadResult
+    typealias CachedLoader = @Sendable (SpendDashboardLoadRequest) async -> SpendDashboardLoadResult
 
     private enum ReconciliationObservation: Sendable {
         case confirmedEmpty
@@ -771,6 +843,7 @@ final class SpendDashboardController {
     private static let daysDefaultsKey = "settingsSpendDashboardDays"
     private let userDefaults: UserDefaults
     private let requestBuilder: RequestBuilder
+    private let cachedLoader: CachedLoader?
     private let loader: Loader
     private let nowProvider: @Sendable () -> Date
     private var loadTask: Task<Void, Never>?
@@ -782,11 +855,13 @@ final class SpendDashboardController {
     init(
         userDefaults: UserDefaults = .standard,
         requestBuilder: @escaping RequestBuilder,
+        cachedLoader: CachedLoader? = nil,
         loader: @escaping Loader = SpendDashboardSource.load,
         nowProvider: @escaping @Sendable () -> Date = { Date() })
     {
         self.userDefaults = userDefaults
         self.requestBuilder = requestBuilder
+        self.cachedLoader = cachedLoader
         self.loader = loader
         self.nowProvider = nowProvider
         self.selectedDays = Self.normalizedDays(userDefaults.integer(forKey: Self.daysDefaultsKey))
@@ -833,6 +908,12 @@ final class SpendDashboardController {
             self.failedSourceCount = 0
             self.rebuildModel()
         }
+        let shouldPrimeCachedCodex: Bool = if case .ordinary = phase {
+            self.cachedLoader != nil && !Set(Self.codexOwnershipByID(configuration.codexAccountIdentities).keys)
+                .isSubset(of: Set(self.loadedInputs.map(\.id)))
+        } else {
+            false
+        }
 
         guard configuration.costUsageEnabled, !configuration.providerIDs.isEmpty else {
             self.loadedInputs = []
@@ -848,6 +929,18 @@ final class SpendDashboardController {
         self.isRefreshing = true
         self.loadTask = Task { [weak self] in
             guard let self else { return }
+            if shouldPrimeCachedCodex, let cachedLoader = self.cachedLoader {
+                let cachedRequest = await self.requestBuilder(.captureOnly)
+                guard !Task.isCancelled,
+                      generation == self.generation
+                else { return }
+                let cachedResult = await cachedLoader(cachedRequest)
+                guard !Task.isCancelled,
+                      generation == self.generation,
+                      cachedRequest.configuration == self.configuration
+                else { return }
+                self.applyCached(request: cachedRequest, result: cachedResult)
+            }
             let request = await self.requestBuilder(phase.buildMode)
             guard !Task.isCancelled,
                   generation == self.generation
@@ -859,6 +952,19 @@ final class SpendDashboardController {
                 generation: generation,
                 invalidatedSourceIDs: invalidatedSourceIDs)
         }
+    }
+
+    private func applyCached(
+        request: SpendDashboardLoadRequest,
+        result: SpendDashboardLoadResult)
+    {
+        let cachedIDs = Set(result.inputs.map(\.id))
+        self.loadedInputs.removeAll { cachedIDs.contains($0.id) }
+        self.loadedInputs.append(contentsOf: result.inputs)
+        self.loadedAt = request.now
+        self.failedSourceCount = result.failedSourceCount
+        self.refreshRetainedCodexDisplayNames(request.configuration.codexAccountDisplayNames)
+        self.rebuildModel()
     }
 
     private func handleBuiltRequest(
