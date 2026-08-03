@@ -89,7 +89,11 @@ struct CLIProxyAPIUsageStoreTests {
         store.cliProxyAPIUsageCollectorTask = task
         var collectorFinishedBeforePurge = false
         store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
-        let publicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .claude)
+        let codexPublicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
+        let claudePublicationRevision = store.tokenSnapshotPublicationRevision(for: .claude)
+        let claudePublicationGuard = store.tokenRefreshPublicationGuard(for: .claude)
+        let claudeScopeSignature = store.tokenSnapshotScopeSignature(for: .claude)
 
         let removed = await store.removeCLIProxyAPIConfiguration {
             collectorFinishedBeforePurge = collectorFinished.value
@@ -101,7 +105,14 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(collectorFinishedBeforePurge)
         #expect(store.cliProxyAPIUsageCollectorTask == nil)
         #expect(store.tokenSnapshot(for: .codex) == nil)
-        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == publicationRevision + 1)
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
+        #expect(store.tokenSnapshot(for: .claude) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
+        #expect(!store.tokenRefreshPublicationIsCurrent(
+            provider: .claude,
+            publicationGuard: claudePublicationGuard,
+            historyDays: settings.costUsageHistoryDays,
+            costScopeSignature: claudeScopeSignature))
         #expect(await recorder.wasCancelled)
     }
 

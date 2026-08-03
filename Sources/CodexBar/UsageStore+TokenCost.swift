@@ -142,11 +142,13 @@ extension UsageStore {
     func invalidateCLIProxyAPICostAttribution() {
         self.cancelCodexCostCatchUp()
         self.cancelSpendDashboardCodexCostCatchUp()
-        self.publishConfirmedEmptyTokenSnapshot(for: .codex)
-        self.tokenErrors[.codex] = nil
-        self.tokenFailureGates[.codex]?.reset()
-        self.lastTokenFetchAt.removeValue(forKey: .codex)
-        self.lastTokenFetchScope.removeValue(forKey: .codex)
+        for provider in [UsageProvider.codex, .claude] {
+            self.publishConfirmedEmptyTokenSnapshot(for: provider)
+            self.tokenErrors[provider] = nil
+            self.tokenFailureGates[provider]?.reset()
+            self.lastTokenFetchAt.removeValue(forKey: provider)
+            self.lastTokenFetchScope.removeValue(forKey: provider)
+        }
         self.persistWidgetSnapshot(reason: "cliproxyapi-removed")
     }
 
