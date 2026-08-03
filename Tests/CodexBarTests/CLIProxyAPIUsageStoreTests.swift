@@ -204,6 +204,7 @@ struct CLIProxyAPIUsageStoreTests {
     @Test
     func `background disconnect invalidates proxy snapshots once per unavailable transition`() {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -221,6 +222,8 @@ struct CLIProxyAPIUsageStoreTests {
         store.publishTokenSnapshot(Self.tokenSnapshot(), for: .claude)
         let codexPublicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
         let claudePublicationRevision = store.tokenSnapshotPublicationRevision(for: .claude)
+        let dashboardRevision = store.spendDashboardCodexCostCatchUpRevision
+        let dashboardConfiguration = SpendDashboardSource.configuration(settings: settings, store: store)
 
         var handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
             .notConfigured,
@@ -231,6 +234,10 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(store.tokenSnapshot(for: .claude) == nil)
         #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
         #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
+        #expect(store.spendDashboardCodexCostCatchUpRevision == dashboardRevision + 1)
+        #expect(
+            SpendDashboardSource.configuration(settings: settings, store: store).sourceRevisions !=
+                dashboardConfiguration.sourceRevisions)
 
         handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
             .notConfigured,
@@ -238,6 +245,7 @@ struct CLIProxyAPIUsageStoreTests {
 
         #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
         #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
+        #expect(store.spendDashboardCodexCostCatchUpRevision == dashboardRevision + 1)
 
         handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
             .collected(0),
@@ -289,6 +297,57 @@ struct CLIProxyAPIUsageStoreTests {
 
         #expect(error == nil)
         #expect(deletionStartedAfterDrain.value)
+    }
+
+    @Test
+    func `clearing cost cache cancels and drains token scans before deletion`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = [
+            "HOME": root.path,
+            "CODEX_HOME": root.appendingPathComponent(".codex", isDirectory: true).path,
+        ]
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: environment),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: environment)
+        let refreshStarted = LockIsolated(false)
+        let refreshFinished = LockIsolated(false)
+        let deletionStartedAfterDrain = LockIsolated(false)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        let publicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
+        store._test_tokenUsageRefreshOverride = { _, _ in
+            refreshStarted.setValue(true)
+            while !Task.isCancelled {
+                await Task.yield()
+            }
+            refreshFinished.setValue(true)
+        }
+        defer { store._test_tokenUsageRefreshOverride = nil }
+        let refreshTask = Task {
+            await store.refreshTokenUsageNow(for: .codex, force: true)
+        }
+        while !refreshStarted.value {
+            await Task.yield()
+        }
+
+        let error = await store.clearCostUsageCache(clearDirectories: {
+            deletionStartedAfterDrain.setValue(refreshFinished.value)
+            return nil
+        })
+        await refreshTask.value
+
+        #expect(error == nil)
+        #expect(deletionStartedAfterDrain.value)
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == publicationRevision + 1)
+        #expect(store.tokenRefreshInFlight.isEmpty)
+        #expect(store.tokenRefreshSequenceTask == nil)
     }
 
     @Test

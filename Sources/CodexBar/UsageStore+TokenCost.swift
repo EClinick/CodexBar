@@ -142,6 +142,7 @@ extension UsageStore {
     func invalidateCLIProxyAPICostAttribution(widgetReason: String = "cliproxyapi-removed") {
         self.cancelCodexCostCatchUp()
         self.cancelSpendDashboardCodexCostCatchUp()
+        self.spendDashboardCodexCostCatchUpRevision &+= 1
         for provider in [UsageProvider.codex, .claude] {
             self.publishConfirmedEmptyTokenSnapshot(for: provider)
             self.tokenErrors[provider] = nil
@@ -176,6 +177,9 @@ extension UsageStore {
     }
 
     func clearTokenSnapshots() {
+        for provider in UsageProvider.allCases {
+            self.tokenSnapshotPublicationRevisions[provider, default: 0] &+= 1
+        }
         self.tokenSnapshots.removeAll()
         self.tokenSnapshotPublications.removeAll()
     }
@@ -471,6 +475,10 @@ extension UsageStore {
         clearDirectories: (@Sendable () async -> String?)? = nil,
         fileManager: FileManager = .default) async -> String?
     {
+        guard !self.costUsageCacheClearInProgress else { return nil }
+        self.costUsageCacheClearInProgress = true
+        defer { self.costUsageCacheClearInProgress = false }
+
         let collectorTask = self.stopCLIProxyAPIUsageCollector()
         await collectorTask?.value
         defer {
@@ -478,6 +486,10 @@ extension UsageStore {
                 self.startCLIProxyAPIUsageCollector()
             }
         }
+
+        await self.drainTokenRefreshesForCostCacheClear()
+        self.cancelCodexCostCatchUp()
+        self.cancelSpendDashboardCodexCostCatchUp()
 
         let cacheDirectories = CostUsageCacheLocations.directories(fileManager: fileManager)
         let cliProxyAPIStateRoot = cacheDirectories[1].deletingLastPathComponent()
@@ -494,6 +506,7 @@ extension UsageStore {
         guard errorMessage == nil else { return errorMessage }
 
         self.clearTokenSnapshots()
+        self.spendDashboardCodexCostCatchUpRevision &+= 1
         self.tokenErrors.removeAll()
         self.lastTokenFetchAt.removeAll()
         self.lastTokenFetchScope.removeAll()
