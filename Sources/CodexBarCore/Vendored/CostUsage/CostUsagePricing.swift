@@ -850,3 +850,30 @@ enum CostUsagePricing {
             cacheRoot: cacheRoot)
     }
 }
+
+extension CostUsagePricing {
+    static func claudeProxyGoogleCostUSD(
+        model: String,
+        inputTokens: Int,
+        cacheReadInputTokens: Int,
+        cacheCreationInputTokens: Int,
+        outputTokens: Int,
+        modelsDevCatalog: ModelsDevCatalog? = nil,
+        modelsDevCacheRoot: URL? = nil) -> Double?
+    {
+        guard let lookup = self.modelsDevLookup(
+            providerID: "google",
+            model: model,
+            catalog: modelsDevCatalog,
+            cacheRoot: modelsDevCacheRoot)
+        else { return nil }
+        return self.claudeCostUSD(
+            pricing: lookup.pricing,
+            tokens: ClaudeCostTokens(
+                input: inputTokens,
+                cacheRead: cacheReadInputTokens,
+                cacheCreation: cacheCreationInputTokens,
+                cacheCreation1h: 0,
+                output: outputTokens))
+    }
+}

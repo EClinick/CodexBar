@@ -103,6 +103,15 @@ extension CostUsageScanner {
                 pricingDate: context.pricingDate,
                 modelsDevCatalog: context.modelsDevCatalog,
                 modelsDevCacheRoot: context.modelsDevCacheRoot)
+        } else if pricingProvider == .google {
+            CostUsagePricing.claudeProxyGoogleCostUSD(
+                model: pricingModel,
+                inputTokens: tokens.input,
+                cacheReadInputTokens: tokens.cacheRead,
+                cacheCreationInputTokens: tokens.cacheCreate,
+                outputTokens: tokens.output,
+                modelsDevCatalog: context.modelsDevCatalog,
+                modelsDevCacheRoot: context.modelsDevCacheRoot)
         } else { nil }
         let normalizedModel = switch modelProvider {
         case .openAI:

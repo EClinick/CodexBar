@@ -882,6 +882,28 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 }
 
+struct CLIProxyAPIAttributionTimestampTests {
+    @Test
+    func `undated request log does not confirm a dated request`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "session-1", model: "gpt-5.5", timestamp: nil),
+            ])
+
+        let attribution = resolver.attribution(
+            model: "gpt-5.5",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: nil)
+
+        #expect(attribution.route == .unknown)
+        #expect(attribution.upstream == nil)
+        #expect(attribution.evidence == [.modelProvider])
+    }
+}
+
 private actor CLIProxyAPICollectionConcurrencyProbe {
     private var activeCallCount = 0
     private var maximumActiveCount = 0

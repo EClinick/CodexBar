@@ -44,6 +44,71 @@ struct CostUsageScannerClaudeFableTests {
     }
 
     @Test
+    func `claude proxy google upstream uses models dev pricing`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+
+        let day = try env.makeLocalNoon(year: 2026, month: 6, day: 9)
+        let fileURL = try env.writeClaudeProjectFile(
+            relativePath: "project-a/proxy-google.jsonl",
+            contents: env.jsonl([
+                [
+                    "message": [
+                        "model": "proxy-gemini-alias",
+                        "id": "msg_proxy_google",
+                        "type": "message",
+                        "role": "assistant",
+                        "usage": [
+                            "input_tokens": 100,
+                            "cache_creation_input_tokens": 10,
+                            "cache_read_input_tokens": 20,
+                            "output_tokens": 5,
+                        ],
+                    ],
+                    "requestId": "req_proxy_google",
+                    "type": "assistant",
+                    "timestamp": env.isoString(for: day),
+                    "sessionId": "session_proxy_google",
+                ],
+            ]))
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "session_proxy_google", model: "proxy-gemini-alias", timestamp: day),
+            ],
+            usageRecords: [
+                CLIProxyAPIUsageRecord(
+                    timestamp: day,
+                    provider: "google",
+                    executorType: "GeminiExecutor",
+                    model: "gemini-test-pro",
+                    alias: "proxy-gemini-alias",
+                    endpoint: "POST /v1/messages",
+                    authType: "oauth",
+                    requestID: "req_proxy_google",
+                    tokens: .init(
+                        input: 100,
+                        output: 5,
+                        cacheRead: 20,
+                        cacheCreation: 10,
+                        total: 135)),
+            ])
+        let parsed = try CostUsageScanner.parseClaudeFile(
+            fileURL: fileURL,
+            range: CostUsageScanner.CostUsageDayRange(since: day, until: day),
+            providerFilter: .all,
+            attributionResolver: resolver,
+            modelsDevCatalog: Self.googleModelsDevCatalog(model: "gemini-test-pro"))
+
+        let row = try #require(parsed.rows.first)
+        #expect(row.attribution?.route == .cliProxyAPI)
+        #expect(row.attribution?.upstream?.provider == "google")
+        #expect(row.attribution?.upstream?.model == "gemini-test-pro")
+        let expected = 0.000279
+        #expect(abs((Double(row.costNanos) / 1_000_000_000) - expected) < 0.000000001)
+        #expect(row.costPriced == true)
+    }
+
+    @Test
     func `claude transcript refusal remains priced without billing provenance`() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
@@ -370,6 +435,28 @@ struct CostUsageScannerClaudeFableTests {
                   "output": 50,
                   "cache_read": 1,
                   "cache_write": 12.5
+                }
+              }
+            }
+          }
+        }
+        """
+        return try JSONDecoder().decode(ModelsDevCatalog.self, from: Data(json.utf8))
+    }
+
+    private static func googleModelsDevCatalog(model: String) throws -> ModelsDevCatalog {
+        let json = """
+        {
+          "google": {
+            "id": "google",
+            "models": {
+              "\(model)": {
+                "id": "\(model)",
+                "cost": {
+                  "input": 2,
+                  "output": 10,
+                  "cache_read": 0.2,
+                  "cache_write": 2.5
                 }
               }
             }

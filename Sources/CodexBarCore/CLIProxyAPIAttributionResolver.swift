@@ -279,7 +279,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         }
         let timestamp = Date(timeIntervalSince1970: Double(timestampUnixMs) / 1000)
         let candidates = matchingModels.filter { observation in
-            guard let observationTimestamp = observation.timestamp else { return true }
+            guard let observationTimestamp = observation.timestamp else { return false }
             return abs(observationTimestamp.timeIntervalSince(timestamp)) <= Self.maximumRouteMatchDistance
         }
         return Self.uniqueClosest(
