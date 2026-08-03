@@ -304,11 +304,14 @@ struct CostUsageFetcherUnknownModelPricingTests {
     }
 
     @Test(arguments: [
-        ("gpt-new", 0.00028),
-        ("claude-new", 0.00045),
+        ("gpt-new", "openrouter", "OpenAICompatExecutor", 0.00028),
+        ("claude-new", "openrouter", "OpenAICompatExecutor", 0.00045),
+        ("gemma-new", "gemini", nil, 0.00036),
     ])
-    func `claude fetch resolves OpenAI compatible proxy pricing across model vendors`(
+    func `claude fetch resolves proxy pricing across upstream providers`(
         upstreamModel: String,
+        upstreamProvider: String,
+        executorType: String?,
         expectedCost: Double) async throws
     {
         let environment = try CostUsageTestEnvironment()
@@ -363,8 +366,8 @@ struct CostUsageFetcherUnknownModelPricingTests {
             [
                 CLIProxyAPIUsageRecord(
                     timestamp: day,
-                    provider: "openrouter",
-                    executorType: "OpenAICompatExecutor",
+                    provider: upstreamProvider,
+                    executorType: executorType,
                     model: upstreamModel,
                     alias: alias,
                     endpoint: "/v1/messages",
@@ -387,6 +390,10 @@ struct CostUsageFetcherUnknownModelPricingTests {
           "anthropic": {
             "id": "anthropic",
             "models": { "claude-new": { "id": "claude-new", "cost": { "input": 3, "output": 15 } } }
+          },
+          "google": {
+            "id": "google",
+            "models": { "gemma-new": { "id": "gemma-new", "cost": { "input": 2.5, "output": 11 } } }
           }
         }
         """.utf8)
@@ -402,7 +409,7 @@ struct CostUsageFetcherUnknownModelPricingTests {
 
         let breakdown = try #require(snapshot.daily.first?.modelBreakdowns?.first)
         #expect(breakdown.modelName == alias)
-        #expect(breakdown.attribution?.upstream?.provider == "openrouter")
+        #expect(breakdown.attribution?.upstream?.provider == upstreamProvider)
         #expect(breakdown.attribution?.upstream?.model == upstreamModel)
         #expect(abs((breakdown.costUSD ?? 0) - expectedCost) < 0.0000001)
     }

@@ -734,6 +734,15 @@ public struct CostUsageFetcher: Sendable {
         }
 
         if attribution?.route == .cliProxyAPI {
+            let upstreamProvider = attribution?.upstream?.provider
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            switch upstreamProvider {
+            case "codex", "openai": return ["openai"]
+            case "claude", "anthropic": return ["anthropic"]
+            case "aistudio", "gemini", "gemini-interactions", "google", "vertex": return ["google"]
+            default: break
+            }
             return switch attribution?.upstream?.executorType?.lowercased() {
             case "codexexecutor": ["openai"]
             case "claudeexecutor": ["anthropic"]

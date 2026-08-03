@@ -169,9 +169,14 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         }
         var routeOwnerByObservation: [ObservationKey: Int] = [:]
         for (key, candidates) in routeCandidatesByObservation {
-            if candidates.count == 1, let candidate = candidates.first {
+            if candidates.count == 1,
+               let candidate = candidates.first,
+               prepared[candidate.index].usageRecordMatch != nil
+               || Self.isCloseRouteMatch(candidate)
+            {
                 routeOwnerByObservation[key] = candidate.index
-            } else if let observationTimestamp = candidates.first?.observation.timestamp,
+            } else if candidates.count > 1,
+                      let observationTimestamp = candidates.first?.observation.timestamp,
                       let candidate = Self.uniqueClosest(
                           candidates,
                           target: observationTimestamp,
@@ -210,6 +215,15 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 routeObservation: routeObservation,
                 usageRecord: usageRecord)
         }
+    }
+
+    private static func isCloseRouteMatch(
+        _ candidate: (index: Int, request: Request, observation: Observation)) -> Bool
+    {
+        guard let requestTimestamp = timestamp(for: candidate.request),
+              let observationTimestamp = candidate.observation.timestamp
+        else { return false }
+        return abs(requestTimestamp.timeIntervalSince(observationTimestamp)) <= Self.maximumTelemetryMatchDistance
     }
 
     func hasMatchingObservation(for request: Request) -> Bool {
