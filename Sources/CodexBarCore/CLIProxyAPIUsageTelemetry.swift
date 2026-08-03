@@ -659,16 +659,26 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 stateRoot: stateRoot,
                 fileManager: fileManager)
             {
-                guard CostUsageCacheLocations.advanceCLIProxyAPIConfigurationGeneration(
-                    stateRoot: stateRoot,
-                    fileManager: fileManager)
+                guard let generationUpdate = CostUsageCacheLocations
+                    .prepareCLIProxyAPIConfigurationGenerationUpdate(
+                        stateRoot: stateRoot,
+                        fileManager: fileManager)
                 else { return false }
-                return self.save(
+                defer {
+                    CostUsageCacheLocations.discardCLIProxyAPIConfigurationGenerationUpdate(
+                        generationUpdate,
+                        fileManager: fileManager)
+                }
+                guard self.save(
                     settings,
                     prepareForReconnect: operations.prepareForReconnect,
                     store: operations.store,
                     clearDisconnectedState: operations.clearDisconnectedState,
                     rollback: operations.rollback)
+                else { return false }
+                return CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+                    generationUpdate,
+                    fileManager: fileManager)
             }
         } catch {
             return false
@@ -724,18 +734,25 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 stateRoot: stateRoot,
                 fileManager: fileManager)
             {
-                guard CostUsageCacheLocations.advanceCLIProxyAPIConfigurationGeneration(
-                    stateRoot: stateRoot,
-                    fileManager: fileManager)
+                guard let generationUpdate = CostUsageCacheLocations
+                    .prepareCLIProxyAPIConfigurationGenerationUpdate(
+                        stateRoot: stateRoot,
+                        fileManager: fileManager)
                 else { return .configurationRemovalFailed }
+                defer {
+                    CostUsageCacheLocations.discardCLIProxyAPIConfigurationGenerationUpdate(
+                        generationUpdate,
+                        fileManager: fileManager)
+                }
                 guard clearConfiguration() else { return .configurationRemovalFailed }
-                guard CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
+                let artifactsCleared = CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
                     in: directories,
                     fileManager: fileManager)
-                else {
-                    return .telemetryCleanupFailed
-                }
-                return .removed
+                guard CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+                    generationUpdate,
+                    fileManager: fileManager)
+                else { return .configurationRemovalFailed }
+                return artifactsCleared ? .removed : .telemetryCleanupFailed
             }
         } catch {
             return .configurationRemovalFailed

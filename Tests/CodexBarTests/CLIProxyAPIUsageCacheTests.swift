@@ -258,6 +258,27 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
+    func `failed save does not publish its staged configuration generation`() {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-generation-failure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        #expect(!CLIProxyAPIConnectionSettingsStore.saveSerialized(
+            CLIProxyAPIConnectionSettings(managementKey: "test-management-key"),
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                prepareForReconnect: { false },
+                store: { _ in true },
+                clearDisconnectedState: { true },
+                rollback: { true })))
+        #expect(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+            stateRoot: root,
+            fileManager: fileManager) == nil)
+    }
+
+    @Test
     func `configuration removal waits for an in progress save transaction`() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory

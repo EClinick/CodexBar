@@ -13,6 +13,11 @@ public struct CostUsageCacheClearResult: Equatable, Sendable {
 }
 
 public enum CostUsageCacheLocations {
+    struct CLIProxyAPIConfigurationGenerationUpdate {
+        let stagedURL: URL
+        let destinationURL: URL
+    }
+
     static let cliProxyAPIUsageFileName = "cliproxyapi-usage-v1.json"
     static let cliProxyAPIPendingFileName = "cliproxyapi-pending-v1.json"
     private static let cliProxyAPIDisconnectedFileName = "cliproxyapi-disconnected-v1"
@@ -164,23 +169,42 @@ public enum CostUsageCacheLocations {
         return generation
     }
 
-    @discardableResult
-    static func advanceCLIProxyAPIConfigurationGeneration(
+    static func prepareCLIProxyAPIConfigurationGenerationUpdate(
         stateRoot: URL? = nil,
-        fileManager: FileManager = .default) -> Bool
+        fileManager: FileManager = .default) -> CLIProxyAPIConfigurationGenerationUpdate?
     {
-        let url = self.cliProxyAPIConfigurationGenerationURL(
+        let destinationURL = self.cliProxyAPIConfigurationGenerationURL(
             stateRoot: stateRoot,
             fileManager: fileManager)
+        let stagedURL = destinationURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".cliproxyapi-generation-\(UUID().uuidString).tmp", isDirectory: false)
         do {
             try fileManager.createDirectory(
-                at: url.deletingLastPathComponent(),
+                at: destinationURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
-            try Data(UUID().uuidString.utf8).write(to: url, options: [.atomic])
-            return true
+            try Data(UUID().uuidString.utf8).write(to: stagedURL, options: [.atomic])
+            return CLIProxyAPIConfigurationGenerationUpdate(
+                stagedURL: stagedURL,
+                destinationURL: destinationURL)
         } catch {
-            return false
+            try? fileManager.removeItem(at: stagedURL)
+            return nil
         }
+    }
+
+    static func commitCLIProxyAPIConfigurationGenerationUpdate(
+        _ update: CLIProxyAPIConfigurationGenerationUpdate,
+        fileManager: FileManager = .default) -> Bool
+    {
+        rename(update.stagedURL.path, update.destinationURL.path) == 0
+    }
+
+    static func discardCLIProxyAPIConfigurationGenerationUpdate(
+        _ update: CLIProxyAPIConfigurationGenerationUpdate,
+        fileManager: FileManager = .default)
+    {
+        try? fileManager.removeItem(at: update.stagedURL)
     }
 
     @discardableResult
