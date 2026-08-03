@@ -144,19 +144,16 @@ struct CLIProxyAPIUsageCacheTests {
 
     @Test
     func `reconnect rolls back saved credentials when disconnect state cannot be cleared`() {
-        let settings = CLIProxyAPIConnectionSettings(
-            baseURL: "http://127.0.0.1:8317",
-            managementKey: "test-management-key")
         var didStore = false
         var didRollback = false
 
         let saved = CLIProxyAPIConnectionSettingsStore.save(
-            settings,
-            prepareForReconnect: { true },
-            store: { _ in
+            artifactDisposition: .preserve,
+            store: {
                 didStore = true
                 return true
             },
+            purgeArtifacts: { true },
             clearDisconnectedState: { false },
             rollback: {
                 didRollback = true
@@ -169,20 +166,17 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `reconnect purges stranded telemetry before storing credentials`() {
-        let settings = CLIProxyAPIConnectionSettings(
-            baseURL: "http://127.0.0.1:8317",
-            managementKey: "test-management-key")
+    func `reconnect purges stranded telemetry after storing credentials`() {
         var operations: [String] = []
 
         let saved = CLIProxyAPIConnectionSettingsStore.save(
-            settings,
-            prepareForReconnect: {
-                operations.append("purge")
+            artifactDisposition: .purge,
+            store: {
+                operations.append("store")
                 return true
             },
-            store: { _ in
-                operations.append("store")
+            purgeArtifacts: {
+                operations.append("purge")
                 return true
             },
             clearDisconnectedState: {
@@ -195,64 +189,76 @@ struct CLIProxyAPIUsageCacheTests {
             })
 
         #expect(saved)
-        #expect(operations == ["purge", "store", "clear"])
+        #expect(operations == ["store", "purge", "clear"])
     }
 
     @Test
-    func `active configuration replacement purges prior telemetry`() {
+    func `active configuration replacement plans a telemetry purge`() {
         let existing = CLIProxyAPIConnectionSettings(
             baseURL: "http://127.0.0.1:8317",
             managementKey: "old-management-key")
         let replacement = CLIProxyAPIConnectionSettings(
             baseURL: "http://127.0.0.1:8318",
             managementKey: "new-management-key")
-        var purgeCount = 0
-
-        #expect(CLIProxyAPIConnectionSettingsStore.prepareArtifactsForSave(
+        #expect(CLIProxyAPIConnectionSettingsStore.artifactDisposition(
             existing,
             isDisconnected: false,
-            storedSettings: .found(existing),
-            purge: {
-                purgeCount += 1
-                return true
-            }))
-        #expect(purgeCount == 0)
+            storedSettings: .found(existing)) == .preserve)
 
-        #expect(CLIProxyAPIConnectionSettingsStore.prepareArtifactsForSave(
+        #expect(CLIProxyAPIConnectionSettingsStore.artifactDisposition(
             replacement,
             isDisconnected: false,
-            storedSettings: .found(existing),
-            purge: {
-                purgeCount += 1
-                return true
-            }))
-        #expect(purgeCount == 1)
+            storedSettings: .found(existing)) == .purge)
     }
 
     @Test
-    func `reconnect preserves disconnect state when stranded telemetry purge fails`() {
-        let settings = CLIProxyAPIConnectionSettings(
-            baseURL: "http://127.0.0.1:8317",
-            managementKey: "test-management-key")
+    func `replacement keeps prior telemetry when credential storage fails`() {
         var didStore = false
-        var didClearDisconnectedState = false
+        var didPurge = false
 
         let saved = CLIProxyAPIConnectionSettingsStore.save(
-            settings,
-            prepareForReconnect: { false },
-            store: { _ in
+            artifactDisposition: .purge,
+            store: {
                 didStore = true
+                return false
+            },
+            purgeArtifacts: {
+                didPurge = true
                 return true
             },
-            clearDisconnectedState: {
-                didClearDisconnectedState = true
-                return true
-            },
+            clearDisconnectedState: { true },
             rollback: { true })
 
         #expect(!saved)
-        #expect(!didStore)
-        #expect(!didClearDisconnectedState)
+        #expect(didStore)
+        #expect(!didPurge)
+    }
+
+    @Test
+    func `replacement restores prior credentials when telemetry purge fails`() {
+        var operations: [String] = []
+
+        let saved = CLIProxyAPIConnectionSettingsStore.save(
+            artifactDisposition: .purge,
+            store: {
+                operations.append("store")
+                return true
+            },
+            purgeArtifacts: {
+                operations.append("purge")
+                return false
+            },
+            clearDisconnectedState: {
+                operations.append("clear")
+                return true
+            },
+            rollback: {
+                operations.append("restore")
+                return true
+            })
+
+        #expect(!saved)
+        #expect(operations == ["store", "purge", "restore"])
     }
 
     @Test
@@ -268,10 +274,12 @@ struct CLIProxyAPIUsageCacheTests {
             stateRoot: root,
             fileManager: fileManager,
             operations: .init(
-                prepareForReconnect: { true },
+                isDisconnected: { false },
+                loadStored: { .missing },
                 store: { _ in true },
+                purgeArtifacts: { true },
                 clearDisconnectedState: { true },
-                rollback: { true })))
+                restore: { _ in true })))
         let savedGeneration = try #require(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
             stateRoot: root,
             fileManager: fileManager))
@@ -300,10 +308,12 @@ struct CLIProxyAPIUsageCacheTests {
             stateRoot: root,
             fileManager: fileManager,
             operations: .init(
-                prepareForReconnect: { false },
-                store: { _ in true },
+                isDisconnected: { false },
+                loadStored: { .missing },
+                store: { _ in false },
+                purgeArtifacts: { true },
                 clearDisconnectedState: { true },
-                rollback: { true })))
+                restore: { _ in true })))
         #expect(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
             stateRoot: root,
             fileManager: fileManager) == nil)
@@ -330,14 +340,16 @@ struct CLIProxyAPIUsageCacheTests {
                 stateRoot: root,
                 fileManager: .default,
                 operations: .init(
-                    prepareForReconnect: { true },
+                    isDisconnected: { false },
+                    loadStored: { .missing },
                     store: { _ in
                         saveEntered.signal()
                         releaseSave.wait()
                         return true
                     },
+                    purgeArtifacts: { true },
                     clearDisconnectedState: { true },
-                    rollback: { true }))
+                    restore: { _ in true }))
         }
         #expect(await Self.waitForSignal(saveEntered, timeout: .now() + 1))
 

@@ -589,11 +589,24 @@ public struct CLIProxyAPIConnectionSettings: Codable, Equatable, Sendable {
 }
 
 public enum CLIProxyAPIConnectionSettingsStore {
+    enum StoredSettingsSnapshot: Sendable {
+        case found(CLIProxyAPIConnectionSettings)
+        case missing
+        case unavailable
+    }
+
+    enum ArtifactDisposition: Equatable, Sendable {
+        case preserve
+        case purge
+    }
+
     struct SerializedSaveOperations: Sendable {
-        let prepareForReconnect: @Sendable () -> Bool
+        let isDisconnected: @Sendable () -> Bool
+        let loadStored: @Sendable () -> StoredSettingsSnapshot
         let store: @Sendable (CLIProxyAPIConnectionSettings) -> Bool
+        let purgeArtifacts: @Sendable () -> Bool
         let clearDisconnectedState: @Sendable () -> Bool
-        let rollback: @Sendable () -> Bool
+        let restore: @Sendable (StoredSettingsSnapshot) -> Bool
     }
 
     private static let key = KeychainCacheStore.Key(
@@ -637,36 +650,57 @@ public enum CLIProxyAPIConnectionSettingsStore {
             stateRoot: directories[1].deletingLastPathComponent(),
             fileManager: fileManager,
             operations: SerializedSaveOperations(
-                prepareForReconnect: {
-                    self.prepareArtifactsForSave(
-                        settings,
-                        isDisconnected: CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(),
-                        storedSettings: KeychainCacheStore.load(
-                            key: self.key,
-                            as: CLIProxyAPIConnectionSettings.self),
-                        purge: {
-                            CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
-                                in: directories,
-                                fileManager: .default)
-                        })
+                isDisconnected: { CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected() },
+                loadStored: {
+                    self.storedSettingsSnapshot(from: KeychainCacheStore.load(
+                        key: self.key,
+                        as: CLIProxyAPIConnectionSettings.self))
                 },
                 store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
+                purgeArtifacts: {
+                    CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
+                        in: directories,
+                        fileManager: .default)
+                },
                 clearDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false) },
-                rollback: { KeychainCacheStore.clear(key: self.key) }))
+                restore: { storedSettings in
+                    switch storedSettings {
+                    case let .found(previousSettings):
+                        KeychainCacheStore.storeResult(key: self.key, entry: previousSettings)
+                    case .missing:
+                        KeychainCacheStore.clear(key: self.key)
+                    case .unavailable:
+                        false
+                    }
+                }))
     }
 
-    static func prepareArtifactsForSave(
+    static func storedSettingsSnapshot(
+        from result: KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings>) -> StoredSettingsSnapshot
+    {
+        switch result {
+        case let .found(settings): .found(settings)
+        case .missing: .missing
+        case .temporarilyUnavailable, .invalid: .unavailable
+        }
+    }
+
+    static func artifactDisposition(
         _ settings: CLIProxyAPIConnectionSettings,
         isDisconnected: Bool,
-        storedSettings: KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings>,
-        purge: () -> Bool) -> Bool
+        storedSettings: StoredSettingsSnapshot) -> ArtifactDisposition?
     {
-        if !isDisconnected, case let .found(currentSettings) = storedSettings,
-           currentSettings == settings
-        {
-            return true
+        switch storedSettings {
+        case let .found(currentSettings):
+            if !isDisconnected, currentSettings == settings {
+                return .preserve
+            }
+            return .purge
+        case .missing:
+            return .purge
+        case .unavailable:
+            return nil
         }
-        return purge()
     }
 
     static func saveSerialized(
@@ -675,11 +709,18 @@ public enum CLIProxyAPIConnectionSettingsStore {
         fileManager: FileManager,
         operations: SerializedSaveOperations) -> Bool
     {
+        guard settings.isConfigured else { return false }
         do {
             return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
                 stateRoot: stateRoot,
                 fileManager: fileManager)
             {
+                let storedSettings = operations.loadStored()
+                guard let artifactDisposition = self.artifactDisposition(
+                    settings,
+                    isDisconnected: operations.isDisconnected(),
+                    storedSettings: storedSettings)
+                else { return false }
                 guard let generationUpdate = CostUsageCacheLocations
                     .prepareCLIProxyAPIConfigurationGenerationUpdate(
                         stateRoot: stateRoot,
@@ -691,11 +732,11 @@ public enum CLIProxyAPIConnectionSettingsStore {
                         fileManager: fileManager)
                 }
                 guard self.save(
-                    settings,
-                    prepareForReconnect: operations.prepareForReconnect,
-                    store: operations.store,
+                    artifactDisposition: artifactDisposition,
+                    store: { operations.store(settings) },
+                    purgeArtifacts: operations.purgeArtifacts,
                     clearDisconnectedState: operations.clearDisconnectedState,
-                    rollback: operations.rollback)
+                    rollback: { operations.restore(storedSettings) })
                 else { return false }
                 return CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
                     generationUpdate,
@@ -707,15 +748,17 @@ public enum CLIProxyAPIConnectionSettingsStore {
     }
 
     static func save(
-        _ settings: CLIProxyAPIConnectionSettings,
-        prepareForReconnect: () -> Bool,
-        store: (CLIProxyAPIConnectionSettings) -> Bool,
+        artifactDisposition: ArtifactDisposition,
+        store: () -> Bool,
+        purgeArtifacts: () -> Bool,
         clearDisconnectedState: () -> Bool,
         rollback: () -> Bool) -> Bool
     {
-        guard settings.isConfigured else { return false }
-        guard prepareForReconnect() else { return false }
-        guard store(settings) else { return false }
+        guard store() else { return false }
+        if case .purge = artifactDisposition, !purgeArtifacts() {
+            _ = rollback()
+            return false
+        }
         guard clearDisconnectedState() else {
             _ = rollback()
             return false
