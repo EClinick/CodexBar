@@ -135,6 +135,32 @@ struct CLIProxyAPIAttributionBatchTests {
     }
 
     @Test
+    func `orphaned route evidence does not claim the closest of multiple later requests`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [
+                .init(sessionID: "resumed-session", model: "gpt-5.5", timestamp: timestamp),
+            ])
+        let attributions = resolver.attributions(for: [
+            .init(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "resumed-session",
+                timestampUnixMs: Int64(timestamp.addingTimeInterval(30 * 60).timeIntervalSince1970 * 1000),
+                tokens: Self.tokens),
+            .init(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "resumed-session",
+                timestampUnixMs: Int64(timestamp.addingTimeInterval(40 * 60).timeIntervalSince1970 * 1000),
+                tokens: Self.tokens),
+        ])
+
+        #expect(attributions.map(\.route) == [.unknown, .unknown])
+        #expect(attributions.allSatisfy { !$0.evidence.contains(.cliProxyRequestLog) })
+    }
+
+    @Test
     func `uniquely matched telemetry confirms both requests sharing one route observation`() {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let otherTokens = CLIProxyAPIAttributionResolver.TokenSignature(

@@ -202,7 +202,7 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
-    func `background disconnect invalidates proxy snapshots once per unavailable transition`() {
+    func `background disconnect invalidates once and remote reconnect refreshes snapshots`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         settings.costUsageEnabled = true
         let root = FileManager.default.temporaryDirectory
@@ -225,7 +225,7 @@ struct CLIProxyAPIUsageStoreTests {
         let dashboardRevision = store.spendDashboardCodexCostCatchUpRevision
         let dashboardConfiguration = SpendDashboardSource.configuration(settings: settings, store: store)
 
-        var handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
+        var handledUnavailableConfiguration = await store.handleCLIProxyAPIUsageCollectionResult(
             .notConfigured,
             handledUnavailableConfiguration: false)
 
@@ -239,7 +239,7 @@ struct CLIProxyAPIUsageStoreTests {
             SpendDashboardSource.configuration(settings: settings, store: store).sourceRevisions !=
                 dashboardConfiguration.sourceRevisions)
 
-        handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
+        handledUnavailableConfiguration = await store.handleCLIProxyAPIUsageCollectionResult(
             .notConfigured,
             handledUnavailableConfiguration: handledUnavailableConfiguration)
 
@@ -247,17 +247,28 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
         #expect(store.spendDashboardCodexCostCatchUpRevision == dashboardRevision + 1)
 
-        handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
-            .collected(0),
+        var refreshes: [(UsageProvider, Bool)] = []
+        handledUnavailableConfiguration = await store.handleCLIProxyAPIUsageCollectionResult(
+            .failed("temporary failure"),
             handledUnavailableConfiguration: handledUnavailableConfiguration)
+        #expect(handledUnavailableConfiguration)
+        handledUnavailableConfiguration = await store.handleCLIProxyAPIUsageCollectionResult(
+            .collected(0),
+            handledUnavailableConfiguration: handledUnavailableConfiguration,
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
+        #expect(!handledUnavailableConfiguration)
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
         store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
-        handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
+        handledUnavailableConfiguration = await store.handleCLIProxyAPIUsageCollectionResult(
             .notConfigured,
             handledUnavailableConfiguration: handledUnavailableConfiguration)
 
         #expect(handledUnavailableConfiguration)
         #expect(store.tokenSnapshot(for: .codex) == nil)
-        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 3)
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 4)
     }
 
     @Test

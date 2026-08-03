@@ -167,6 +167,9 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             routeCandidatesByObservation[Self.observationKey(observation), default: []].append(
                 (index: index, request: item.request, observation: observation))
         }
+        let matchCounts = Dictionary(
+            grouping: prepared.compactMap(\.usageRecordMatch?.key),
+            by: { $0 }).mapValues(\.count)
         var routeOwnerByObservation: [ObservationKey: Int] = [:]
         for (key, candidates) in routeCandidatesByObservation {
             if candidates.count == 1,
@@ -180,14 +183,13 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                       let candidate = Self.uniqueClosest(
                           candidates,
                           target: observationTimestamp,
-                          timestamp: { Self.timestamp(for: $0.request) })
+                          timestamp: { Self.timestamp(for: $0.request) }),
+                      prepared[candidate.index].usageRecordMatch.map({ matchCounts[$0.key] == 1 }) == true
+                      || Self.isCloseRouteMatch(candidate)
             {
                 routeOwnerByObservation[key] = candidate.index
             }
         }
-        let matchCounts = Dictionary(
-            grouping: prepared.compactMap(\.usageRecordMatch?.key),
-            by: { $0 }).mapValues(\.count)
         let representedObservations = Set(prepared.compactMap { item -> ObservationKey? in
             guard item.usageRecordMatch != nil,
                   let observation = item.telemetryObservation

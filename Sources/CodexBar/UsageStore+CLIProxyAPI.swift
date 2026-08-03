@@ -75,7 +75,8 @@ extension UsageStore {
 
     func handleCLIProxyAPIUsageCollectionResult(
         _ result: CLIProxyAPIUsageCollectionResult,
-        handledUnavailableConfiguration: Bool) -> Bool
+        handledUnavailableConfiguration: Bool,
+        refresh: ((UsageProvider, Bool) async -> Void)? = nil) async -> Bool
     {
         switch result {
         case .notConfigured:
@@ -83,8 +84,13 @@ extension UsageStore {
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
             }
             return true
-        case .collected, .failed:
+        case .collected:
+            if handledUnavailableConfiguration {
+                await self.refreshCLIProxyAPICostAttribution(refresh: refresh)
+            }
             return false
+        case .failed:
+            return handledUnavailableConfiguration
         case .disabled:
             return handledUnavailableConfiguration
         }
