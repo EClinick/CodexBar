@@ -4,6 +4,37 @@ import Testing
 
 struct CLIProxyAPIUsageCacheTests {
     @Test
+    func `cost cache clear advances the durable generation for other processes`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-clear-generation-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("cache".utf8).write(to: costUsage.appendingPathComponent("claude-v6.json"))
+        let initialUpdate = try #require(CostUsageCacheLocations.prepareCLIProxyAPIConfigurationGenerationUpdate(
+            stateRoot: root,
+            fileManager: fileManager))
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+            initialUpdate,
+            fileManager: fileManager))
+        let initialGeneration = CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+            stateRoot: root,
+            fileManager: fileManager)
+
+        let result = CostUsageCacheLocations.clearAllCostUsageCaches(
+            in: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager)
+
+        #expect(result == CostUsageCacheClearResult(cleared: 1, errorDescription: nil))
+        #expect(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+            stateRoot: root,
+            fileManager: fileManager) != initialGeneration)
+    }
+
+    @Test
     func `integration cleanup removes telemetry pending and derived Claude cache artifacts`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory

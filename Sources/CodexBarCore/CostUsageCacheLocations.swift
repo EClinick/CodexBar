@@ -81,6 +81,14 @@ public enum CostUsageCacheLocations {
                 stateRoot: stateRoot,
                 fileManager: fileManager)
             {
+                guard self.advanceCLIProxyAPIConfigurationGeneration(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+                else {
+                    return CostUsageCacheClearResult(
+                        cleared: 0,
+                        errorDescription: CocoaError(.fileWriteUnknown).localizedDescription)
+                }
                 var cleared = 0
                 for directory in directories where fileManager.fileExists(atPath: directory.path) {
                     do {
@@ -145,7 +153,11 @@ public enum CostUsageCacheLocations {
                 stateRoot: stateRoot,
                 fileManager: fileManager)
             {
-                self.clearCLIProxyAPIArtifactsUnserialized(
+                guard self.advanceCLIProxyAPIConfigurationGeneration(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+                else { return false }
+                return self.clearCLIProxyAPIArtifactsUnserialized(
                     in: directories,
                     fileManager: fileManager)
             }
@@ -412,6 +424,21 @@ public enum CostUsageCacheLocations {
         fileManager: FileManager = .default)
     {
         try? fileManager.removeItem(at: update.stagedURL)
+    }
+
+    private static func advanceCLIProxyAPIConfigurationGeneration(
+        stateRoot: URL?,
+        fileManager: FileManager) -> Bool
+    {
+        guard let update = self.prepareCLIProxyAPIConfigurationGenerationUpdate(
+            stateRoot: stateRoot,
+            fileManager: fileManager)
+        else { return false }
+        guard self.commitCLIProxyAPIConfigurationGenerationUpdate(update, fileManager: fileManager) else {
+            self.discardCLIProxyAPIConfigurationGenerationUpdate(update, fileManager: fileManager)
+            return false
+        }
+        return true
     }
 
     @discardableResult
