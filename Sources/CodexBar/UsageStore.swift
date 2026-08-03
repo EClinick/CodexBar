@@ -423,14 +423,22 @@ final class UsageStore {
     static let minimumTokenFetchTTL: TimeInterval = 5 * 60
 
     var tokenFetchTTL: TimeInterval? {
-        Self.tokenFetchTTL(for: self.settings.refreshFrequency)
+        Self.tokenFetchTTL(
+            for: self.settings.refreshFrequency,
+            lowPowerModeEnabled: self.settings.backgroundWorkLowPowerModeEnabled)
     }
 
-    static func tokenFetchTTL(for frequency: RefreshFrequency) -> TimeInterval? {
+    static func tokenFetchTTL(
+        for frequency: RefreshFrequency,
+        lowPowerModeEnabled: Bool = false) -> TimeInterval?
+    {
         let interval = frequency.usesAdaptivePolicy
             ? AdaptiveRefreshPolicy.nominalIntervalForHeuristics
             : frequency.seconds
-        return interval.map { max($0, Self.minimumTokenFetchTTL) }
+        let widgetSafeInterval = interval.map { max($0, Self.minimumTokenFetchTTL) }
+        return BackgroundWorkPowerPolicy.automaticInterval(
+            widgetSafeInterval,
+            lowPowerModeEnabled: lowPowerModeEnabled)
     }
 
     @ObservationIgnored let tokenFetchTimeout: TimeInterval = 10 * 60
@@ -828,6 +836,8 @@ final class UsageStore {
 
     #if DEBUG
     @ObservationIgnored private(set) var refreshTimerSleepOverrideForTesting: Duration?
+    @ObservationIgnored private(set) var fixedRefreshIntervalForTesting: TimeInterval?
+    @ObservationIgnored var adaptiveRefreshComputedIntervalForTesting: TimeInterval?
 
     /// Sets this store's timer sleep override and restarts the timer with it applied, so tests can
     /// observe multiple fixed/adaptive ticks without waiting real minutes. The reason/delay a tick
@@ -843,6 +853,10 @@ final class UsageStore {
     private func startTimer(preservingResetBoundaryRefresh: Bool = false) {
         self.timerTask?.cancel()
         self.adaptiveRefreshScheduledAt = nil
+        #if DEBUG
+        self.fixedRefreshIntervalForTesting = nil
+        self.adaptiveRefreshComputedIntervalForTesting = nil
+        #endif
         if !preservingResetBoundaryRefresh {
             self.cancelResetBoundaryRefresh()
         }
@@ -867,8 +881,12 @@ final class UsageStore {
             return
         }
 
-        guard let wait = frequency.seconds else { return }
+        guard let wait = Self.effectiveAutomaticRefreshInterval(
+            frequency.seconds,
+            lowPowerModeEnabled: self.settings.backgroundWorkLowPowerModeEnabled)
+        else { return }
         #if DEBUG
+        self.fixedRefreshIntervalForTesting = wait
         let fixedTimerSleepOverride = self.refreshTimerSleepOverrideForTesting
         #else
         let fixedTimerSleepOverride: Duration? = nil
