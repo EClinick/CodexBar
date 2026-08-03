@@ -638,14 +638,35 @@ public enum CLIProxyAPIConnectionSettingsStore {
             fileManager: fileManager,
             operations: SerializedSaveOperations(
                 prepareForReconnect: {
-                    guard CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected() else { return true }
-                    return CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
-                        in: directories,
-                        fileManager: .default)
+                    self.prepareArtifactsForSave(
+                        settings,
+                        isDisconnected: CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(),
+                        storedSettings: KeychainCacheStore.load(
+                            key: self.key,
+                            as: CLIProxyAPIConnectionSettings.self),
+                        purge: {
+                            CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
+                                in: directories,
+                                fileManager: .default)
+                        })
                 },
                 store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
                 clearDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false) },
                 rollback: { KeychainCacheStore.clear(key: self.key) }))
+    }
+
+    static func prepareArtifactsForSave(
+        _ settings: CLIProxyAPIConnectionSettings,
+        isDisconnected: Bool,
+        storedSettings: KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings>,
+        purge: () -> Bool) -> Bool
+    {
+        if !isDisconnected, case let .found(currentSettings) = storedSettings,
+           currentSettings == settings
+        {
+            return true
+        }
+        return purge()
     }
 
     static func saveSerialized(

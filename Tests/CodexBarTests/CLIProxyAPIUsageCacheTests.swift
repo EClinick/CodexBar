@@ -199,6 +199,37 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
+    func `active configuration replacement purges prior telemetry`() {
+        let existing = CLIProxyAPIConnectionSettings(
+            baseURL: "http://127.0.0.1:8317",
+            managementKey: "old-management-key")
+        let replacement = CLIProxyAPIConnectionSettings(
+            baseURL: "http://127.0.0.1:8318",
+            managementKey: "new-management-key")
+        var purgeCount = 0
+
+        #expect(CLIProxyAPIConnectionSettingsStore.prepareArtifactsForSave(
+            existing,
+            isDisconnected: false,
+            storedSettings: .found(existing),
+            purge: {
+                purgeCount += 1
+                return true
+            }))
+        #expect(purgeCount == 0)
+
+        #expect(CLIProxyAPIConnectionSettingsStore.prepareArtifactsForSave(
+            replacement,
+            isDisconnected: false,
+            storedSettings: .found(existing),
+            purge: {
+                purgeCount += 1
+                return true
+            }))
+        #expect(purgeCount == 1)
+    }
+
+    @Test
     func `reconnect preserves disconnect state when stranded telemetry purge fails`() {
         let settings = CLIProxyAPIConnectionSettings(
             baseURL: "http://127.0.0.1:8317",
