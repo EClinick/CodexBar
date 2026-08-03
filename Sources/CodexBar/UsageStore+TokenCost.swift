@@ -11,6 +11,12 @@ struct CurrentProviderConfigTokenPublication: Sendable, Equatable {
     let publicationRevision: UInt64
 }
 
+struct TokenRefreshPublicationGuard {
+    let provider: UsageStore.ProviderPublicationRevision
+    let tokenSnapshot: UInt64
+    let providerConfig: UInt64
+}
+
 struct TokenSnapshotPublication: Sendable, Equatable {
     let snapshot: CostUsageTokenSnapshot?
     let publicationRevision: UInt64
@@ -116,6 +122,13 @@ extension UsageStore {
         self.tokenSnapshotPublicationRevisions[provider] ?? 0
     }
 
+    func tokenRefreshPublicationGuard(for provider: UsageProvider) -> TokenRefreshPublicationGuard {
+        TokenRefreshPublicationGuard(
+            provider: self.providerPublicationRevision(for: provider),
+            tokenSnapshot: self.tokenSnapshotPublicationRevision(for: provider),
+            providerConfig: self.settings.providerConfigRevision(for: provider))
+    }
+
     func publishTokenSnapshot(_ snapshot: CostUsageTokenSnapshot, for provider: UsageProvider) {
         self.tokenSnapshots[provider] = snapshot
         self.publishTokenSnapshotState(snapshot, for: provider)
@@ -124,6 +137,17 @@ extension UsageStore {
     func publishConfirmedEmptyTokenSnapshot(for provider: UsageProvider) {
         self.tokenSnapshots.removeValue(forKey: provider)
         self.publishTokenSnapshotState(nil, for: provider)
+    }
+
+    func invalidateCLIProxyAPICostAttribution() {
+        self.cancelCodexCostCatchUp()
+        self.cancelSpendDashboardCodexCostCatchUp()
+        self.publishConfirmedEmptyTokenSnapshot(for: .codex)
+        self.tokenErrors[.codex] = nil
+        self.tokenFailureGates[.codex]?.reset()
+        self.lastTokenFetchAt.removeValue(forKey: .codex)
+        self.lastTokenFetchScope.removeValue(forKey: .codex)
+        self.persistWidgetSnapshot(reason: "cliproxyapi-removed")
     }
 
     private func publishTokenSnapshotState(_ snapshot: CostUsageTokenSnapshot?, for provider: UsageProvider) {
@@ -358,14 +382,14 @@ extension UsageStore {
 
     func tokenRefreshPublicationIsCurrent(
         provider: UsageProvider,
-        publicationRevision: ProviderPublicationRevision,
-        providerConfigRevision: UInt64,
+        publicationGuard: TokenRefreshPublicationGuard,
         historyDays: Int,
         costScopeSignature: String,
         fetchedCredentialScopeFingerprint: String? = nil) -> Bool
     {
-        guard self.providerPublicationRevisionIsCurrent(publicationRevision, for: provider),
-              self.settings.providerConfigRevision(for: provider) == providerConfigRevision,
+        guard self.providerPublicationRevisionIsCurrent(publicationGuard.provider, for: provider),
+              self.tokenSnapshotPublicationRevision(for: provider) == publicationGuard.tokenSnapshot,
+              self.settings.providerConfigRevision(for: provider) == publicationGuard.providerConfig,
               self.settings.costUsageEnabled,
               self.isEnabled(provider),
               self.settings.costUsageHistoryDays == historyDays

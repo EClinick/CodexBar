@@ -87,24 +87,21 @@ struct CLIProxyAPIUsageStoreTests {
             collectorFinished.setValue(true)
         }
         store.cliProxyAPIUsageCollectorTask = task
-        var didClearConfiguration = false
         var collectorFinishedBeforePurge = false
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        let publicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
 
-        let removed = await store.removeCLIProxyAPIConfiguration(
-            purgeTelemetry: {
-                collectorFinishedBeforePurge = collectorFinished.value
-                return true
-            },
-            clear: {
-                didClearConfiguration = true
-                return true
-            })
+        let removed = await store.removeCLIProxyAPIConfiguration {
+            collectorFinishedBeforePurge = collectorFinished.value
+            return .removed
+        }
         await task.value
 
         #expect(removed == .removed)
-        #expect(didClearConfiguration)
         #expect(collectorFinishedBeforePurge)
         #expect(store.cliProxyAPIUsageCollectorTask == nil)
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == publicationRevision + 1)
         #expect(await recorder.wasCancelled)
     }
 
@@ -124,17 +121,13 @@ struct CLIProxyAPIUsageStoreTests {
             settings: settings,
             startupBehavior: .testing,
             environmentBase: environment)
-        var didPurgeTelemetry = false
-
-        let removed = await store.removeCLIProxyAPIConfiguration(
-            purgeTelemetry: {
-                didPurgeTelemetry = true
-                return true
-            },
-            clear: { false })
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        let removed = await store.removeCLIProxyAPIConfiguration {
+            .configurationRemovalFailed
+        }
 
         #expect(removed == .configurationRemovalFailed)
-        #expect(!didPurgeTelemetry)
+        #expect(store.tokenSnapshot(for: .codex) != nil)
     }
 
     @Test
@@ -153,12 +146,14 @@ struct CLIProxyAPIUsageStoreTests {
             settings: settings,
             startupBehavior: .testing,
             environmentBase: environment)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
 
-        let removed = await store.removeCLIProxyAPIConfiguration(
-            purgeTelemetry: { false },
-            clear: { true })
+        let removed = await store.removeCLIProxyAPIConfiguration {
+            .telemetryCleanupFailed
+        }
 
         #expect(removed == .telemetryCleanupFailed)
+        #expect(store.tokenSnapshot(for: .codex) == nil)
     }
 
     @Test
@@ -226,6 +221,17 @@ struct CLIProxyAPIUsageStoreTests {
 
         #expect(error == nil)
         #expect(!FileManager.default.fileExists(atPath: cacheDirectory.path))
+    }
+
+    private static func tokenSnapshot() -> CostUsageTokenSnapshot {
+        CostUsageTokenSnapshot(
+            sessionTokens: 10,
+            sessionCostUSD: 0.01,
+            last30DaysTokens: 10,
+            last30DaysCostUSD: 0.01,
+            currencyCode: "USD",
+            daily: [],
+            updatedAt: Date(timeIntervalSince1970: 1_784_203_200))
     }
 }
 

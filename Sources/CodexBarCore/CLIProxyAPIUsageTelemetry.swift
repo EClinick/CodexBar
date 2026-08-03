@@ -532,6 +532,12 @@ public struct CLIProxyAPIConnectionSettings: Codable, Equatable, Sendable {
 }
 
 public enum CLIProxyAPIConnectionSettingsStore {
+    struct SerializedSaveOperations: Sendable {
+        let store: @Sendable (CLIProxyAPIConnectionSettings) -> Bool
+        let clearDisconnectedState: @Sendable () -> Bool
+        let rollback: @Sendable () -> Bool
+    }
+
     private static let key = KeychainCacheStore.Key(
         category: "integration",
         identifier: "cliproxyapi-management")
@@ -557,11 +563,36 @@ public enum CLIProxyAPIConnectionSettingsStore {
 
     @discardableResult
     public static func save(_ settings: CLIProxyAPIConnectionSettings) -> Bool {
-        self.save(
+        self.saveSerialized(
             settings,
-            store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
-            clearDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false) },
-            rollback: { KeychainCacheStore.clear(key: self.key) })
+            stateRoot: nil,
+            fileManager: .default,
+            operations: SerializedSaveOperations(
+                store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
+                clearDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false) },
+                rollback: { KeychainCacheStore.clear(key: self.key) }))
+    }
+
+    static func saveSerialized(
+        _ settings: CLIProxyAPIConnectionSettings,
+        stateRoot: URL?,
+        fileManager: FileManager,
+        operations: SerializedSaveOperations) -> Bool
+    {
+        do {
+            return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            {
+                self.save(
+                    settings,
+                    store: operations.store,
+                    clearDisconnectedState: operations.clearDisconnectedState,
+                    rollback: operations.rollback)
+            }
+        } catch {
+            return false
+        }
     }
 
     static func save(
@@ -581,6 +612,51 @@ public enum CLIProxyAPIConnectionSettingsStore {
 
     @discardableResult
     public static func clear() -> Bool {
+        do {
+            return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: nil) {
+                self.clearUnserialized()
+            }
+        } catch {
+            return false
+        }
+    }
+
+    public static func removeAndPurgeTelemetry() -> CLIProxyAPIConfigurationRemovalResult {
+        let fileManager = FileManager.default
+        let directories = CostUsageCacheLocations.directories(fileManager: fileManager)
+        return self.removeAndPurgeTelemetry(
+            in: directories,
+            stateRoot: directories[1].deletingLastPathComponent(),
+            fileManager: fileManager,
+            clearConfiguration: { self.clearUnserialized() })
+    }
+
+    static func removeAndPurgeTelemetry(
+        in directories: [URL],
+        stateRoot: URL?,
+        fileManager: FileManager,
+        clearConfiguration: @Sendable () -> Bool) -> CLIProxyAPIConfigurationRemovalResult
+    {
+        do {
+            return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            {
+                guard clearConfiguration() else { return .configurationRemovalFailed }
+                guard CostUsageCacheLocations.clearCLIProxyAPIArtifactsUnserialized(
+                    in: directories,
+                    fileManager: fileManager)
+                else {
+                    return .telemetryCleanupFailed
+                }
+                return .removed
+            }
+        } catch {
+            return .configurationRemovalFailed
+        }
+    }
+
+    private static func clearUnserialized() -> Bool {
         let wasDisconnected = CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected()
         guard wasDisconnected || CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(true) else {
             return false
@@ -593,6 +669,12 @@ public enum CLIProxyAPIConnectionSettingsStore {
         }
         return true
     }
+}
+
+public enum CLIProxyAPIConfigurationRemovalResult: Equatable, Sendable {
+    case removed
+    case configurationRemovalFailed
+    case telemetryCleanupFailed
 }
 
 public enum CLIProxyAPIUsageCollectionResult: Equatable, Sendable {

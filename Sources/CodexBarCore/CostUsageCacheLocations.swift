@@ -115,7 +115,7 @@ public enum CostUsageCacheLocations {
         }
     }
 
-    private static func clearCLIProxyAPIArtifactsUnserialized(
+    static func clearCLIProxyAPIArtifactsUnserialized(
         in directories: [URL],
         fileManager: FileManager) -> Bool
     {

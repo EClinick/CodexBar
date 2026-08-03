@@ -168,6 +168,58 @@ struct CLIProxyAPIUsageCacheTests {
     }
 
     @Test
+    func `configuration removal waits for an in progress save transaction`() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-settings-lock-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let saveEntered = DispatchSemaphore(value: 0)
+        let releaseSave = DispatchSemaphore(value: 0)
+        let removalEntered = DispatchSemaphore(value: 0)
+        let settings = CLIProxyAPIConnectionSettings(managementKey: "test-management-key")
+        let saveTask = Task.detached {
+            CLIProxyAPIConnectionSettingsStore.saveSerialized(
+                settings,
+                stateRoot: root,
+                fileManager: .default,
+                operations: .init(
+                    store: { _ in
+                        saveEntered.signal()
+                        releaseSave.wait()
+                        return true
+                    },
+                    clearDisconnectedState: { true },
+                    rollback: { true }))
+        }
+        #expect(await Self.waitForSignal(saveEntered, timeout: .now() + 1))
+
+        let removalTask = Task.detached {
+            CLIProxyAPIConnectionSettingsStore.removeAndPurgeTelemetry(
+                in: [costUsage],
+                stateRoot: root,
+                fileManager: .default,
+                clearConfiguration: {
+                    removalEntered.signal()
+                    return true
+                })
+        }
+        let removalEnteredBeforeSaveFinished = await Self.waitForSignal(
+            removalEntered,
+            timeout: .now() + .milliseconds(50))
+        #expect(!removalEnteredBeforeSaveFinished)
+
+        releaseSave.signal()
+        #expect(await saveTask.value)
+        #expect(await removalTask.value == .removed)
+        #expect(!FileManager.default.fileExists(atPath: usageFile.path))
+    }
+
+    @Test
     func `explicit disconnect prevents collection with persisted settings`() async {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory

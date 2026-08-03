@@ -1450,8 +1450,7 @@ extension UsageStore {
         }
         let costScope = self.tokenCostScope(for: provider)
         let costScopeSignature = self.tokenSnapshotScopeSignature(for: provider)
-        let publicationRevision = self.providerPublicationRevision(for: provider)
-        let providerConfigRevision = self.settings.providerConfigRevision(for: provider)
+        let publicationGuard = self.tokenRefreshPublicationGuard(for: provider)
         if !force, self.tokenRefreshCanReuseCurrentSnapshot(
             provider: provider,
             now: now,
@@ -1495,8 +1494,7 @@ extension UsageStore {
                 snapshot: snapshot)
             guard self.tokenRefreshPublicationIsCurrent(
                 provider: provider,
-                publicationRevision: publicationRevision,
-                providerConfigRevision: providerConfigRevision,
+                publicationGuard: publicationGuard,
                 historyDays: historyDays,
                 costScopeSignature: costScopeSignature,
                 fetchedCredentialScopeFingerprint: snapshot.credentialScopeFingerprint)
@@ -1529,8 +1527,7 @@ extension UsageStore {
         } catch {
             guard self.tokenRefreshPublicationIsCurrent(
                 provider: provider,
-                publicationRevision: publicationRevision,
-                providerConfigRevision: providerConfigRevision,
+                publicationGuard: publicationGuard,
                 historyDays: historyDays,
                 costScopeSignature: costScopeSignature)
             else {
