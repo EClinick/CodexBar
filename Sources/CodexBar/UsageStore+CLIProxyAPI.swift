@@ -11,13 +11,18 @@ extension UsageStore {
         let pendingPruneInterval = Self.cliProxyAPIPendingPruneInterval
         self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) { [weak self] in
             var nextPendingPruneAt: ContinuousClock.Instant?
+            var handledUnavailableConfiguration = false
             while !Task.isCancelled {
                 let now = ContinuousClock.now
                 if nextPendingPruneAt.map({ now >= $0 }) ?? true {
                     _ = CLIProxyAPIUsageCollector.pruneExpiredUsage()
                     nextPendingPruneAt = now.advanced(by: pendingPruneInterval)
                 }
-                guard await self?.collectCLIProxyAPIUsageNow() != nil else { return }
+                guard let result = await self?.collectCLIProxyAPIUsageNow() else { return }
+                handledUnavailableConfiguration = await self?.handleCLIProxyAPIUsageCollectionResult(
+                    result,
+                    handledUnavailableConfiguration: handledUnavailableConfiguration) ??
+                    handledUnavailableConfiguration
                 do {
                     try await Task.sleep(for: Self.cliProxyAPIUsageCollectionInterval)
                 } catch {
@@ -66,6 +71,23 @@ extension UsageStore {
         return await CLIProxyAPIUsageCollector.collect(shouldContinue: { [weak self] in
             await self?.settings.costUsageEnabled == true
         })
+    }
+
+    func handleCLIProxyAPIUsageCollectionResult(
+        _ result: CLIProxyAPIUsageCollectionResult,
+        handledUnavailableConfiguration: Bool) -> Bool
+    {
+        switch result {
+        case .notConfigured:
+            if !handledUnavailableConfiguration {
+                self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
+            }
+            return true
+        case .collected, .failed:
+            return false
+        case .disabled:
+            return handledUnavailableConfiguration
+        }
     }
 
     func refreshCLIProxyAPICostAttribution(

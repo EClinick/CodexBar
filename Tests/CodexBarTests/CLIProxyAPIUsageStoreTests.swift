@@ -202,6 +202,57 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
+    func `background disconnect invalidates proxy snapshots once per unavailable transition`() {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-usage-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let environment = [
+            "HOME": root.path,
+            "CODEX_HOME": root.appendingPathComponent(".codex", isDirectory: true).path,
+        ]
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: environment),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: environment)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .claude)
+        let codexPublicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
+        let claudePublicationRevision = store.tokenSnapshotPublicationRevision(for: .claude)
+
+        var handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
+            .notConfigured,
+            handledUnavailableConfiguration: false)
+
+        #expect(handledUnavailableConfiguration)
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshot(for: .claude) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
+        #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
+
+        handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
+            .notConfigured,
+            handledUnavailableConfiguration: handledUnavailableConfiguration)
+
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
+        #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
+
+        handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
+            .collected(0),
+            handledUnavailableConfiguration: handledUnavailableConfiguration)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        handledUnavailableConfiguration = store.handleCLIProxyAPIUsageCollectionResult(
+            .notConfigured,
+            handledUnavailableConfiguration: handledUnavailableConfiguration)
+
+        #expect(handledUnavailableConfiguration)
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 3)
+    }
+
+    @Test
     func `clearing cost cache drains the active proxy collector before deletion`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         let root = FileManager.default.temporaryDirectory
