@@ -4,6 +4,29 @@ import Testing
 
 struct ZaiSettingsReaderTests {
     @Test
+    func `BigModel aliases are available only to China region`() {
+        let environment = ["BIGMODEL_API_KEY": "china-token"]
+
+        #expect(ZaiSettingsReader.apiToken(for: .bigmodelCN, environment: environment) == "china-token")
+        #expect(ZaiSettingsReader.apiToken(for: .global, environment: environment) == nil)
+    }
+
+    @Test
+    func `GLM relay file is available only to China region`() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ZaiSettingsReaderTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let relayDirectory = home.appendingPathComponent(".coding-relay", isDirectory: true)
+        try FileManager.default.createDirectory(at: relayDirectory, withIntermediateDirectories: true)
+        try Data(" relay-china-token\nignored-second-line".utf8)
+            .write(to: relayDirectory.appendingPathComponent("glm-api-key"))
+
+        #expect(ZaiSettingsReader.apiToken(for: .bigmodelCN, environment: [:], homeDirectory: home) ==
+            "relay-china-token")
+        #expect(ZaiSettingsReader.apiToken(for: .global, environment: [:], homeDirectory: home) == nil)
+    }
+
+    @Test
     func `api token reads from environment`() {
         let token = ZaiSettingsReader.apiToken(environment: ["Z_AI_API_KEY": "abc123"])
         #expect(token == "abc123")
@@ -49,6 +72,20 @@ struct ZaiSettingsReaderTests {
             try ZaiSettingsReader.validateEndpointOverrides(environment: [
                 ZaiSettingsReader.apiHostKey: "http://attacker.test",
             ])
+        }
+    }
+
+    @Test
+    func `canonical endpoint override must match selected region`() {
+        #expect(throws: ZaiSettingsError.endpointRegionMismatch(ZaiSettingsReader.apiHostKey, .global)) {
+            try ZaiSettingsReader.validateEndpointOverrides(
+                region: .global,
+                environment: [ZaiSettingsReader.apiHostKey: "open.bigmodel.cn"])
+        }
+        #expect(throws: ZaiSettingsError.endpointRegionMismatch(ZaiSettingsReader.apiHostKey, .bigmodelCN)) {
+            try ZaiSettingsReader.validateEndpointOverrides(
+                region: .bigmodelCN,
+                environment: [ZaiSettingsReader.apiHostKey: "api.z.ai"])
         }
     }
 }
@@ -517,6 +554,23 @@ struct ZaiUsageParsingTests {
 }
 
 struct ZaiBigModelTeamScopeTests {
+    @Test
+    func `region mismatch rejects canonical host before sending bearer token`() async throws {
+        let transport = ProviderHTTPTransportStub { request in
+            Issue.record("Unexpected credentialed request to \(request.url?.absoluteString ?? "<nil>")")
+            throw URLError(.badURL)
+        }
+
+        await #expect(throws: ZaiSettingsError.endpointRegionMismatch(ZaiSettingsReader.apiHostKey, .global)) {
+            try await ZaiUsageFetcher.fetchUsage(
+                apiKey: "china-token",
+                region: .global,
+                environment: [ZaiSettingsReader.apiHostKey: "open.bigmodel.cn"],
+                transport: transport)
+        }
+        #expect(await transport.requests().isEmpty)
+    }
+
     @Test
     func `team scope appends type 2 and sends BigModel project headers`() async throws {
         let transport = ProviderHTTPTransportStub { request in

@@ -385,7 +385,7 @@ public struct ZaiUsageFetcher: Sendable {
         guard !apiKey.isEmpty else {
             throw ZaiUsageError.invalidCredentials
         }
-        try ZaiSettingsReader.validateQuotaEndpointOverride(environment: environment)
+        try ZaiSettingsReader.validateQuotaEndpointOverride(region: region, environment: environment)
 
         let resolvedScope = usageScope ?? .personal
         let quotaURL = try self.requestURL(
@@ -717,7 +717,7 @@ extension ZaiUsageFetcher {
         guard !apiKey.isEmpty else {
             throw ZaiUsageError.invalidCredentials
         }
-        try ZaiSettingsReader.validateAPIHostEndpointOverride(environment: environment)
+        try ZaiSettingsReader.validateAPIHostEndpointOverride(region: region, environment: environment)
 
         let resolvedScope = usageScope ?? .personal
         let resolvedTeamContext = try self.resolvedTeamContext(
@@ -821,7 +821,7 @@ extension ZaiUsageFetcher {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         transport: any ProviderHTTPTransport = ProviderHTTPClient.shared) async throws -> ZaiUsageSnapshot
     {
-        try ZaiSettingsReader.validateEndpointOverrides(environment: environment)
+        try ZaiSettingsReader.validateEndpointOverrides(region: region, environment: environment)
         let snapshot = try await Self.fetchUsage(
             apiKey: apiKey,
             region: region,

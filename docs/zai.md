@@ -10,8 +10,15 @@ read_when:
 z.ai and China-mainland GLM Coding Plan are API-token based. No browser cookies.
 
 ## Token sources (fallback order)
-1) Config token (`~/.config/codexbar/config.json` or legacy `~/.codexbar/config.json` → `providers[].apiKey`).
-2) Environment variable `Z_AI_API_KEY`.
+1. Config token (`~/.config/codexbar/config.json` or legacy `~/.codexbar/config.json` → `providers[].apiKey`).
+2. `Z_AI_API_KEY` for the explicitly selected region.
+3. China region only: `BIGMODEL_API_KEY`, `ZHIPU_API_KEY`, `ZHIPUAI_API_KEY`, or `GLM_API_KEY`.
+4. China region only, first readable one-line file:
+   - `~/.coding-relay/glm-api-key`
+   - `~/.config/bigmodel/api_key`
+   - `~/.config/zhipu/api_key`
+
+BigModel aliases and relay files are never considered for the Global `api.z.ai` route.
 
 ### Config location
 - New installs: `~/.config/codexbar/config.json`
@@ -101,6 +108,8 @@ Copy each value once, on one line. Multi-line or duplicated IDs can make the API
   `http://` overrides fail closed before the bearer token is attached to a request. If both z.ai overrides are set,
   `Z_AI_QUOTA_URL` has priority for quota requests; a stale lower-priority `Z_AI_API_HOST` is ignored for that quota
   path, but direct model-usage requests still validate `Z_AI_API_HOST` before sending bearer auth.
+- Canonical overrides are region-checked before bearer auth: `api.z.ai` cannot override a BigModel CN selection,
+  and `open.bigmodel.cn` cannot override a Global selection. Custom HTTPS proxy hosts remain explicit overrides.
 - Headers:
   - `authorization: Bearer <token>`
   - `accept: application/json`

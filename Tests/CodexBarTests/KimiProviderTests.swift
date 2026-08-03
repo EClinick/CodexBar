@@ -285,6 +285,20 @@ struct KimiSettingsReaderTests {
 
 struct KimiAPIFetchStrategyTests {
     @Test
+    func `cookie source off disables every browser import path`() {
+        let offContext = makeKimiFetchContext(
+            sourceMode: .auto,
+            settings: .make(kimi: .init(cookieSource: .off, manualCookieHeader: nil)))
+        let autoContext = makeKimiFetchContext(
+            sourceMode: .auto,
+            settings: .make(kimi: .init(cookieSource: .auto, manualCookieHeader: nil)))
+
+        #expect(KimiBrowserImportPolicy.allowsImport(offContext) == false)
+        #expect(KimiBrowserImportPolicy.allowsImport(autoContext))
+        #expect(ProviderTokenResolver.kimiAuthResolution(environment: [:]) == nil)
+    }
+
+    @Test
     func `cookie source off skips monthly enrichment resolution`() async throws {
         let transport = ProviderHTTPTransportStub { request in
             let url = try #require(request.url)
