@@ -266,6 +266,14 @@ public struct CostUsageFetcher: Sendable {
         self.scannerOptions
     }
 
+    package func cliProxyAPIConfigurationGeneration() -> String? {
+        let options = Self.resolvedScannerOptions(
+            self.scannerOptionsOverride(),
+            provider: .codex,
+            codexHomePath: nil)
+        return CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(stateRoot: options.cacheRoot)
+    }
+
     package func codexScanCatchUpStatus(
         codexHomePath: String? = nil) async -> CodexScanCatchUpStatus
     {

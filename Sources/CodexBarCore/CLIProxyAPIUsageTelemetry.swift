@@ -765,18 +765,21 @@ public enum CLIProxyAPIConnectionSettingsStore {
                     }
                 }
 
+                // Publish the new generation before mutating credentials. If the process exits after
+                // the credential write, recovery will see the committed generation and finalize the
+                // staged purge instead of restoring artifacts from the previous configuration.
+                guard CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+                    generationUpdate,
+                    fileManager: fileManager)
+                else {
+                    rollback()
+                    return false
+                }
                 guard operations.store(settings) else {
                     rollback()
                     return false
                 }
                 guard operations.setDisconnectedState(false) else {
-                    rollback()
-                    return false
-                }
-                guard CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
-                    generationUpdate,
-                    fileManager: fileManager)
-                else {
                     rollback()
                     return false
                 }
