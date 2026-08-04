@@ -983,6 +983,18 @@ extension CLIProxyAPIUsageCacheTests {
             atPath: root.appendingPathComponent("cliproxyapi-artifacts-transaction-v1.json").path))
         #expect(try fileManager.contentsOfDirectory(at: costUsage, includingPropertiesForKeys: nil)
             .contains { $0.lastPathComponent.hasSuffix("replacement-backup") })
+
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: root,
+            fileManager: fileManager) {}
+
+        #expect(storedSettings.value == replacement)
+        #expect(disconnected.value)
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
+        #expect(!fileManager.fileExists(
+            atPath: root.appendingPathComponent("cliproxyapi-artifacts-transaction-v1.json").path))
+        #expect(try fileManager.contentsOfDirectory(at: costUsage, includingPropertiesForKeys: nil)
+            .allSatisfy { !$0.lastPathComponent.hasSuffix("replacement-backup") })
     }
 
     @Test

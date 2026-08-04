@@ -45,6 +45,7 @@ public enum CostUsageCacheLocations {
         let disconnectedStateAfterCommit: Bool?
         let disconnectedStateAfterRollback: Bool?
         let forceRollback: Bool?
+        let rollbackCredentialsRestored: Bool?
     }
 
     static let cliProxyAPIUsageFileName = "cliproxyapi-usage-v1.json"
@@ -216,7 +217,8 @@ public enum CostUsageCacheLocations {
             },
             disconnectedStateAfterCommit: disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: disconnectedStateAfterRollback,
-            forceRollback: nil)
+            forceRollback: nil,
+            rollbackCredentialsRestored: nil)
         do {
             try fileManager.createDirectory(
                 at: manifestURL.deletingLastPathComponent(),
@@ -297,9 +299,36 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
-            forceRollback: true)
+            forceRollback: true,
+            rollbackCredentialsRestored: manifest.rollbackCredentialsRestored)
         do {
             try JSONEncoder().encode(rollbackManifest).write(to: manifestURL, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    static func markCLIProxyAPIArtifactsRollbackCredentialsRestored(
+        _ update: CLIProxyAPIArtifactsUpdate,
+        fileManager: FileManager) -> Bool
+    {
+        guard let manifestURL = update.manifestURL else { return true }
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(CLIProxyAPIArtifactsTransactionManifest.self, from: data)
+        else { return false }
+        guard manifest.forceRollback == true else { return false }
+        guard manifest.rollbackCredentialsRestored != true else { return true }
+        let restoredManifest = CLIProxyAPIArtifactsTransactionManifest(
+            expectedGeneration: manifest.expectedGeneration,
+            moves: manifest.moves,
+            disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
+            disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            forceRollback: true,
+            rollbackCredentialsRestored: true)
+        do {
+            try JSONEncoder().encode(restoredManifest).write(to: manifestURL, options: [.atomic])
             return true
         } catch {
             return false
@@ -364,6 +393,14 @@ public enum CostUsageCacheLocations {
                     stagedURL: URL(fileURLWithPath: $0.stagedPath))
             },
             manifestURL: manifestURL)
+        if manifest.forceRollback == true, manifest.rollbackCredentialsRestored != true {
+            guard self.setCLIProxyAPIExplicitlyDisconnected(
+                true,
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            else { return false }
+            return self.discardCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+        }
         let didCommit = manifest.forceRollback != true &&
             self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
             manifest.expectedGeneration

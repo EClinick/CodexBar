@@ -789,9 +789,14 @@ public enum CLIProxyAPIConnectionSettingsStore {
                             fileManager: fileManager)
                         else { return }
                     }
-                    guard operations.restore(storedSettings),
-                          operations.setDisconnectedState(wasDisconnected)
-                    else { return }
+                    guard operations.restore(storedSettings) else { return }
+                    if let artifactsUpdate {
+                        guard CostUsageCacheLocations.markCLIProxyAPIArtifactsRollbackCredentialsRestored(
+                            artifactsUpdate,
+                            fileManager: fileManager)
+                        else { return }
+                    }
+                    guard operations.setDisconnectedState(wasDisconnected) else { return }
                     if let artifactsUpdate {
                         _ = CostUsageCacheLocations.restoreCLIProxyAPIArtifactsUpdate(
                             artifactsUpdate,
@@ -925,6 +930,9 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 artifactsUpdate,
                 fileManager: fileManager),
                 operations.restore(snapshot.storedSettings),
+                CostUsageCacheLocations.markCLIProxyAPIArtifactsRollbackCredentialsRestored(
+                    artifactsUpdate,
+                    fileManager: fileManager),
                 operations.setDisconnectedState(snapshot.wasDisconnected)
             else { return }
             _ = CostUsageCacheLocations.restoreCLIProxyAPIArtifactsUpdate(
