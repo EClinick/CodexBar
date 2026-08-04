@@ -519,6 +519,7 @@ final class UsageStore {
             effectivePATH: PathBuilder.effectivePATH(purposes: [.rpc, .tty, .nodeTooling]),
             loginShellPATH: LoginShellPathCache.shared.current?.joined(separator: ":"))
         guard self.startupBehavior.automaticallyStartsBackgroundWork else { return }
+        let cliProxyAPIConfigurationGeneration = self.costUsageFetcher.cliProxyAPIConfigurationGeneration()
         self.hydrateCachedTokenSnapshots()
         self.detectVersions()
         self.updateProviderRuntimes()
@@ -536,7 +537,8 @@ final class UsageStore {
         Task { await self.refresh(enrichmentMode: .automatic) }
         self.startTimer()
         self.startTokenTimer()
-        self.startCLIProxyAPIUsageCollector()
+        self.startCLIProxyAPIUsageCollector(
+            initialConfigurationGeneration: cliProxyAPIConfigurationGeneration)
     }
 
     var iconStyle: IconStyle {

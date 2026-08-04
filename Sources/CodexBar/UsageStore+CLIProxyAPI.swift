@@ -17,12 +17,15 @@ extension UsageStore {
     private static let cliProxyAPIUsageCollectionInterval: Duration = .seconds(30)
     private static let cliProxyAPIPendingPruneInterval: Duration = .seconds(24 * 60 * 60)
 
-    func startCLIProxyAPIUsageCollector() {
+    func startCLIProxyAPIUsageCollector(initialConfigurationGeneration: String? = nil) {
         self.stopCLIProxyAPIUsageCollector()
         let pendingPruneInterval = Self.cliProxyAPIPendingPruneInterval
+        let initialConfigurationGeneration = initialConfigurationGeneration ??
+            CostUsageCacheLocations.cliProxyAPIConfigurationGeneration()
         self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) { [weak self] in
             var nextPendingPruneAt: ContinuousClock.Instant?
-            var collectorState = CLIProxyAPIUsageCollectorState()
+            var collectorState = CLIProxyAPIUsageCollectorState(
+                configurationGeneration: initialConfigurationGeneration)
             while !Task.isCancelled {
                 let now = ContinuousClock.now
                 if nextPendingPruneAt.map({ now >= $0 }) ?? true {
@@ -107,7 +110,7 @@ extension UsageStore {
         case .collected:
             let currentGeneration = configurationGeneration()
             if collectorState.configurationAvailability == .unavailable ||
-                (collectorState.configurationAvailability == .available &&
+                (collectorState.configurationGeneration != nil &&
                     collectorState.configurationGeneration != currentGeneration)
             {
                 await self.refreshCLIProxyAPICostAttribution(refresh: refresh)
@@ -116,7 +119,7 @@ extension UsageStore {
             collectorState.configurationGeneration = currentGeneration
         case .failed:
             let currentGeneration = configurationGeneration()
-            if collectorState.configurationAvailability == .available,
+            if collectorState.configurationGeneration != nil,
                collectorState.configurationGeneration != currentGeneration
             {
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-configuration-changed")

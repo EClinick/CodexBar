@@ -339,7 +339,39 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
-    func `failed collection invalidates stale snapshots after configuration changes`() async {
+    func `first collection detects a generation change after startup hydration`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let snapshot = Self.tokenSnapshot()
+        store.publishTokenSnapshot(snapshot, for: .codex)
+        store.publishTokenSnapshot(snapshot, for: .claude)
+        var refreshes: [(UsageProvider, Bool)] = []
+
+        let collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .collected(0),
+            collectorState: CLIProxyAPIUsageCollectorState(
+                configurationGeneration: "hydrated-generation"),
+            configurationGeneration: { "replacement-generation" },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
+
+        #expect(collectorState.configurationAvailability == .available)
+        #expect(collectorState.configurationGeneration == "replacement-generation")
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshot(for: .claude) == nil)
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
+    }
+
+    @Test
+    func `first failed collection invalidates stale snapshots after configuration changes`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         settings.costUsageEnabled = true
         let store = UsageStore(
@@ -355,11 +387,10 @@ struct CLIProxyAPIUsageStoreTests {
         var collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
             .failed("replacement endpoint unavailable"),
             collectorState: CLIProxyAPIUsageCollectorState(
-                configurationAvailability: .available,
                 configurationGeneration: "before-replacement"),
             configurationGeneration: { "after-replacement" })
 
-        #expect(collectorState.configurationAvailability == .available)
+        #expect(collectorState.configurationAvailability == .unknown)
         #expect(collectorState.configurationGeneration == "after-replacement")
         #expect(store.tokenSnapshot(for: .codex) == nil)
         #expect(store.tokenSnapshot(for: .claude) == nil)
