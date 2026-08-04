@@ -451,10 +451,12 @@ struct CLIProxyAPIUsageCacheTests {
             isDirectory: false)
         try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
         try Data("telemetry".utf8).write(to: usageFile)
+        try fileManager.createDirectory(at: generationURL, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: root) }
         let existing = CLIProxyAPIConnectionSettings(managementKey: "old-management-key")
         let storedSettings = LockIsolated<CLIProxyAPIConnectionSettings?>(existing)
         let disconnected = LockIsolated(false)
+        let didClear = LockIsolated(false)
 
         let result = CLIProxyAPIConnectionSettingsStore.removeAndPurgeTelemetry(
             in: [costUsage],
@@ -464,10 +466,8 @@ struct CLIProxyAPIUsageCacheTests {
                 isDisconnected: { disconnected.value },
                 loadStored: { .found(existing) },
                 clearConfiguration: {
-                    storedSettings.setValue(nil)
-                    disconnected.setValue(true)
-                    try? FileManager.default.createDirectory(at: generationURL, withIntermediateDirectories: true)
-                    return true
+                    didClear.setValue(true)
+                    return false
                 },
                 setDisconnectedState: { value in
                     disconnected.setValue(value)
@@ -480,6 +480,7 @@ struct CLIProxyAPIUsageCacheTests {
                 }))
 
         #expect(result == .configurationRemovalFailed)
+        #expect(!didClear.value)
         #expect(storedSettings.value == existing)
         #expect(!disconnected.value)
         #expect(fileManager.fileExists(atPath: usageFile.path))

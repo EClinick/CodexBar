@@ -157,6 +157,7 @@ extension UsageStore {
                collectorState.configurationGeneration != currentGeneration
             {
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-configuration-changed")
+                collectorState.configurationAvailability = .unavailable
                 collectorState.configurationGeneration = currentGeneration
             }
         case .disabled:

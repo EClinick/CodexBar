@@ -921,14 +921,16 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 fileManager: fileManager)
         }
 
-        guard operations.clearConfiguration() else {
-            rollback()
-            return .configurationRemovalFailed
-        }
         guard CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
             generationUpdate,
             fileManager: fileManager)
         else {
+            rollback()
+            return .configurationRemovalFailed
+        }
+        // Publish the telemetry invalidation before deleting credentials. Crash recovery can then only
+        // finalize the purge; it must never restore data after the integration has been removed.
+        guard operations.clearConfiguration() else {
             rollback()
             return .configurationRemovalFailed
         }

@@ -378,6 +378,41 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
+    func `failed generation transition stays pending until collection succeeds`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        var refreshes: [(UsageProvider, Bool)] = []
+
+        var collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .failed("replacement unavailable"),
+            collectorState: CLIProxyAPIUsageCollectorState(
+                configurationAvailability: .available,
+                configurationGeneration: "old-generation"),
+            configurationGeneration: { "new-generation" })
+
+        #expect(collectorState.configurationAvailability == .unavailable)
+        #expect(collectorState.configurationGeneration == "new-generation")
+
+        collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .collected(0),
+            collectorState: collectorState,
+            configurationGeneration: { "new-generation" },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
+
+        #expect(collectorState.configurationAvailability == .available)
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
+    }
+
+    @Test
     func `first collection detects a generation change after startup hydration`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         settings.costUsageEnabled = true
@@ -429,7 +464,7 @@ struct CLIProxyAPIUsageStoreTests {
                 configurationGeneration: "before-replacement"),
             configurationGeneration: { "after-replacement" })
 
-        #expect(collectorState.configurationAvailability == .unknown)
+        #expect(collectorState.configurationAvailability == .unavailable)
         #expect(collectorState.configurationGeneration == "after-replacement")
         #expect(store.tokenSnapshot(for: .codex) == nil)
         #expect(store.tokenSnapshot(for: .claude) == nil)
