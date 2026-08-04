@@ -480,7 +480,7 @@ enum SpendDashboardSource {
 
     @MainActor
     static func costCapableProviders(store: UsageStore) -> [UsageProvider] {
-        store.enabledProvidersForDisplay().filter {
+        store.enabledFirstPartyProvidersForDisplay().filter {
             ProviderDescriptorRegistry.descriptor(for: $0).tokenCost.supportsTokenCost
         }
     }
@@ -585,7 +585,7 @@ enum SpendDashboardSource {
     {
         providers.compactMap { provider in
             guard provider != .codex else { return nil }
-            var config = settings.providerConfig(for: provider) ?? ProviderConfig(id: provider)
+            var config = settings.providerConfig(for: provider) ?? ProviderConfig(id: provider.instanceID)
             config.enabled = nil
             config.quotaWarnings = nil
             // The dashboard follows the effective account, not the whole saved-account collection.

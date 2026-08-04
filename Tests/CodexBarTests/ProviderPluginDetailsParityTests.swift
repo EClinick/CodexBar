@@ -29,6 +29,28 @@ struct ProviderPluginDetailsParityTests {
     }
 
     @Test
+    func `zai plugin resolves China region credential aliases only for China`() async {
+        let descriptor = ProviderDescriptorRegistry.descriptor(for: .zai)
+        let environment = [
+            ProviderPluginPrototype.environmentKey: "1",
+            "BIGMODEL_API_KEY": "china-token",
+        ]
+        let chinaContext = Self.context(
+            environment: environment,
+            settings: .make(zai: .init(apiRegion: .bigmodelCN)))
+        let globalContext = Self.context(
+            environment: environment,
+            settings: .make(zai: .init(apiRegion: .global)))
+
+        let chinaStrategies = await descriptor.fetchPlan.pipeline.resolveStrategies(chinaContext)
+        let globalStrategies = await descriptor.fetchPlan.pipeline.resolveStrategies(globalContext)
+
+        #expect(chinaStrategies.map(\.id) == ["zai.js", "zai.api"])
+        #expect(await chinaStrategies[0].isAvailable(chinaContext))
+        #expect(await globalStrategies[0].isAvailable(globalContext) == false)
+    }
+
+    @Test
     func `OpenRouter fixture has Swift core parity and stable details`() async throws {
         let transport = Self.transport { request in
             switch request.url?.path {
@@ -150,11 +172,13 @@ struct ProviderPluginDetailsParityTests {
             environment: [:],
             transport: transport).toUsageSnapshot()
         let script = try await ProviderPluginRuntime(bundledPlugin: "zai", transport: transport)
-            .fetchUsage(secrets: [
-                "Z_AI_API_KEY": "fixture-key",
-                "Z_AI_REGION": "global",
-                "Z_AI_USAGE_SCOPE": "personal",
-            ], now: now)
+            .fetchUsage(
+                settings: [
+                    "Z_AI_REGION": "global",
+                    "Z_AI_USAGE_SCOPE": "personal",
+                ],
+                secrets: ["Z_AI_API_KEY": "fixture-key"],
+                now: now)
 
         Self.expectCoreParity(swift, script)
         #expect(try script.details == [
@@ -204,11 +228,13 @@ struct ProviderPluginDetailsParityTests {
             now: now,
             historyDays: 30).toUsageSnapshot()
         let script = try await ProviderPluginRuntime(bundledPlugin: "openai", transport: transport)
-            .fetchUsage(secrets: [
-                "OPENAI_API_KEY": "fixture-key",
-                "OPENAI_HISTORY_DAYS": "30",
-                "OPENAI_ALLOW_BALANCE_FALLBACK": "1",
-            ], now: now)
+            .fetchUsage(
+                settings: [
+                    "OPENAI_HISTORY_DAYS": "30",
+                    "OPENAI_ALLOW_BALANCE_FALLBACK": "1",
+                ],
+                secrets: ["OPENAI_API_KEY": "fixture-key"],
+                now: now)
 
         Self.expectCoreParity(swift, script)
         #expect(try script.details == [
@@ -304,7 +330,10 @@ struct ProviderPluginDetailsParityTests {
         }
     }
 
-    private static func context(environment: [String: String]) -> ProviderFetchContext {
+    private static func context(
+        environment: [String: String],
+        settings: ProviderSettingsSnapshot? = nil) -> ProviderFetchContext
+    {
         ProviderFetchContext(
             runtime: .app,
             sourceMode: .api,
@@ -313,7 +342,7 @@ struct ProviderPluginDetailsParityTests {
             webDebugDumpHTML: false,
             verbose: false,
             env: environment,
-            settings: nil,
+            settings: settings,
             fetcher: UsageFetcher(environment: environment),
             claudeFetcher: FixtureClaudeFetcher(),
             browserDetection: BrowserDetection(cacheTTL: 0))

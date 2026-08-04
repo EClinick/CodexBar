@@ -11,8 +11,8 @@ defineProvider({
   ],
 
   async fetchUsage(ctx) {
-    const projectID = ctx.secrets.get("OPENAI_PROJECT_ID");
-    const rawHistoryDays = Number(ctx.secrets.get("OPENAI_HISTORY_DAYS") || "30");
+    const projectID = ctx.settings.get("OPENAI_PROJECT_ID");
+    const rawHistoryDays = Number(ctx.settings.get("OPENAI_HISTORY_DAYS") || "30");
     const historyDays = Number.isInteger(rawHistoryDays) ? Math.max(1, Math.min(365, rawHistoryDays)) : 30;
 
     function finite(value, field, optional) {
@@ -200,7 +200,7 @@ defineProvider({
         details,
       };
     } catch (usageError) {
-      if (ctx.secrets.get("OPENAI_ALLOW_BALANCE_FALLBACK") !== "1") throw usageError;
+      if (ctx.settings.get("OPENAI_ALLOW_BALANCE_FALLBACK") !== "1") throw usageError;
       const response = await ctx.http.getJSON("https://api.openai.com/v1/dashboard/billing/credit_grants");
       if (response.status !== 200) throw usageError;
       const body = response.json;

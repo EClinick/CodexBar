@@ -55,17 +55,19 @@ public enum OpenAIAPIProviderDescriptor {
                         provider: .openai,
                         bundledPlugin: "openai",
                         secretKey: OpenAIAPISettingsReader.apiKeyEnvironmentKey,
-                        resolveSecrets: { context in
+                        resolveValues: { context in
                             guard let credential = OpenAIAPIUsageCredential(environment: context.env)
                             else { return nil }
-                            var values = [OpenAIAPISettingsReader.apiKeyEnvironmentKey: credential.apiKey]
+                            var settings: [String: String] = [:]
                             if let projectID = credential.projectID {
-                                values[OpenAIAPISettingsReader.projectIDEnvironmentKey] = projectID
+                                settings[OpenAIAPISettingsReader.projectIDEnvironmentKey] = projectID
                             }
-                            values["OPENAI_HISTORY_DAYS"] = String(context.costUsageHistoryDays)
-                            values["OPENAI_ALLOW_BALANCE_FALLBACK"] =
+                            settings["OPENAI_HISTORY_DAYS"] = String(context.costUsageHistoryDays)
+                            settings["OPENAI_ALLOW_BALANCE_FALLBACK"] =
                                 credential.allowsLegacyBalanceFallback ? "1" : "0"
-                            return values
+                            return ScriptFetchStrategy.Values(
+                                settings: settings,
+                                secrets: [OpenAIAPISettingsReader.apiKeyEnvironmentKey: credential.apiKey])
                         }),
                     swift,
                 ]

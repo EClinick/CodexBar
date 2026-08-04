@@ -12,10 +12,10 @@ defineProvider({
   ],
 
   async fetchUsage(ctx) {
-    const region = ctx.secrets.get("Z_AI_REGION") || "global";
-    const scope = ctx.secrets.get("Z_AI_USAGE_SCOPE") || "personal";
-    const organization = ctx.secrets.get("Z_AI_ORGANIZATION");
-    const project = ctx.secrets.get("Z_AI_PROJECT");
+    const region = ctx.settings.get("Z_AI_REGION") || "global";
+    const scope = ctx.settings.get("Z_AI_USAGE_SCOPE") || "personal";
+    const organization = ctx.settings.get("Z_AI_ORGANIZATION");
+    const project = ctx.settings.get("Z_AI_PROJECT");
     if (region !== "global" && region !== "bigmodel-cn") throw new Error("Unsupported z.ai region");
     if (scope !== "personal" && scope !== "team") throw new Error("Unsupported z.ai usage scope");
     if (scope === "team" && (!organization || !project)) throw new Error("z.ai team scope needs organization and project");

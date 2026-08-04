@@ -8,15 +8,24 @@ read_when:
 
 # JavaScript provider-plugin prototype
 
+This document describes the bundled first-party conversion prototype. User-installed files use the production path in
+[`plugins.md`](plugins.md); they do not depend on `CODEXBAR_JS_PROVIDERS`.
+
 This prototype proves that an existing first-party `UsageProvider` can define its manifest, HTTP requests, response
 parsing, and generic `UsageSnapshot` projection in one bundled JavaScript file. It is deliberately not a user-plugin
 system: IDs remain compile-time `UsageProvider` cases, scripts ship inside CodexBar, and the normal Swift path remains
 the default.
 
+Plugin manifests and their projected snapshots now carry a validated `ProviderInstanceID`. The prototype still maps
+that instance ID to an existing first-party `UsageProvider` before using browser-cookie brokerage or other bespoke
+provider paths; provider-specific snapshot payloads remain enum-typed, and the widget's `AppEnum` still lists only
+first-party cases. User-installed plugins without an enum case therefore remain out of scope for this prototype.
+
 ## Enable and test
 
-Set `CODEXBAR_JS_PROVIDERS=1` in CodexBar's environment. Synthetic, Venice, Crof, OpenAI, z.ai, OpenRouter, Poe, and
-ClawRouter then prepend a script strategy to their existing API pipeline. A missing required secret leaves the script
+Set `CODEXBAR_JS_PROVIDERS=1` in CodexBar's environment. Synthetic, Venice, Crof, OpenAI, z.ai, OpenRouter, Poe,
+ClawRouter, Deepgram, sub2api, xAI, Manus, Perplexity, T3 Chat, and Qoder then prepend a script strategy to their
+existing pipeline. A missing required secret or disabled cookie source leaves the script
 strategy unavailable and permits the Swift strategy to run; a loaded script that fails does not fall back, so parity
 defects stay visible. Without the variable, the resolver returns the original Swift strategy only and does not load
 JavaScriptCore or a plugin resource.
@@ -41,9 +50,12 @@ Every script calls `defineProvider` once:
 defineProvider({
   id: "example", // must be an existing UsageProvider raw value
   name: "Example",
-  endpoints: ["https://api.example.com"], // HTTPS origins, not URL prefixes
+  endpoints: [
+    "https://api.example.com", // fixed HTTPS origin
+    { setting: "BASE_URL", policy: "https-or-loopback-http" },
+  ],
   auth: {
-    type: "bearer", // bearer | x-api-key | header
+    type: "bearer", // bearer | x-api-key | header | authorization-scheme
     header: "X-Custom-Key", // required only for type: "header"
     secret: "EXAMPLE_API_KEY", // key declared below
   },
@@ -60,9 +72,15 @@ defineProvider({
 });
 ```
 
-`endpoints` accepts only normalized HTTPS origins. The broker rejects user info, non-HTTPS URLs, and any request whose
-scheme, host, or effective port is not declared. `bearer` injects `Authorization: Bearer <secret>`, `x-api-key` injects
-`X-API-Key`, and `header` injects the named header. A plugin cannot override its auth header in request options.
+Fixed `endpoints` accept only normalized HTTPS origins. A settings-derived endpoint declares a plain setting and a
+policy: `https` or `https-or-loopback-http`. It is resolved at fetch time using the same endpoint-override validation
+as native providers; user info and fragments are rejected, and HTTP is limited to loopback under the latter policy.
+`bearer` injects `Authorization: Bearer <secret>`, `x-api-key` injects `X-API-Key`, and `header` injects the named
+header. `authorization-scheme` requires a bounded ASCII token in `scheme` and injects
+`Authorization: <scheme> <secret>`. A plugin cannot override a manifest-owned auth header.
+
+Cookie plugins omit `auth`, declare `capabilities: ["browser-cookies"]`, and list normalized host names in
+`cookieDomains`. The host refuses undeclared domains before cache or browser-store access.
 
 ## `ctx` reference
 
@@ -72,9 +90,18 @@ built-ins, but no browser or Node host environment. Tests assert that `fetch`, `
 
 - `await ctx.http.getJSON(url, opts?)` performs a GET and returns `{status, headers, json}`.
 - `await ctx.http.get(url, opts?)` performs a GET and returns `{status, headers, bodyText}`.
+- `await ctx.http.postJSON(url, {body, headers?})` performs a POST and returns `{status, headers, json}`. `body` must be
+  JSON-serializable. The serialized body is passed directly to the broker and is never logged.
 - `opts.headers` may contain string header values. Requests have a 15-second timeout, responses are capped at 5 MiB,
   and transport uses `ProviderHTTPClient`, including its same-origin HTTPS redirect policy.
-- `ctx.secrets.get(key)` returns a value only for a key declared in `settings`; undeclared access throws.
+- `ctx.settings.get(key)` reads only a declared `plain` setting; `ctx.settings.getSecret(key)` reads only a declared
+  `secure` setting. Kind mismatches and undeclared keys throw. Only secure values are tracked for redaction.
+- `await ctx.browser.cookieHeader(domain)` returns a Cookie header only for a declared domain and only when the
+  `browser-cookies` capability is present. The broker honors the provider's auto/manual/off setting, cache, and browser
+  priority order. Cookie headers and individual cookie values are secret-equivalent and redacted at the bridge.
+- `ctx.html.metaContent(html, name)` returns the first matching quoted `name`/`property` meta value, or `null`.
+  `ctx.html.matchFirst(html, regexSource, flags?)` returns the first capture (or full match), or `null`. Both are pure
+  JavaScript helpers with no I/O.
 - `ctx.log(...values)` writes to the provider-derived `<provider>-plugin` category. Do not log credentials; known secret
   values are also substring-redacted from errors crossing back to Swift.
 - `ctx.cache.get(key)` and `ctx.cache.set(key, value, ttlSeconds)` provide an in-memory, per-context cache. TTLs are
@@ -144,11 +171,12 @@ runtime needs a public interrupt API or a killable helper-process boundary befor
 
 ## Current limitations
 
-The runtime is macOS-only and compiled out when JavaScriptCore is unavailable. It supports bundled first-party IDs and
-the generic snapshot and declarative details only: no runtime identities, user-installed files, install UI,
-TypeScript/Sucrase, provider-specific Swift payloads, cookies, OAuth/refresh broker, local files or databases,
-subprocesses, POST bodies, PTY, WebView,
-binary/protobuf responses, localhost HTTP, or dynamic endpoint origins. See
+The bundled-conversion flag is macOS-only and compiled out when JavaScriptCore is unavailable. It supports bundled
+first-party IDs and the generic snapshot and declarative details only: no provider-specific Swift payloads,
+OAuth/refresh broker, local files or databases, subprocesses,
+arbitrary/form POST bodies, PTY, WebView, binary/protobuf responses, private-network HTTP, or unvalidated dynamic
+origins. The separate user-plugin path adds local `.js`/`.ts` discovery, approval, and settings without changing these
+first-party flag semantics. Browser cookies remain restricted to declared domains. See
 [`plugin-conversion-matrix.md`](plugin-conversion-matrix.md) for the provider-by-provider impact.
 
 ## Future work

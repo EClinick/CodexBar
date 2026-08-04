@@ -4,8 +4,8 @@ import Foundation
 extension UsageStore {
     private enum TokenRefreshSequenceScope: Sendable {
         case all
-        case provider(UsageProvider)
-        case providers([UsageProvider])
+        case provider(ProviderInstanceID)
+        case providers([ProviderInstanceID])
     }
 
     func startTokenTimer() {
@@ -44,7 +44,7 @@ extension UsageStore {
         if force,
            self.tokenRefreshSequenceTask != nil,
            let activeProvider = self.tokenRefreshSequenceProvider,
-           activeProvider != provider
+           activeProvider != provider.instanceID
         {
             // A scoped user refresh can run beside unrelated scheduled work. The scheduled
             // sequence still owns the shared slot, so the timer cannot introduce a third pass.
@@ -52,7 +52,8 @@ extension UsageStore {
             self.scheduleMemoryPressureRelief()
             return
         }
-        guard let task = await self.serializedTokenRefreshTask(force: force, scope: .provider(provider)) else {
+        guard let task = await self.serializedTokenRefreshTask(force: force, scope: .provider(provider.instanceID))
+        else {
             return
         }
         await self.awaitTokenRefreshSequence(task)
@@ -90,7 +91,7 @@ extension UsageStore {
         force: Bool,
         scope: TokenRefreshSequenceScope) -> Task<Void, Never>
     {
-        let providers: [UsageProvider] = switch scope {
+        let providers: [ProviderInstanceID] = switch scope {
         case .all:
             self.enabledProvidersForBackgroundWork()
         case let .provider(provider):
@@ -129,7 +130,7 @@ extension UsageStore {
     }
 
     func requestTokenRefreshAfterStaleCompletion(for provider: UsageProvider) {
-        self.tokenRefreshRetryProviders.insert(provider)
+        self.tokenRefreshRetryProviders.insert(provider.instanceID)
         Task { @MainActor [weak self] in
             await Task.yield()
             self?.startPendingTokenRefreshRetryIfPossible()
@@ -153,13 +154,14 @@ extension UsageStore {
         return true
     }
 
-    private func refreshTokenUsageSequence(providers: [UsageProvider], force: Bool) async {
+    private func refreshTokenUsageSequence(providers: [ProviderInstanceID], force: Bool) async {
         defer { self.tokenRefreshSequenceProvider = nil }
-        for provider in providers {
+        for instanceID in providers {
             if Task.isCancelled {
                 break
             }
-            self.tokenRefreshSequenceProvider = provider
+            guard let provider = instanceID.firstPartyProvider else { continue }
+            self.tokenRefreshSequenceProvider = instanceID
             await self.refreshTokenUsage(provider, force: force)
             self.tokenRefreshSequenceProvider = nil
         }

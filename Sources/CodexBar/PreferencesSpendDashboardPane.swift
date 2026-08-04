@@ -590,7 +590,7 @@ struct SpendDashboardPane: View {
                             : nil,
                     ]
                 } else {
-                    [self.store.snapshot(for: row.provider)]
+                    [self.store.snapshot(for: row.provider.instanceID)]
                 }
                 if let name = ShareStatsSubscriptionName.first(from: snapshots, provider: row.provider) {
                     names[row.id] = name
