@@ -883,6 +883,60 @@ struct CLIProxyAPIUsageCacheTests {
 
 extension CLIProxyAPIUsageCacheTests {
     @Test
+    func `failed save marker rollback retains recovery transaction`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-save-marker-rollback-failure-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+        let existing = CLIProxyAPIConnectionSettings(managementKey: "old-management-key")
+        let replacement = CLIProxyAPIConnectionSettings(managementKey: "new-management-key")
+        let storedSettings = LockIsolated(existing)
+        let disconnected = LockIsolated(false)
+
+        let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
+            replacement,
+            artifactDirectories: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                isDisconnected: { disconnected.value },
+                loadStored: { .found(storedSettings.value) },
+                store: { settings in
+                    storedSettings.setValue(settings)
+                    return true
+                },
+                setDisconnectedState: { value in
+                    guard value else { return false }
+                    disconnected.setValue(true)
+                    return true
+                },
+                restore: { snapshot in
+                    guard case let .found(settings) = snapshot else { return false }
+                    storedSettings.setValue(settings)
+                    return true
+                }))
+
+        #expect(!saved)
+        #expect(storedSettings.value == existing)
+        #expect(disconnected.value)
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
+        #expect(fileManager.fileExists(
+            atPath: root.appendingPathComponent("cliproxyapi-artifacts-transaction-v1.json").path))
+
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: root,
+            fileManager: fileManager) {}
+
+        #expect(fileManager.fileExists(atPath: usageFile.path))
+        #expect(!fileManager.fileExists(
+            atPath: root.appendingPathComponent("cliproxyapi-artifacts-transaction-v1.json").path))
+    }
+
+    @Test
     func `failed credential rollback keeps replacement telemetry isolated`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
@@ -969,6 +1023,59 @@ extension CLIProxyAPIUsageCacheTests {
         #expect(result == .removed)
         #expect(disconnected.value)
         #expect(!fileManager.fileExists(atPath: usageFile.path))
+    }
+
+    @Test
+    func `failed removal marker rollback retains recovery transaction`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-removal-marker-rollback-failure-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+        let existing = CLIProxyAPIConnectionSettings(managementKey: "test-management-key")
+        let storedSettings = LockIsolated<CLIProxyAPIConnectionSettings?>(existing)
+        let disconnected = LockIsolated(false)
+
+        let result = CLIProxyAPIConnectionSettingsStore.removeAndPurgeTelemetry(
+            in: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                isDisconnected: { disconnected.value },
+                loadStored: { .found(existing) },
+                clearConfiguration: {
+                    storedSettings.setValue(nil)
+                    disconnected.setValue(true)
+                    return false
+                },
+                setDisconnectedState: { value in
+                    guard value else { return false }
+                    disconnected.setValue(true)
+                    return true
+                },
+                restore: { snapshot in
+                    guard case let .found(settings) = snapshot else { return false }
+                    storedSettings.setValue(settings)
+                    return true
+                }))
+
+        #expect(result == .configurationRemovalFailed)
+        #expect(storedSettings.value == existing)
+        #expect(disconnected.value)
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
+        #expect(fileManager.fileExists(
+            atPath: root.appendingPathComponent("cliproxyapi-artifacts-transaction-v1.json").path))
+
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: root,
+            fileManager: fileManager) {}
+
+        #expect(fileManager.fileExists(atPath: usageFile.path))
+        #expect(!fileManager.fileExists(
+            atPath: root.appendingPathComponent("cliproxyapi-artifacts-transaction-v1.json").path))
     }
 }
 

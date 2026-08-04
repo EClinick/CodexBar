@@ -783,8 +783,15 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 }
 
                 func rollback() {
-                    guard operations.restore(storedSettings) else { return }
-                    _ = operations.setDisconnectedState(wasDisconnected)
+                    if let artifactsUpdate {
+                        guard CostUsageCacheLocations.markCLIProxyAPIArtifactsUpdateForRollback(
+                            artifactsUpdate,
+                            fileManager: fileManager)
+                        else { return }
+                    }
+                    guard operations.restore(storedSettings),
+                          operations.setDisconnectedState(wasDisconnected)
+                    else { return }
                     if let artifactsUpdate {
                         _ = CostUsageCacheLocations.restoreCLIProxyAPIArtifactsUpdate(
                             artifactsUpdate,
@@ -914,8 +921,12 @@ public enum CLIProxyAPIConnectionSettingsStore {
         else { return .configurationRemovalFailed }
 
         func rollback() {
-            _ = operations.restore(snapshot.storedSettings)
-            _ = operations.setDisconnectedState(snapshot.wasDisconnected)
+            guard CostUsageCacheLocations.markCLIProxyAPIArtifactsUpdateForRollback(
+                artifactsUpdate,
+                fileManager: fileManager),
+                operations.restore(snapshot.storedSettings),
+                operations.setDisconnectedState(snapshot.wasDisconnected)
+            else { return }
             _ = CostUsageCacheLocations.restoreCLIProxyAPIArtifactsUpdate(
                 artifactsUpdate,
                 fileManager: fileManager)
