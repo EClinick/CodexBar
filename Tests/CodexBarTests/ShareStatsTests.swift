@@ -77,6 +77,52 @@ struct ShareStatsTests {
     }
 
     @Test
+    func `proxy attributed models share under their verified upstream provider`() throws {
+        let attribution = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .google,
+            upstream: .init(provider: "gemini", authType: .oauth),
+            evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider])
+        let group = SpendDashboardModel.CurrencyGroup(
+            currencyCode: "USD",
+            providers: [
+                SpendDashboardModel.ProviderRow(
+                    id: "claude",
+                    rank: 1,
+                    provider: .claude,
+                    displayName: "Claude",
+                    totalTokens: 100,
+                    totalCost: 1,
+                    coveredDayCount: 1),
+            ],
+            models: [
+                SpendDashboardModel.ModelRow(
+                    rank: 1,
+                    provider: .claude,
+                    providerName: "Claude",
+                    modelName: "gemini-3-pro",
+                    totalTokens: 100,
+                    totalCost: 1,
+                    attribution: attribution),
+            ],
+            dailyPoints: [],
+            totalTokens: 100,
+            totalCost: 1,
+            coveredDayCount: 1,
+            chartDomain: Self.date...Self.date,
+            modelHistoryCompleteness: .complete)
+
+        let payload = try #require(ShareStatsBuilder.make(
+            model: SpendDashboardModel(requestedDays: 1, groups: [group])))
+        let model = try #require(payload.topModels.first)
+
+        #expect(model.provider == .gemini)
+        #expect(model.providerName == "Gemini")
+        #expect(model.modelName == "Gemini")
+    }
+
+    @Test
     func `builder preserves native currencies and unavailable spend`() throws {
         let subscriptionNames = try [
             "codex:one": #require(Self.subscriptionName(provider: .codex, rawName: "pro")),

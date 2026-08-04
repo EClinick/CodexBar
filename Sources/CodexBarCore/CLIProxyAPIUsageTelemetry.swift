@@ -783,7 +783,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 }
 
                 func rollback() {
-                    _ = operations.restore(storedSettings)
+                    guard operations.restore(storedSettings) else { return }
                     _ = operations.setDisconnectedState(wasDisconnected)
                     if let artifactsUpdate {
                         _ = CostUsageCacheLocations.restoreCLIProxyAPIArtifactsUpdate(

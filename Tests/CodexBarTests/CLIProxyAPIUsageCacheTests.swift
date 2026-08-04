@@ -883,6 +883,55 @@ struct CLIProxyAPIUsageCacheTests {
 
 extension CLIProxyAPIUsageCacheTests {
     @Test
+    func `failed credential rollback keeps replacement telemetry isolated`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-credential-rollback-failure-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+        let existing = CLIProxyAPIConnectionSettings(managementKey: "old-management-key")
+        let replacement = CLIProxyAPIConnectionSettings(managementKey: "new-management-key")
+        let storedSettings = LockIsolated(existing)
+        let disconnected = LockIsolated(false)
+        let didAttemptRestore = LockIsolated(false)
+
+        let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
+            replacement,
+            artifactDirectories: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                isDisconnected: { disconnected.value },
+                loadStored: { .found(storedSettings.value) },
+                store: { settings in
+                    storedSettings.setValue(settings)
+                    return true
+                },
+                setDisconnectedState: { value in
+                    guard value else { return false }
+                    disconnected.setValue(true)
+                    return true
+                },
+                restore: { _ in
+                    didAttemptRestore.setValue(true)
+                    return false
+                }))
+
+        #expect(!saved)
+        #expect(didAttemptRestore.value)
+        #expect(storedSettings.value == replacement)
+        #expect(disconnected.value)
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
+        #expect(fileManager.fileExists(
+            atPath: root.appendingPathComponent("cliproxyapi-artifacts-transaction-v1.json").path))
+        #expect(try fileManager.contentsOfDirectory(at: costUsage, includingPropertiesForKeys: nil)
+            .contains { $0.lastPathComponent.hasSuffix("replacement-backup") })
+    }
+
+    @Test
     func `configuration removal accepts a credential removed after its snapshot`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
