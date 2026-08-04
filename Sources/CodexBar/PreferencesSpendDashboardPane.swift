@@ -103,6 +103,21 @@ func spendDashboardModelHistoryPresentation(
     return group.modelHistoryCompleteness == .incomplete ? .partial : .complete
 }
 
+func spendDashboardCLIProxyAPIConfigurationPresentation(
+    loadResult: KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings>,
+    currentBaseURL: String,
+    hasSavedConfiguration: Bool) -> (baseURL: String, hasSavedConfiguration: Bool)
+{
+    switch loadResult {
+    case let .found(configuration):
+        (configuration.baseURL, true)
+    case .missing, .invalid:
+        (currentBaseURL, false)
+    case .temporarilyUnavailable:
+        (currentBaseURL, hasSavedConfiguration)
+    }
+}
+
 @MainActor
 struct SpendDashboardPane: View {
     @Bindable var settings: SettingsStore
@@ -464,9 +479,12 @@ struct SpendDashboardPane: View {
     }
 
     private func loadCLIProxyAPIConfiguration() {
-        guard let configuration = CLIProxyAPIConnectionSettingsStore.load() else { return }
-        self.cliProxyAPIBaseURL = configuration.baseURL
-        self.cliProxyAPIHasSavedConfiguration = true
+        let presentation = spendDashboardCLIProxyAPIConfigurationPresentation(
+            loadResult: CLIProxyAPIConnectionSettingsStore.loadResult(),
+            currentBaseURL: self.cliProxyAPIBaseURL,
+            hasSavedConfiguration: self.cliProxyAPIHasSavedConfiguration)
+        self.cliProxyAPIBaseURL = presentation.baseURL
+        self.cliProxyAPIHasSavedConfiguration = presentation.hasSavedConfiguration
     }
 
     private func saveAndTestCLIProxyAPIConfiguration() async {

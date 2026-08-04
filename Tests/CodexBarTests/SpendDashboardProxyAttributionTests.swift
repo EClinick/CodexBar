@@ -5,6 +5,52 @@ import Testing
 
 struct SpendDashboardProxyAttributionTests {
     @Test
+    func `missing proxy configuration clears the saved presentation`() {
+        let presentation = spendDashboardCLIProxyAPIConfigurationPresentation(
+            loadResult: .missing,
+            currentBaseURL: "http://localhost:8317",
+            hasSavedConfiguration: true)
+
+        #expect(presentation.baseURL == "http://localhost:8317")
+        #expect(!presentation.hasSavedConfiguration)
+    }
+
+    @Test
+    func `invalid proxy configuration clears the saved presentation`() {
+        let presentation = spendDashboardCLIProxyAPIConfigurationPresentation(
+            loadResult: .invalid,
+            currentBaseURL: "http://localhost:8317",
+            hasSavedConfiguration: true)
+
+        #expect(presentation.baseURL == "http://localhost:8317")
+        #expect(!presentation.hasSavedConfiguration)
+    }
+
+    @Test
+    func `temporarily unavailable proxy configuration preserves the presentation`() {
+        let presentation = spendDashboardCLIProxyAPIConfigurationPresentation(
+            loadResult: .temporarilyUnavailable,
+            currentBaseURL: "http://localhost:8317",
+            hasSavedConfiguration: true)
+
+        #expect(presentation.baseURL == "http://localhost:8317")
+        #expect(presentation.hasSavedConfiguration)
+    }
+
+    @Test
+    func `found proxy configuration refreshes the presentation`() {
+        let presentation = spendDashboardCLIProxyAPIConfigurationPresentation(
+            loadResult: .found(CLIProxyAPIConnectionSettings(
+                baseURL: "http://127.0.0.1:8317",
+                managementKey: "test-key")),
+            currentBaseURL: CLIProxyAPIConnectionSettings.defaultBaseURL,
+            hasSavedConfiguration: false)
+
+        #expect(presentation.baseURL == "http://127.0.0.1:8317")
+        #expect(presentation.hasSavedConfiguration)
+    }
+
+    @Test
     func `unresolved route describes known facts without an unknown warning`() {
         let attribution = CostUsageAttribution(
             client: .claudeCode,
