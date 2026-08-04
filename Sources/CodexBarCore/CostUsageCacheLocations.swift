@@ -42,6 +42,8 @@ public enum CostUsageCacheLocations {
 
         let expectedGeneration: String
         let moves: [Move]
+        let disconnectedStateAfterCommit: Bool?
+        let disconnectedStateAfterRollback: Bool?
     }
 
     static let cliProxyAPIUsageFileName = "cliproxyapi-usage-v1.json"
@@ -186,7 +188,10 @@ public enum CostUsageCacheLocations {
         in directories: [URL],
         stateRoot: URL?,
         expectedGeneration: String,
-        fileManager: FileManager) -> CLIProxyAPIArtifactsUpdate?
+        fileManager: FileManager,
+        disconnectedStateAfterCommit: Bool? = nil,
+        disconnectedStateAfterRollback: Bool? = nil,
+        prepareState: () -> Bool = { true }) -> CLIProxyAPIArtifactsUpdate?
     {
         let identifier = UUID().uuidString
         let moves = self.cliProxyAPIArtifactURLs(in: directories)
@@ -200,8 +205,6 @@ public enum CostUsageCacheLocations {
                             ".\(originalURL.lastPathComponent).\(identifier).replacement-backup",
                             isDirectory: false))
             }
-        guard !moves.isEmpty else { return CLIProxyAPIArtifactsUpdate(moves: []) }
-
         let manifestURL = self.cliProxyAPIArtifactsTransactionURL(
             stateRoot: stateRoot,
             fileManager: fileManager)
@@ -209,7 +212,9 @@ public enum CostUsageCacheLocations {
             expectedGeneration: expectedGeneration,
             moves: moves.map {
                 .init(originalPath: $0.originalURL.path, stagedPath: $0.stagedURL.path)
-            })
+            },
+            disconnectedStateAfterCommit: disconnectedStateAfterCommit,
+            disconnectedStateAfterRollback: disconnectedStateAfterRollback)
         do {
             try fileManager.createDirectory(
                 at: manifestURL.deletingLastPathComponent(),
@@ -220,6 +225,10 @@ public enum CostUsageCacheLocations {
         }
 
         let update = CLIProxyAPIArtifactsUpdate(moves: moves, manifestURL: manifestURL)
+        guard prepareState() else {
+            _ = self.removeCLIProxyAPIArtifactsManifest(manifestURL, fileManager: fileManager)
+            return nil
+        }
         for move in moves {
             do {
                 try fileManager.moveItem(at: move.originalURL, to: move.stagedURL)
@@ -329,9 +338,20 @@ public enum CostUsageCacheLocations {
                     stagedURL: URL(fileURLWithPath: $0.stagedPath))
             },
             manifestURL: manifestURL)
-        if self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
+        let didCommit = self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
             manifest.expectedGeneration
+        let disconnectedState = didCommit
+            ? manifest.disconnectedStateAfterCommit
+            : manifest.disconnectedStateAfterRollback
+        if let disconnectedState,
+           !self.setCLIProxyAPIExplicitlyDisconnected(
+               disconnectedState,
+               stateRoot: stateRoot,
+               fileManager: fileManager)
         {
+            return false
+        }
+        if didCommit {
             return self.discardCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
         }
         return self.restoreCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)

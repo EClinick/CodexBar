@@ -762,13 +762,6 @@ public enum CLIProxyAPIConnectionSettingsStore {
                         generationUpdate,
                         fileManager: fileManager)
                 }
-                let requiresIsolation = artifactDisposition == .purge
-                if requiresIsolation,
-                   !operations.setDisconnectedState(true)
-                {
-                    _ = operations.setDisconnectedState(wasDisconnected)
-                    return false
-                }
                 let artifactsUpdate: CostUsageCacheLocations.CLIProxyAPIArtifactsUpdate?
                 switch artifactDisposition {
                 case .preserve:
@@ -778,7 +771,10 @@ public enum CLIProxyAPIConnectionSettingsStore {
                         in: artifactDirectories,
                         stateRoot: stateRoot,
                         expectedGeneration: generationUpdate.generation,
-                        fileManager: fileManager)
+                        fileManager: fileManager,
+                        disconnectedStateAfterCommit: false,
+                        disconnectedStateAfterRollback: wasDisconnected,
+                        prepareState: { operations.setDisconnectedState(true) })
                     else {
                         _ = operations.setDisconnectedState(wasDisconnected)
                         return false

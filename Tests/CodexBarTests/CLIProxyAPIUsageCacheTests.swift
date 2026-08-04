@@ -876,6 +876,81 @@ struct CLIProxyAPIUsageCacheTests {
 
 struct CLIProxyAPITransactionRecoveryTests {
     @Test
+    func `interrupted committed save clears its isolation marker on the next lock`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-save-marker-finalize-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let generationUpdate = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root, fileManager: fileManager))
+        let artifactsUpdate = try #require(CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
+            in: [],
+            stateRoot: root,
+            expectedGeneration: generationUpdate.generation,
+            fileManager: fileManager,
+            disconnectedStateAfterCommit: false,
+            disconnectedStateAfterRollback: false,
+            prepareState: {
+                CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+                    true,
+                    stateRoot: root,
+                    fileManager: fileManager)
+            }))
+        #expect(CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+        #expect(artifactsUpdate.manifestURL.map { fileManager.fileExists(atPath: $0.path) } == true)
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+            generationUpdate,
+            fileManager: fileManager))
+
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root, fileManager: fileManager) {}
+
+        #expect(!CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+        #expect(artifactsUpdate.manifestURL.map { !fileManager.fileExists(atPath: $0.path) } == true)
+    }
+
+    @Test
+    func `interrupted uncommitted save restores its previous isolation marker on the next lock`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-save-marker-rollback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let generationUpdate = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root, fileManager: fileManager))
+        let artifactsUpdate = try #require(CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
+            in: [],
+            stateRoot: root,
+            expectedGeneration: generationUpdate.generation,
+            fileManager: fileManager,
+            disconnectedStateAfterCommit: false,
+            disconnectedStateAfterRollback: false,
+            prepareState: {
+                CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+                    true,
+                    stateRoot: root,
+                    fileManager: fileManager)
+            }))
+        #expect(CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root, fileManager: fileManager) {}
+
+        #expect(!CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+        #expect(artifactsUpdate.manifestURL.map { !fileManager.fileExists(atPath: $0.path) } == true)
+        CostUsageCacheLocations.discardCLIProxyAPIConfigurationGenerationUpdate(
+            generationUpdate,
+            fileManager: fileManager)
+    }
+
+    @Test
     func `interrupted uncommitted replacement restores staged artifacts on the next lock`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
