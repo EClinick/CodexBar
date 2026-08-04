@@ -98,20 +98,20 @@ extension UsageStore {
         let previousProvesPaidDepletion = previous?.commandCodeHasSubscriptionPlan == true ||
             (previous?.commandCodeSubscriptionEnrichmentUnavailable == true &&
                 previous?.commandCodeMonthlyGrantDepleted == true &&
-                previous?.primary?.usedPercent == 100)
+                previous?.tertiary?.usedPercent == 100)
         guard current.commandCodeSubscriptionEnrichmentUnavailable,
               current.commandCodeMonthlyGrantDepleted,
               previousProvesPaidDepletion,
-              let previousPrimary = previous?.primary
+              let previousMonthly = previous?.tertiary
         else {
             return current
         }
         let depleted = RateWindow(
             usedPercent: 100,
-            windowMinutes: previousPrimary.windowMinutes,
-            resetsAt: previousPrimary.resetsAt,
-            resetDescription: previousPrimary.resetDescription)
-        return current.with(primary: depleted, secondary: current.secondary)
+            windowMinutes: previousMonthly.windowMinutes,
+            resetsAt: previousMonthly.resetsAt,
+            resetDescription: previousMonthly.resetDescription)
+        return current.with(tertiary: depleted)
     }
 
     func refreshForSettingsChange() async {

@@ -11,14 +11,6 @@ extension UsageStore {
     {
         // Session quota notifications are tied to the primary session window. Copilot free plans can
         // expose only chat quota, so allow Copilot to fall back to secondary for transition tracking.
-        // Command Code synthesizes a depleted primary while subscription enrichment is unavailable.
-        // Preserve the prior notification state for that placeholder, but accept positive credit data.
-        if provider == .commandcode,
-           snapshot.commandCodeSubscriptionEnrichmentUnavailable,
-           SessionQuotaNotificationLogic.isDepleted(snapshot.primary?.remainingPercent)
-        {
-            return
-        }
         // Hooks have their own enable switch, so a configured quota_reached hook must fire on a
         // real depletion even when session quota notifications are off. Run transition detection
         // whenever notifications OR a matching hook rule is active; gate the OS notification post
@@ -37,9 +29,6 @@ extension UsageStore {
             return
         }
         guard let sessionWindow = self.sessionQuotaWindow(provider: provider, snapshot: snapshot) else {
-            if provider == .commandcode, snapshot.commandCodeSubscriptionEnrichmentUnavailable {
-                return
-            }
             if provider == .codex {
                 if let previous = self.sessionQuotaTransitionStates[.codex] {
                     if previous.codexOwnerKey != codexOwnerKey {

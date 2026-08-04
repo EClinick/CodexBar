@@ -1420,7 +1420,7 @@ extension UsageStorePlanUtilizationTests {
 
     @MainActor
     @Test
-    func `session quota celebration ignores command code subscription enrichment failure`() async {
+    func `session quota celebration keeps command code rolling window during subscription enrichment failure`() async {
         let store = Self.makeStore()
         let recorder = SessionLimitResetEventRecorder(provider: .commandcode, accountLabel: nil)
         defer { recorder.invalidate() }
@@ -1439,11 +1439,11 @@ extension UsageStorePlanUtilizationTests {
 
         let firstDate = Date(timeIntervalSince1970: 1_700_000_000)
         let before = snapshot(usedPercent: 80, enrichmentUnavailable: false, updatedAt: firstDate)
-        let failedEnrichment = snapshot(
+        let rollingReset = snapshot(
             usedPercent: 0,
             enrichmentUnavailable: true,
             updatedAt: firstDate.addingTimeInterval(3600))
-        let validReset = snapshot(
+        let confirmedReset = snapshot(
             usedPercent: 0,
             enrichmentUnavailable: false,
             updatedAt: firstDate.addingTimeInterval(7200))
@@ -1451,14 +1451,14 @@ extension UsageStorePlanUtilizationTests {
         await store.recordPlanUtilizationHistorySample(provider: .commandcode, snapshot: before, now: before.updatedAt)
         await store.recordPlanUtilizationHistorySample(
             provider: .commandcode,
-            snapshot: failedEnrichment,
-            now: failedEnrichment.updatedAt)
-        #expect(recorder.events.isEmpty)
+            snapshot: rollingReset,
+            now: rollingReset.updatedAt)
+        #expect(recorder.events.count == 1)
 
         await store.recordPlanUtilizationHistorySample(
             provider: .commandcode,
-            snapshot: validReset,
-            now: validReset.updatedAt)
+            snapshot: confirmedReset,
+            now: confirmedReset.updatedAt)
         #expect(recorder.events.count == 1)
     }
 
