@@ -940,17 +940,31 @@ public enum CLIProxyAPIConnectionSettingsStore {
     }
 
     private static func clearUnserialized() -> Bool {
-        let wasDisconnected = CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected()
-        guard wasDisconnected || CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(true) else {
+        self.clearUnserialized(
+            isDisconnected: { CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected() },
+            setDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected($0) },
+            clearConfiguration: { KeychainCacheStore.clearResult(key: self.key) })
+    }
+
+    static func clearUnserialized(
+        isDisconnected: () -> Bool,
+        setDisconnectedState: (Bool) -> Bool,
+        clearConfiguration: () -> KeychainCacheStore.ClearResult) -> Bool
+    {
+        let wasDisconnected = isDisconnected()
+        guard wasDisconnected || setDisconnectedState(true) else {
             return false
         }
-        guard KeychainCacheStore.clear(key: self.key) else {
+
+        switch clearConfiguration() {
+        case .removed, .missing:
+            return true
+        case .failed:
             if !wasDisconnected {
-                _ = CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(false)
+                _ = setDisconnectedState(false)
             }
             return false
         }
-        return true
     }
 }
 

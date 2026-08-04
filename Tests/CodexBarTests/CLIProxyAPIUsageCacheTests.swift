@@ -881,6 +881,48 @@ struct CLIProxyAPIUsageCacheTests {
     }
 }
 
+extension CLIProxyAPIUsageCacheTests {
+    @Test
+    func `configuration removal accepts a credential removed after its snapshot`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-concurrent-removal-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+        let existing = CLIProxyAPIConnectionSettings(managementKey: "test-management-key")
+        let disconnected = LockIsolated(false)
+
+        let result = CLIProxyAPIConnectionSettingsStore.removeAndPurgeTelemetry(
+            in: [costUsage],
+            stateRoot: root,
+            fileManager: fileManager,
+            operations: .init(
+                isDisconnected: { disconnected.value },
+                loadStored: { .found(existing) },
+                clearConfiguration: {
+                    CLIProxyAPIConnectionSettingsStore.clearUnserialized(
+                        isDisconnected: { disconnected.value },
+                        setDisconnectedState: { value in
+                            disconnected.setValue(value)
+                            return true
+                        },
+                        clearConfiguration: { .missing })
+                },
+                setDisconnectedState: { value in
+                    disconnected.setValue(value)
+                    return true
+                },
+                restore: { _ in true }))
+
+        #expect(result == .removed)
+        #expect(disconnected.value)
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
+    }
+}
+
 struct CLIProxyAPITransactionRecoveryTests {
     @Test
     func `interrupted committed save clears its isolation marker on the next lock`() throws {
