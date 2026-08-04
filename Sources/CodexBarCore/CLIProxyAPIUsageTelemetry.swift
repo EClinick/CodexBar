@@ -792,14 +792,17 @@ public enum CLIProxyAPIConnectionSettingsStore {
                     }
                 }
 
-                guard operations.store(settings) else {
-                    rollback()
-                    return false
-                }
                 guard CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
                     generationUpdate,
                     fileManager: fileManager)
                 else {
+                    rollback()
+                    return false
+                }
+                // Publish the telemetry invalidation before replacing credentials. If the process exits
+                // during the Keychain write, recovery will discard the staged artifacts instead of exposing
+                // telemetry collected under the previous credentials with the replacement configuration.
+                guard operations.store(settings) else {
                     rollback()
                     return false
                 }
