@@ -19,6 +19,8 @@ extension UsageStore {
 
     func startCLIProxyAPIUsageCollector(initialConfigurationGeneration: String? = nil) {
         self.stopCLIProxyAPIUsageCollector()
+        self.cliProxyAPICleanupRetryTask?.cancel()
+        self.cliProxyAPICleanupRetryTask = nil
         let pendingPruneInterval = Self.cliProxyAPIPendingPruneInterval
         let initialConfigurationGeneration = initialConfigurationGeneration ??
             CostUsageCacheLocations.cliProxyAPIConfigurationGeneration()
@@ -55,10 +57,13 @@ extension UsageStore {
 
     @discardableResult
     func removeCLIProxyAPIConfiguration(
-        remove: (() async -> CLIProxyAPIConfigurationRemovalResult)? = nil) async
+        remove: (() async -> CLIProxyAPIConfigurationRemovalResult)? = nil,
+        scheduleCleanupRetry: (() -> Void)? = nil) async
         -> CLIProxyAPIConfigurationRemovalResult
     {
         let collectorTask = self.stopCLIProxyAPIUsageCollector()
+        self.cliProxyAPICleanupRetryTask?.cancel()
+        self.cliProxyAPICleanupRetryTask = nil
         await collectorTask?.value
         let result = if let remove {
             await remove()
@@ -70,7 +75,36 @@ extension UsageStore {
         if result != .configurationRemovalFailed {
             self.invalidateCLIProxyAPICostAttribution()
         }
+        if result == .telemetryCleanupFailed {
+            if let scheduleCleanupRetry {
+                scheduleCleanupRetry()
+            } else {
+                self.startCLIProxyAPICleanupRetry()
+            }
+        }
         return result
+    }
+
+    @discardableResult
+    func startCLIProxyAPICleanupRetry(
+        retryInterval: Duration = .seconds(30),
+        maintenance: @escaping @Sendable () -> Bool = {
+            CLIProxyAPIUsageCollector.pruneExpiredUsage()
+        }) -> Task<Void, Never>
+    {
+        self.cliProxyAPICleanupRetryTask?.cancel()
+        let task = Task.detached(priority: .utility) {
+            while !Task.isCancelled {
+                if maintenance() { return }
+                do {
+                    try await Task.sleep(for: retryInterval)
+                } catch {
+                    return
+                }
+            }
+        }
+        self.cliProxyAPICleanupRetryTask = task
+        return task
     }
 
     func collectCLIProxyAPIUsageNow(

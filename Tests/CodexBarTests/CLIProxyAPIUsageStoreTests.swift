@@ -20,6 +20,24 @@ private actor CLIProxyAPIUsageCollectorCancellationRecorder {
     }
 }
 
+private final class CLIProxyAPICleanupRetryRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var attempts = 0
+
+    func attempt() -> Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        self.attempts += 1
+        return self.attempts >= 2
+    }
+
+    var count: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.attempts
+    }
+}
+
 @MainActor
 struct CLIProxyAPIUsageStoreTests {
     @Test
@@ -158,13 +176,34 @@ struct CLIProxyAPIUsageStoreTests {
             startupBehavior: .testing,
             environmentBase: environment)
         store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        var scheduledCleanupRetry = false
 
-        let removed = await store.removeCLIProxyAPIConfiguration {
-            .telemetryCleanupFailed
-        }
+        let removed = await store.removeCLIProxyAPIConfiguration(
+            remove: { .telemetryCleanupFailed },
+            scheduleCleanupRetry: { scheduledCleanupRetry = true })
 
         #expect(removed == .telemetryCleanupFailed)
         #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(scheduledCleanupRetry)
+    }
+
+    @Test
+    func `telemetry cleanup maintenance retries until transaction recovery succeeds`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let recorder = CLIProxyAPICleanupRetryRecorder()
+
+        let task = store.startCLIProxyAPICleanupRetry(retryInterval: .milliseconds(1)) {
+            recorder.attempt()
+        }
+        await task.value
+
+        #expect(recorder.count == 2)
     }
 
     @Test
