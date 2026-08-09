@@ -431,6 +431,7 @@ enum SpendDashboardSource {
             } catch is CancellationError {
                 failedSourceIDs.formUnion(request.codexRequests.map { "codex:\($0.id)" })
                 failedSourceIDs.insert(Self.codexProxySourceID)
+                invalidatedSourceIDs.insert(Self.codexProxySourceID)
                 return SpendDashboardLoadResult(
                     inputs: [],
                     failedSourceIDs: failedSourceIDs,

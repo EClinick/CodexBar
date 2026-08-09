@@ -80,6 +80,40 @@ struct SpendDashboardCodexProxySourceTests {
         #expect(result.inputs.map(\.id) == [SpendDashboardSource.codexProxySourceID])
     }
 
+    @Test
+    func `cancelled proxy load invalidates retained proxy source`() async {
+        let now = Date(timeIntervalSince1970: 1_784_179_200)
+        let staleProxyInput = SpendDashboardModel.ProviderInput(
+            id: SpendDashboardSource.codexProxySourceID,
+            provider: .codex,
+            displayName: "Codex · CLIProxyAPI",
+            modelProviderName: "Codex",
+            snapshot: Self.snapshot(cost: 2, now: now))
+        let request = SpendDashboardLoadRequest(
+            configuration: SpendDashboardConfiguration(
+                costUsageEnabled: true,
+                providerIDs: [UsageProvider.claude.rawValue],
+                codexAccountIdentities: []),
+            capturedInputs: [staleProxyInput],
+            unavailableSourceIDs: [],
+            codexRequests: [],
+            now: now,
+            force: false)
+        let emptySnapshot = Self.snapshot(cost: 0, now: now)
+
+        let result = await SpendDashboardSource.load(
+            request,
+            codexSnapshotLoader: { _ in
+                Issue.record("No account-scoped Codex snapshot should be requested.")
+                return emptySnapshot
+            },
+            codexProxySnapshotLoader: { _ in throw CancellationError() })
+
+        #expect(result.inputs.isEmpty)
+        #expect(result.failedSourceIDs == [SpendDashboardSource.codexProxySourceID])
+        #expect(result.invalidatedSourceIDs == [SpendDashboardSource.codexProxySourceID])
+    }
+
     private static func snapshot(cost: Double, now: Date) -> CostUsageTokenSnapshot {
         let entry = CostUsageDailyReport.Entry(
             date: "2026-07-15",
