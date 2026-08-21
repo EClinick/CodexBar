@@ -711,19 +711,20 @@ struct CLIProxyAPIUsageCacheTests {
             Self.record(id: "", timestamp: second.addingTimeInterval(0.1)),
             Self.record(id: "", timestamp: second.addingTimeInterval(0.9)),
         ]
+        let now = second.addingTimeInterval(1)
 
         #expect(CLIProxyAPIUsageCacheIO.merge(
             records,
             cacheRoot: root,
-            now: second) == 2)
+            now: now) == 2)
         #expect(CLIProxyAPIUsageCacheIO.merge(
             records,
             cacheRoot: root,
-            now: second) == 0)
+            now: now) == 0)
 
         let roundTripped = CLIProxyAPIUsageCacheIO.load(
             cacheRoot: root,
-            now: second)
+            now: now)
         #expect(roundTripped.count == 2)
         #expect(
             roundTripped.map { Int64($0.timestamp.timeIntervalSince1970 * 1000) }
@@ -844,7 +845,7 @@ struct CLIProxyAPIUsageCacheTests {
         #expect(CLIProxyAPIUsageCacheIO.merge(
             records,
             cacheRoot: root,
-            now: records[0].timestamp) == 2)
+            now: records[1].timestamp) == 2)
         #expect(CLIProxyAPIUsageCollector.pruneExpiredUsage(
             cacheRoot: root,
             pendingRoot: root,
@@ -882,6 +883,31 @@ struct CLIProxyAPIUsageCacheTests {
 }
 
 extension CLIProxyAPIUsageCacheTests {
+    @Test
+    func `usage retention clamps clock skew and rejects implausible future records`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-future-retention-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let now = try #require(CostUsageDateParser.parse("2026-07-30T12:00:00Z"))
+        let records = [
+            Self.record(id: "retained", timestamp: now.addingTimeInterval(-365 * 24 * 60 * 60)),
+            Self.record(id: "clock-skew", timestamp: now.addingTimeInterval(60)),
+            Self.record(id: "implausible-future", timestamp: now.addingTimeInterval(367 * 24 * 60 * 60)),
+        ]
+
+        #expect(CLIProxyAPIUsageCacheIO.merge(records, cacheRoot: root, now: now) == 2)
+        let cached = CLIProxyAPIUsageCacheIO.load(cacheRoot: root, now: now)
+        #expect(cached.map(\.requestID) == ["retained", "clock-skew"])
+        #expect(cached.last?.timestamp == now)
+
+        #expect(CLIProxyAPIUsagePendingIO.save(records, pendingRoot: root))
+        let pending = try #require(CLIProxyAPIUsagePendingIO.load(pendingRoot: root, now: now))
+        #expect(pending.map(\.requestID) == ["retained", "clock-skew"])
+        #expect(pending.last?.timestamp == now)
+        #expect(CLIProxyAPIUsagePendingIO.load(pendingRoot: root, now: now) == pending)
+    }
+
     @Test
     func `rollback accepts an already missing prior credential`() {
         #expect(CLIProxyAPIConnectionSettingsStore.restoreStoredSettings(

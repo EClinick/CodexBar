@@ -142,6 +142,39 @@ struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
             generate: self.generate,
             tokens: self.tokens)
     }
+
+    func replacingTimestamp(_ timestamp: Date) -> Self {
+        Self(
+            timestamp: timestamp,
+            provider: self.provider,
+            executorType: self.executorType,
+            model: self.model,
+            alias: self.alias,
+            endpoint: self.endpoint,
+            authType: self.authType,
+            requestID: self.requestID,
+            localOccurrenceID: self.localOccurrenceID,
+            failed: self.failed,
+            generate: self.generate,
+            tokens: self.tokens)
+    }
+}
+
+private enum CLIProxyAPIUsageRetention {
+    private static let maximumRecordAge: TimeInterval = 366 * 24 * 60 * 60
+    private static let maximumFutureClockSkew: TimeInterval = 5 * 60
+
+    static func normalize(
+        _ records: [CLIProxyAPIUsageRecord],
+        now: Date) -> [CLIProxyAPIUsageRecord]
+    {
+        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
+        let futureCutoff = now.addingTimeInterval(self.maximumFutureClockSkew)
+        return records.compactMap { record in
+            guard record.timestamp >= cutoff, record.timestamp <= futureCutoff else { return nil }
+            return record.timestamp > now ? record.replacingTimestamp(now) : record
+        }
+    }
 }
 
 enum CLIProxyAPIUsageCacheIO {
@@ -157,7 +190,6 @@ enum CLIProxyAPIUsageCacheIO {
     }
 
     private static let cacheLock = NSLock()
-    private static let maximumRecordAge: TimeInterval = 366 * 24 * 60 * 60
 
     static func withExclusiveAccess<T>(_ body: () throws -> T) rethrows -> T {
         try self.cacheLock.withLock(body)
@@ -173,8 +205,7 @@ enum CLIProxyAPIUsageCacheIO {
                 cacheRoot: cacheRoot,
                 legacyCacheRoot: legacyCacheRoot)
             else { return false }
-            let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
-            let retainedCache = Cache(records: currentCache.records.filter { $0.timestamp >= cutoff })
+            let retainedCache = Cache(records: CLIProxyAPIUsageRetention.normalize(currentCache.records, now: now))
             return retainedCache == currentCache || self.save(retainedCache, cacheRoot: cacheRoot)
         }
     }
@@ -196,13 +227,12 @@ enum CLIProxyAPIUsageCacheIO {
         now: Date = Date()) -> [CLIProxyAPIUsageRecord]
     {
         let legacyCacheRoot = cacheRoot == nil ? self.defaultLegacyCacheRoot() : nil
-        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
         return self.withExclusiveAccess {
             guard let currentCache = self.loadCache(
                 cacheRoot: cacheRoot,
                 legacyCacheRoot: legacyCacheRoot)
             else { return [] }
-            let retainedRecords = currentCache.records.filter { $0.timestamp >= cutoff }
+            let retainedRecords = CLIProxyAPIUsageRetention.normalize(currentCache.records, now: now)
             let retainedCache = Cache(records: retainedRecords)
             if retainedCache != currentCache {
                 _ = self.save(retainedCache, cacheRoot: cacheRoot)
@@ -216,7 +246,6 @@ enum CLIProxyAPIUsageCacheIO {
         legacyCacheRoot: URL?,
         now: Date = Date()) -> [CLIProxyAPIUsageRecord]
     {
-        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
         if self.hasLegacyCacheToMigrate(
             cacheRoot: cacheRoot,
             legacyCacheRoot: legacyCacheRoot)
@@ -230,7 +259,7 @@ enum CLIProxyAPIUsageCacheIO {
                             cacheRoot: cacheRoot,
                             legacyCacheRoot: legacyCacheRoot)
                         else { return [] }
-                        let retainedRecords = currentCache.records.filter { $0.timestamp >= cutoff }
+                        let retainedRecords = CLIProxyAPIUsageRetention.normalize(currentCache.records, now: now)
                         let retainedCache = Cache(records: retainedRecords)
                         if retainedCache != currentCache {
                             _ = self.save(retainedCache, cacheRoot: cacheRoot)
@@ -242,7 +271,7 @@ enum CLIProxyAPIUsageCacheIO {
                 return self.withExclusiveAccess {
                     self.loadCache(
                         cacheRoot: cacheRoot,
-                        legacyCacheRoot: nil)?.records.filter { $0.timestamp >= cutoff } ?? []
+                        legacyCacheRoot: nil).map { CLIProxyAPIUsageRetention.normalize($0.records, now: now) } ?? []
                 }
             }
         }
@@ -252,8 +281,8 @@ enum CLIProxyAPIUsageCacheIO {
                 cacheRoot: cacheRoot,
                 legacyCacheRoot: nil)
             else { return ([], false) }
-            let retainedRecords = existingCache.records.filter { $0.timestamp >= cutoff }
-            return (retainedRecords, retainedRecords.count != existingCache.records.count)
+            let retainedRecords = CLIProxyAPIUsageRetention.normalize(existingCache.records, now: now)
+            return (retainedRecords, retainedRecords != existingCache.records)
         }
         guard initialSnapshot.needsPruning else { return initialSnapshot.records }
 
@@ -266,7 +295,7 @@ enum CLIProxyAPIUsageCacheIO {
                         cacheRoot: cacheRoot,
                         legacyCacheRoot: nil)
                     else { return [] }
-                    let retainedRecords = currentCache.records.filter { $0.timestamp >= cutoff }
+                    let retainedRecords = CLIProxyAPIUsageRetention.normalize(currentCache.records, now: now)
                     let retainedCache = Cache(records: retainedRecords)
                     if retainedCache != currentCache {
                         _ = self.save(retainedCache, cacheRoot: cacheRoot)
@@ -301,14 +330,13 @@ enum CLIProxyAPIUsageCacheIO {
         now: Date = Date()) -> Int?
     {
         self.withExclusiveAccess {
-            let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
             guard let existingCache = self.loadCache(
                 cacheRoot: cacheRoot,
                 legacyCacheRoot: legacyCacheRoot)
             else { return nil }
-            var byKey = self.recordsByKey(existingCache.records.filter { $0.timestamp >= cutoff })
+            var byKey = self.recordsByKey(CLIProxyAPIUsageRetention.normalize(existingCache.records, now: now))
             let priorCount = byKey.count
-            for (key, record) in self.recordsByKey(records.filter { $0.timestamp >= cutoff }) {
+            for (key, record) in self.recordsByKey(CLIProxyAPIUsageRetention.normalize(records, now: now)) {
                 byKey[key] = record
             }
             let cache = Cache(records: byKey.values.sorted { $0.timestamp < $1.timestamp })
@@ -496,8 +524,6 @@ enum CLIProxyAPIUsagePendingIO {
         var records: [CLIProxyAPIUsageRecord] = []
     }
 
-    private static let maximumRecordAge: TimeInterval = 366 * 24 * 60 * 60
-
     static func load(
         pendingRoot: URL? = nil,
         now: Date = Date()) -> [CLIProxyAPIUsageRecord]?
@@ -508,9 +534,8 @@ enum CLIProxyAPIUsagePendingIO {
               let pendingBatch = try? self.decoder.decode(PendingBatch.self, from: data),
               pendingBatch.version == 1
         else { return nil }
-        let cutoff = now.addingTimeInterval(-self.maximumRecordAge)
-        let retainedRecords = pendingBatch.records.filter { $0.timestamp >= cutoff }
-        if retainedRecords.count != pendingBatch.records.count {
+        let retainedRecords = CLIProxyAPIUsageRetention.normalize(pendingBatch.records, now: now)
+        if retainedRecords != pendingBatch.records {
             guard retainedRecords.isEmpty
                 ? self.clear(pendingRoot: pendingRoot)
                 : self.save(retainedRecords, pendingRoot: pendingRoot)
