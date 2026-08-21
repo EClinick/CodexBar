@@ -922,7 +922,8 @@ public enum CLIProxyAPIConnectionSettingsStore {
             in: directories,
             stateRoot: stateRoot,
             expectedGeneration: generationUpdate.generation,
-            fileManager: fileManager)
+            fileManager: fileManager,
+            removalCredentialsCleared: false)
         else { return .configurationRemovalFailed }
 
         func rollback() {
@@ -947,9 +948,16 @@ public enum CLIProxyAPIConnectionSettingsStore {
             rollback()
             return .configurationRemovalFailed
         }
-        // Publish the telemetry invalidation before deleting credentials. Crash recovery can then only
-        // finalize the purge; it must never restore data after the integration has been removed.
+        // Publish the telemetry invalidation before deleting credentials. Recovery keeps an interrupted
+        // removal disconnected until credential deletion has also been recorded durably.
         guard operations.clearConfiguration() else {
+            rollback()
+            return .configurationRemovalFailed
+        }
+        guard CostUsageCacheLocations.markCLIProxyAPIArtifactsRemovalCredentialsCleared(
+            artifactsUpdate,
+            fileManager: fileManager)
+        else {
             rollback()
             return .configurationRemovalFailed
         }
