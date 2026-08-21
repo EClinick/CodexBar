@@ -1261,10 +1261,10 @@ struct CLIProxyAPITransactionRecoveryTests {
     }
 
     @Test
-    func `interrupted removal after credential deletion finalizes telemetry purge`() throws {
+    func `interrupted removal after isolation finalizes telemetry purge`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
-            .appendingPathComponent("cliproxy-removal-after-credentials-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("cliproxy-removal-after-isolation-\(UUID().uuidString)", isDirectory: true)
         let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
         let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
         try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
@@ -1282,8 +1282,9 @@ struct CLIProxyAPITransactionRecoveryTests {
         #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
             generationUpdate,
             fileManager: fileManager))
-        #expect(CostUsageCacheLocations.markCLIProxyAPIArtifactsRemovalCredentialsCleared(
-            artifactsUpdate,
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+            true,
+            stateRoot: root,
             fileManager: fileManager))
 
         try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root, fileManager: fileManager) {}

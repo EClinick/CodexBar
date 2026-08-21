@@ -439,6 +439,9 @@ public enum CostUsageCacheLocations {
             self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
             manifest.expectedGeneration
         if didCommit, manifest.removalCredentialsCleared == false {
+            if self.isCLIProxyAPIExplicitlyDisconnected(stateRoot: stateRoot, fileManager: fileManager) {
+                return self.discardCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+            }
             guard self.setCLIProxyAPIExplicitlyDisconnected(
                 true,
                 stateRoot: stateRoot,
