@@ -1410,11 +1410,11 @@ extension CostUsageFetcher {
             options.refreshMinIntervalSeconds = 0
         }
 
-        let scanOptions = options
+        let scan = options
         let proxyDaily = try await CostUsageScanExecutor.run { checkCancellation in
-            let range = CostUsageScanner.CostUsageDayRange(since: since, until: request.now)
+            let range = CostUsageScanner.CostUsageDayRange(since: since, until: request.now, calendar: scan.calendar)
             let supplemental = try Self.loadCodexSupplementalScan(
-                options: scanOptions,
+                options: scan,
                 range: range,
                 now: request.now,
                 includeClaudeProxy: true,

@@ -693,14 +693,10 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
                 setDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected($0) },
                 restore: { storedSettings in
-                    switch storedSettings {
-                    case let .found(previousSettings):
-                        KeychainCacheStore.storeResult(key: self.key, entry: previousSettings)
-                    case .missing:
-                        KeychainCacheStore.clear(key: self.key)
-                    case .unavailable:
-                        false
-                    }
+                    self.restoreStoredSettings(
+                        storedSettings,
+                        store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
+                        clear: { KeychainCacheStore.clearResult(key: self.key) })
                 }))
     }
 
@@ -711,6 +707,24 @@ public enum CLIProxyAPIConnectionSettingsStore {
         case let .found(settings): .found(settings)
         case .missing: .missing
         case .temporarilyUnavailable, .invalid: .unavailable
+        }
+    }
+
+    static func restoreStoredSettings(
+        _ storedSettings: StoredSettingsSnapshot,
+        store: (CLIProxyAPIConnectionSettings) -> Bool,
+        clear: () -> KeychainCacheStore.ClearResult) -> Bool
+    {
+        switch storedSettings {
+        case let .found(previousSettings):
+            store(previousSettings)
+        case .missing:
+            switch clear() {
+            case .removed, .missing: true
+            case .failed: false
+            }
+        case .unavailable:
+            false
         }
     }
 
@@ -862,14 +876,10 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 clearConfiguration: { self.clearUnserialized() },
                 setDisconnectedState: { CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected($0) },
                 restore: { storedSettings in
-                    switch storedSettings {
-                    case let .found(previousSettings):
-                        KeychainCacheStore.storeResult(key: self.key, entry: previousSettings)
-                    case .missing:
-                        KeychainCacheStore.clear(key: self.key)
-                    case .unavailable:
-                        false
-                    }
+                    self.restoreStoredSettings(
+                        storedSettings,
+                        store: { KeychainCacheStore.storeResult(key: self.key, entry: $0) },
+                        clear: { KeychainCacheStore.clearResult(key: self.key) })
                 }))
     }
 

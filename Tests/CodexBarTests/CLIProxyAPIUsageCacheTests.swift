@@ -883,6 +883,18 @@ struct CLIProxyAPIUsageCacheTests {
 
 extension CLIProxyAPIUsageCacheTests {
     @Test
+    func `rollback accepts an already missing prior credential`() {
+        #expect(CLIProxyAPIConnectionSettingsStore.restoreStoredSettings(
+            .missing,
+            store: { _ in false },
+            clear: { .missing }))
+        #expect(!CLIProxyAPIConnectionSettingsStore.restoreStoredSettings(
+            .missing,
+            store: { _ in false },
+            clear: { .failed }))
+    }
+
+    @Test
     func `failed save marker rollback retains recovery transaction`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
