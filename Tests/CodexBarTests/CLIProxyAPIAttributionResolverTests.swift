@@ -722,7 +722,7 @@ struct CLIProxyAPIAttributionResolverTests {
         #expect(CLIProxyAPIUsageCacheIO.merge(
             [expired, current],
             cacheRoot: cacheRoot,
-            now: expired.timestamp) == 2)
+            now: current.timestamp) == 2)
         let client = CLIProxyAPIUsageQueueClient(
             settings: .init(managementKey: "management-secret"),
             dataLoader: { request in
@@ -759,14 +759,14 @@ struct CLIProxyAPIAttributionResolverTests {
         #expect(CLIProxyAPIUsageCacheIO.merge(
             [expired, current],
             cacheRoot: cacheRoot,
-            now: expired.timestamp) == 2)
+            now: current.timestamp) == 2)
 
         #expect(CLIProxyAPIUsageCacheIO.load(
             cacheRoot: cacheRoot,
             now: now).map(\.requestID) == [current.requestID])
         #expect(CLIProxyAPIUsageCacheIO.load(
             cacheRoot: cacheRoot,
-            now: expired.timestamp).map(\.requestID) == [current.requestID])
+            now: now.addingTimeInterval(1)).map(\.requestID) == [current.requestID])
     }
 
     @Test
