@@ -1228,10 +1228,10 @@ struct CLIProxyAPITransactionRecoveryTests {
     }
 
     @Test
-    func `interrupted removal before credential deletion keeps telemetry isolated`() throws {
+    func `interrupted removal before isolation restores telemetry and connection state`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
-            .appendingPathComponent("cliproxy-removal-before-credentials-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("cliproxy-removal-before-isolation-\(UUID().uuidString)", isDirectory: true)
         let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
         let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
         try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
@@ -1245,26 +1245,83 @@ struct CLIProxyAPITransactionRecoveryTests {
             stateRoot: root,
             expectedGeneration: generationUpdate.generation,
             fileManager: fileManager,
+            disconnectedStateAfterRollback: false,
+            removalIsolationPublished: false,
             removalCredentialsCleared: false))
         #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
             generationUpdate,
             fileManager: fileManager))
 
-        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root, fileManager: fileManager) {}
+        let didRecoverConfiguration = LockIsolated(false)
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: root,
+            fileManager: fileManager)
+        {
+            didRecoverConfiguration.setValue(true)
+            return true
+        } operation: {}
 
-        #expect(CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+        #expect(!CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
             stateRoot: root,
             fileManager: fileManager))
+        #expect(!didRecoverConfiguration.value)
         #expect(fileManager.fileExists(atPath: usageFile.path))
         #expect(artifactsUpdate.moves.allSatisfy { !fileManager.fileExists(atPath: $0.stagedURL.path) })
         #expect(artifactsUpdate.manifestURL.map { !fileManager.fileExists(atPath: $0.path) } == true)
     }
 
     @Test
-    func `interrupted removal after isolation finalizes telemetry purge`() throws {
+    func `preexisting isolation does not impersonate removal progress`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
-            .appendingPathComponent("cliproxy-removal-after-isolation-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("cliproxy-removal-preexisting-isolation-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+            true,
+            stateRoot: root,
+            fileManager: fileManager))
+
+        let generationUpdate = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root, fileManager: fileManager))
+        let artifactsUpdate = try #require(CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
+            in: [costUsage],
+            stateRoot: root,
+            expectedGeneration: generationUpdate.generation,
+            fileManager: fileManager,
+            disconnectedStateAfterRollback: true,
+            removalIsolationPublished: false,
+            removalCredentialsCleared: false))
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+            generationUpdate,
+            fileManager: fileManager))
+
+        let didRecoverConfiguration = LockIsolated(false)
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: root,
+            fileManager: fileManager)
+        {
+            didRecoverConfiguration.setValue(true)
+            return true
+        } operation: {}
+
+        #expect(CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+        #expect(!didRecoverConfiguration.value)
+        #expect(fileManager.fileExists(atPath: usageFile.path))
+        #expect(artifactsUpdate.moves.allSatisfy { !fileManager.fileExists(atPath: $0.stagedURL.path) })
+        #expect(artifactsUpdate.manifestURL.map { !fileManager.fileExists(atPath: $0.path) } == true)
+    }
+
+    @Test
+    func `transaction owned isolation completes interrupted credential removal`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-removal-owned-isolation-\(UUID().uuidString)", isDirectory: true)
         let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
         let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
         try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
@@ -1278,6 +1335,8 @@ struct CLIProxyAPITransactionRecoveryTests {
             stateRoot: root,
             expectedGeneration: generationUpdate.generation,
             fileManager: fileManager,
+            disconnectedStateAfterRollback: false,
+            removalIsolationPublished: false,
             removalCredentialsCleared: false))
         #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
             generationUpdate,
@@ -1286,9 +1345,35 @@ struct CLIProxyAPITransactionRecoveryTests {
             true,
             stateRoot: root,
             fileManager: fileManager))
+        #expect(CostUsageCacheLocations.markCLIProxyAPIArtifactsRemovalIsolationPublished(
+            artifactsUpdate,
+            fileManager: fileManager))
 
-        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root, fileManager: fileManager) {}
+        let didRecoverConfiguration = LockIsolated(false)
+        #expect(throws: CocoaError.self) {
+            try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                stateRoot: root,
+                fileManager: fileManager)
+            {
+                didRecoverConfiguration.setValue(true)
+                return false
+            } operation: {}
+        }
+        #expect(didRecoverConfiguration.value)
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
+        #expect(artifactsUpdate.moves.allSatisfy { fileManager.fileExists(atPath: $0.stagedURL.path) })
+        #expect(artifactsUpdate.manifestURL.map { fileManager.fileExists(atPath: $0.path) } == true)
 
+        didRecoverConfiguration.setValue(false)
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: root,
+            fileManager: fileManager)
+        {
+            didRecoverConfiguration.setValue(true)
+            return true
+        } operation: {}
+
+        #expect(didRecoverConfiguration.value)
         #expect(!fileManager.fileExists(atPath: usageFile.path))
         #expect(artifactsUpdate.moves.allSatisfy { !fileManager.fileExists(atPath: $0.stagedURL.path) })
         #expect(artifactsUpdate.manifestURL.map { !fileManager.fileExists(atPath: $0.path) } == true)

@@ -46,6 +46,7 @@ public enum CostUsageCacheLocations {
         let disconnectedStateAfterRollback: Bool?
         let forceRollback: Bool?
         let rollbackCredentialsRestored: Bool?
+        let removalIsolationPublished: Bool?
         let removalCredentialsCleared: Bool?
     }
 
@@ -115,11 +116,20 @@ public enum CostUsageCacheLocations {
     static func withCLIProxyAPIInterprocessLock<T>(
         stateRoot: URL?,
         fileManager: FileManager = .default,
+        recoverRemovalConfiguration: (() -> Bool)? = nil,
         operation: () throws -> T) throws -> T
     {
         let descriptor = try self.acquireCLIProxyAPILock(stateRoot: stateRoot, fileManager: fileManager)
         defer { self.releaseCLIProxyAPILock(descriptor) }
-        guard self.recoverCLIProxyAPIArtifactsTransaction(stateRoot: stateRoot, fileManager: fileManager) else {
+        guard self.recoverCLIProxyAPIArtifactsTransaction(
+            stateRoot: stateRoot,
+            fileManager: fileManager,
+            recoverRemovalConfiguration: recoverRemovalConfiguration ?? {
+                CLIProxyAPIConnectionSettingsStore.recoverInterruptedRemovalUnserialized(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+            })
+        else {
             throw CocoaError(.fileReadUnknown)
         }
         return try operation()
@@ -128,11 +138,20 @@ public enum CostUsageCacheLocations {
     static func withCLIProxyAPIInterprocessLock<T>(
         stateRoot: URL?,
         fileManager: FileManager = .default,
+        recoverRemovalConfiguration: (() -> Bool)? = nil,
         operation: () async throws -> T) async throws -> T
     {
         let descriptor = try self.acquireCLIProxyAPILock(stateRoot: stateRoot, fileManager: fileManager)
         defer { self.releaseCLIProxyAPILock(descriptor) }
-        guard self.recoverCLIProxyAPIArtifactsTransaction(stateRoot: stateRoot, fileManager: fileManager) else {
+        guard self.recoverCLIProxyAPIArtifactsTransaction(
+            stateRoot: stateRoot,
+            fileManager: fileManager,
+            recoverRemovalConfiguration: recoverRemovalConfiguration ?? {
+                CLIProxyAPIConnectionSettingsStore.recoverInterruptedRemovalUnserialized(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+            })
+        else {
             throw CocoaError(.fileReadUnknown)
         }
         return try await operation()
@@ -194,6 +213,7 @@ public enum CostUsageCacheLocations {
         fileManager: FileManager,
         disconnectedStateAfterCommit: Bool? = nil,
         disconnectedStateAfterRollback: Bool? = nil,
+        removalIsolationPublished: Bool? = nil,
         removalCredentialsCleared: Bool? = nil,
         prepareState: () -> Bool = { true }) -> CLIProxyAPIArtifactsUpdate?
     {
@@ -221,6 +241,7 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: disconnectedStateAfterRollback,
             forceRollback: nil,
             rollbackCredentialsRestored: nil,
+            removalIsolationPublished: removalIsolationPublished,
             removalCredentialsCleared: removalCredentialsCleared)
         do {
             try fileManager.createDirectory(
@@ -304,6 +325,7 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
             forceRollback: true,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
+            removalIsolationPublished: manifest.removalIsolationPublished,
             removalCredentialsCleared: manifest.removalCredentialsCleared)
         do {
             try JSONEncoder().encode(rollbackManifest).write(to: manifestURL, options: [.atomic])
@@ -331,6 +353,7 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
             forceRollback: true,
             rollbackCredentialsRestored: true,
+            removalIsolationPublished: manifest.removalIsolationPublished,
             removalCredentialsCleared: manifest.removalCredentialsCleared)
         do {
             try JSONEncoder().encode(restoredManifest).write(to: manifestURL, options: [.atomic])
@@ -360,9 +383,40 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
+            removalIsolationPublished: manifest.removalIsolationPublished,
             removalCredentialsCleared: true)
         do {
             try JSONEncoder().encode(clearedManifest).write(to: manifestURL, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    static func markCLIProxyAPIArtifactsRemovalIsolationPublished(
+        _ update: CLIProxyAPIArtifactsUpdate,
+        fileManager: FileManager) -> Bool
+    {
+        guard let manifestURL = update.manifestURL else { return true }
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(CLIProxyAPIArtifactsTransactionManifest.self, from: data)
+        else { return false }
+        guard manifest.forceRollback != true else { return false }
+        guard manifest.removalIsolationPublished == false else {
+            return manifest.removalIsolationPublished == true
+        }
+        let isolatedManifest = CLIProxyAPIArtifactsTransactionManifest(
+            expectedGeneration: manifest.expectedGeneration,
+            moves: manifest.moves,
+            disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
+            disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            forceRollback: manifest.forceRollback,
+            rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
+            removalIsolationPublished: true,
+            removalCredentialsCleared: manifest.removalCredentialsCleared)
+        do {
+            try JSONEncoder().encode(isolatedManifest).write(to: manifestURL, options: [.atomic])
             return true
         } catch {
             return false
@@ -411,7 +465,8 @@ public enum CostUsageCacheLocations {
     @discardableResult
     static func recoverCLIProxyAPIArtifactsTransaction(
         stateRoot: URL?,
-        fileManager: FileManager = .default) -> Bool
+        fileManager: FileManager = .default,
+        recoverRemovalConfiguration: (() -> Bool)? = nil) -> Bool
     {
         let manifestURL = self.cliProxyAPIArtifactsTransactionURL(
             stateRoot: stateRoot,
@@ -438,10 +493,31 @@ public enum CostUsageCacheLocations {
         let didCommit = manifest.forceRollback != true &&
             self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
             manifest.expectedGeneration
-        if didCommit, manifest.removalCredentialsCleared == false {
-            if self.isCLIProxyAPIExplicitlyDisconnected(stateRoot: stateRoot, fileManager: fileManager) {
-                return self.discardCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+        if didCommit, manifest.removalIsolationPublished != nil, manifest.removalIsolationPublished != true {
+            guard self.setCLIProxyAPIExplicitlyDisconnected(
+                manifest.disconnectedStateAfterRollback ?? true,
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            else { return false }
+            return self.restoreCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+        }
+        if didCommit, manifest.removalIsolationPublished == true, manifest.removalCredentialsCleared != true {
+            let recoverRemovalConfiguration = recoverRemovalConfiguration ?? {
+                CLIProxyAPIConnectionSettingsStore.recoverInterruptedRemovalUnserialized(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
             }
+            guard self.setCLIProxyAPIExplicitlyDisconnected(
+                true,
+                stateRoot: stateRoot,
+                fileManager: fileManager),
+                recoverRemovalConfiguration(),
+                self.markCLIProxyAPIArtifactsRemovalCredentialsCleared(update, fileManager: fileManager)
+            else { return false }
+            return self.discardCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+        }
+        // Recover transactions written before removal-isolation provenance was added conservatively.
+        if didCommit, manifest.removalIsolationPublished == nil, manifest.removalCredentialsCleared == false {
             guard self.setCLIProxyAPIExplicitlyDisconnected(
                 true,
                 stateRoot: stateRoot,

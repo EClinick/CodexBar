@@ -923,6 +923,8 @@ public enum CLIProxyAPIConnectionSettingsStore {
             stateRoot: stateRoot,
             expectedGeneration: generationUpdate.generation,
             fileManager: fileManager,
+            disconnectedStateAfterRollback: snapshot.wasDisconnected,
+            removalIsolationPublished: false,
             removalCredentialsCleared: false)
         else { return .configurationRemovalFailed }
 
@@ -948,8 +950,16 @@ public enum CLIProxyAPIConnectionSettingsStore {
             rollback()
             return .configurationRemovalFailed
         }
-        // Publish the telemetry invalidation before deleting credentials. Recovery keeps an interrupted
-        // removal disconnected until credential deletion has also been recorded durably.
+        guard operations.setDisconnectedState(true),
+              CostUsageCacheLocations.markCLIProxyAPIArtifactsRemovalIsolationPublished(
+                  artifactsUpdate,
+                  fileManager: fileManager)
+        else {
+            rollback()
+            return .configurationRemovalFailed
+        }
+        // Isolation is transaction-owned and durable before Keychain deletion. Recovery can now finish
+        // deletion without confusing a disconnect marker that predated this removal.
         guard operations.clearConfiguration() else {
             rollback()
             return .configurationRemovalFailed
@@ -964,6 +974,25 @@ public enum CLIProxyAPIConnectionSettingsStore {
         return CostUsageCacheLocations.discardCLIProxyAPIArtifactsUpdate(
             artifactsUpdate,
             fileManager: fileManager) ? .removed : .telemetryCleanupFailed
+    }
+
+    static func recoverInterruptedRemovalUnserialized(
+        stateRoot: URL?,
+        fileManager: FileManager) -> Bool
+    {
+        self.clearUnserialized(
+            isDisconnected: {
+                CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+            },
+            setDisconnectedState: {
+                CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+                    $0,
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+            },
+            clearConfiguration: { KeychainCacheStore.clearResult(key: self.key) })
     }
 
     private static func clearUnserialized() -> Bool {

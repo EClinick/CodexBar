@@ -3,6 +3,25 @@ import Foundation
 extension CostUsageScanner {
     // MARK: - Claude
 
+    private final class ClaudeReportMemoHitObserverStore: @unchecked Sendable {
+        let observer: () -> Void
+
+        init(observer: @escaping () -> Void) {
+            self.observer = observer
+        }
+    }
+
+    @TaskLocal private static var claudeReportMemoHitObserverStore: ClaudeReportMemoHitObserverStore?
+
+    static func withClaudeReportMemoHitObserverForTesting<T>(
+        _ observer: @escaping () -> Void,
+        operation: () throws -> T) rethrows -> T
+    {
+        try self.$claudeReportMemoHitObserverStore.withValue(.init(observer: observer)) {
+            try operation()
+        }
+    }
+
     private struct ClaudeTokens {
         let input: Int
         let cacheRead: Int
@@ -1045,8 +1064,16 @@ extension CostUsageScanner {
            priorMemo.sourceInventory == sourceInventory,
            priorMemo.reportKey == reportKey
         {
+            self.claudeReportMemoHitObserverStore?.observer()
             try checkCancellation?()
-            return priorMemo.report
+            return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+                stateRoot: options.cacheRoot)
+            {
+                guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+                    stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
+                else { throw CancellationError() }
+                return priorMemo.report
+            }
         }
 
         var cache = CostUsageClaudeCacheIO.load(
