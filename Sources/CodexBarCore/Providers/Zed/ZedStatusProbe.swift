@@ -244,6 +244,9 @@ public struct ZedKeychainCredentialsReader: ZedCredentialsReading, Sendable {
     public init() {}
 
     public func loadCredentials(serviceURL: String) throws -> ZedCredentials? {
+        guard !KeychainAccessGate.isDisabled else {
+            throw ZedStatusProbeError.keychainUnavailable
+        }
         if let credentials = try self.loadInternetPasswordCredentials(server: serviceURL) {
             return credentials
         }
@@ -332,7 +335,7 @@ public struct ZedStatusProbe: Sendable {
             .appendingPathComponent(".config/zed/settings.json")
     }
 
-    private static let logger = CodexBarLog.logger(LogCategories.zed)
+    private static let logger = CodexBarLog.logger(LogCategories.provider(.zed))
 
     private let credentialsReader: any ZedCredentialsReading
     private let transport: any ProviderHTTPTransport

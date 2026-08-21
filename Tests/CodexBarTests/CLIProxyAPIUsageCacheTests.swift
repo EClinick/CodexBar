@@ -57,7 +57,7 @@ struct CLIProxyAPIUsageCacheTests {
                 CostUsageCacheLocations.cliProxyAPIPendingFileName))
         }
         for directory in [legacy, durable] {
-            let claudeCache = CostUsageCacheIO.cacheFileURL(
+            let claudeCache = CostUsageClaudeCacheIO.cacheFileURL(
                 provider: .claude,
                 cacheRoot: directory.deletingLastPathComponent())
             try Data("derived attribution".utf8).write(to: claudeCache)
@@ -76,7 +76,7 @@ struct CLIProxyAPIUsageCacheTests {
                 CostUsageCacheLocations.cliProxyAPIUsageFileName).path))
             #expect(!fileManager.fileExists(atPath: directory.appendingPathComponent(
                 CostUsageCacheLocations.cliProxyAPIPendingFileName).path))
-            #expect(!fileManager.fileExists(atPath: CostUsageCacheIO.cacheFileURL(
+            #expect(!fileManager.fileExists(atPath: CostUsageClaudeCacheIO.cacheFileURL(
                 provider: .claude,
                 cacheRoot: directory.deletingLastPathComponent()).path))
         }

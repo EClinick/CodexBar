@@ -64,6 +64,7 @@ public enum BinaryLocator {
         fileManager: FileManager = .default,
         home: String = NSHomeDirectory()) -> String?
     {
+        // Provider-specific by design: This named resolver supplies Claude's actual CLI executable name.
         self.resolveBinary(
             name: "claude",
             overrideKey: "CLAUDE_CLI_PATH",
@@ -151,6 +152,7 @@ public enum BinaryLocator {
         fileManager: FileManager = .default,
         home: String = NSHomeDirectory()) -> String?
     {
+        // Provider-specific by design: This named resolver supplies Codex's actual CLI executable name.
         self.resolveBinary(
             name: "codex",
             overrideKey: "CODEX_CLI_PATH",
@@ -193,6 +195,7 @@ public enum BinaryLocator {
         {
             return override
         }
+        // Provider-specific by design: This named resolver supplies Gemini's actual CLI executable name.
         return self.resolveBinary(
             name: "gemini",
             overrideKey: "GEMINI_CLI_PATH",
@@ -213,6 +216,7 @@ public enum BinaryLocator {
         fileManager: FileManager = .default,
         home: String = NSHomeDirectory()) -> String?
     {
+        // Provider-specific by design: This named resolver supplies Grok's actual CLI executable name.
         self.resolveBinary(
             name: "grok",
             overrideKey: "GROK_CLI_PATH",
@@ -234,6 +238,7 @@ public enum BinaryLocator {
         fileManager: FileManager = .default,
         home: String = NSHomeDirectory()) -> String?
     {
+        // Provider-specific by design: This named resolver supplies Amp's actual CLI executable name.
         self.resolveBinary(
             name: "amp",
             overrideKey: "AMP_CLI_PATH",
@@ -314,6 +319,31 @@ public enum BinaryLocator {
             loginPATH: loginPATH,
             commandV: commandV,
             aliasResolver: aliasResolver,
+            fileManager: fileManager,
+            home: home)
+    }
+
+    public static func resolveKiroCLIBinary(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        loginPATH: [String]? = LoginShellPathCache.shared.current,
+        commandV: (String, String?, TimeInterval, FileManager) -> String? = ShellCommandLocator.commandV,
+        aliasResolver: (String, String?, TimeInterval, FileManager, String) -> String? = ShellCommandLocator
+            .resolveAlias,
+        fileManager: FileManager = .default,
+        home: String = NSHomeDirectory()) -> String?
+    {
+        self.resolveBinary(
+            name: "kiro-cli",
+            overrideKey: "KIRO_CLI_PATH",
+            env: env,
+            loginPATH: loginPATH,
+            commandV: commandV,
+            aliasResolver: aliasResolver,
+            wellKnownPaths: [
+                "\(home)/.local/bin/kiro-cli",
+                "/opt/homebrew/bin/kiro-cli",
+                "/usr/local/bin/kiro-cli",
+            ],
             fileManager: fileManager,
             home: home)
     }
@@ -565,7 +595,7 @@ public enum CodexLaunchPreflight {
             bytes == [0xCA, 0xFE, 0xBA, 0xBF]
     }
 
-    private static func spctlAssessment(path: String, timeout: TimeInterval = 2.0) -> GatekeeperAssessment? {
+    private static func spctlAssessment(path: String, timeout: TimeInterval = 5.0) -> GatekeeperAssessment? {
         let spctlPath = "/usr/sbin/spctl"
         guard FileManager.default.isExecutableFile(atPath: spctlPath) else { return nil }
 

@@ -31,6 +31,7 @@ struct ProviderSettingsDescriptorTests {
         var seenToggleIDs: Set<String> = []
         var seenActionIDs: Set<String> = []
         var seenPickerIDs: Set<String> = []
+        var seenSettingsActionGroupIDs: Set<String> = []
 
         for provider in UsageProvider.allCases {
             let context = fixture.settingsContext(provider: provider)
@@ -51,7 +52,48 @@ struct ProviderSettingsDescriptorTests {
                 #expect(!seenPickerIDs.contains(picker.id))
                 seenPickerIDs.insert(picker.id)
             }
+
+            let actionGroups = impl.settingsActions(context: context)
+            for actionGroup in actionGroups {
+                #expect(!seenSettingsActionGroupIDs.contains(actionGroup.id))
+                seenSettingsActionGroupIDs.insert(actionGroup.id)
+
+                for action in actionGroup.actions {
+                    #expect(!seenActionIDs.contains(action.id))
+                    seenActionIDs.insert(action.id)
+                }
+            }
         }
+    }
+
+    @Test
+    func `kiro reauthentication waits for the explicit settings action`() async throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-kiro-login")
+        var loginCount = 0
+        let context = fixture.settingsContext(provider: .kiro) {
+            loginCount += 1
+        }
+
+        let groups = KiroProviderImplementation().settingsActions(context: context)
+        let group = try #require(groups.first(where: { $0.id == "kiro-cli-login" }))
+        let action = try #require(group.actions.first(where: { $0.id == "kiro-cli-login-reauthenticate" }))
+
+        #expect(loginCount == 0)
+        #expect(group.title.contains("Kiro"))
+        #expect(group.subtitle.contains("kiro-cli"))
+        #expect(action.title == "Re-authenticate")
+
+        await action.perform()
+
+        #expect(loginCount == 1)
+    }
+
+    @Test
+    func `codex reauthentication remains account scoped`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-codex-login-scope")
+        let context = fixture.settingsContext(provider: .codex)
+
+        #expect(CodexProviderImplementation().settingsActions(context: context).isEmpty)
     }
 
     @Test
@@ -65,8 +107,28 @@ struct ProviderSettingsDescriptorTests {
 
         #expect(project.title == "Project ID")
         #expect(project.subtitle.contains(OpenAIAPISettingsReader.projectIDEnvironmentKey))
-        #expect(fixture.settings.openAIAPIProjectID == "proj_abc")
+        #expect(fixture.settings[providerConfig: .openai, field: .secretWorkspace(logField: "projectID")] == "proj_abc")
         #expect(fixture.settings.providerConfig(for: .openai)?.sanitizedWorkspaceID == "proj_abc")
+    }
+
+    @Test
+    func `openrouter exposes a secure management key setting`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-openrouter-management")
+        let context = fixture.settingsContext(provider: .openrouter)
+
+        let fields = OpenRouterProviderImplementation().settingsFields(context: context)
+        let managementKey = try #require(fields.first(where: { $0.id == "openrouter-management-api-key" }))
+        managementKey.binding.wrappedValue = " fixture-management-key "
+
+        #expect(managementKey.title == "Management API key")
+        #expect(managementKey.kind == .secure)
+        #expect(managementKey.binding.wrappedValue == "fixture-management-key")
+        #expect(fixture.settings.providerConfig(for: .openrouter)?.pluginSecrets?[
+            OpenRouterSettingsReader.managementAPIKeyEnvironmentKey,
+        ] == "fixture-management-key")
+
+        managementKey.binding.wrappedValue = " "
+        #expect(fixture.settings.providerConfig(for: .openrouter)?.pluginSecrets == nil)
     }
 
     @Test
@@ -342,6 +404,26 @@ struct ProviderSettingsDescriptorTests {
 
         fixture.settings.showOptionalCreditsAndExtraUsage = false
         #expect(routinesToggle.isEnabled?() == false)
+    }
+
+    @Test
+    func `claude model scoped widget usage toggle is default off and independent`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-claude-model-scoped-widget")
+        let context = fixture.settingsContext(provider: .claude)
+        let toggles = ClaudeProviderImplementation().settingsToggles(context: context)
+        let widgetToggle = try #require(toggles.first {
+            $0.id == "claude-model-scoped-weekly-usage-visible"
+        })
+
+        #expect(widgetToggle.binding.wrappedValue == false)
+        #expect(widgetToggle.isEnabled == nil)
+        #expect(widgetToggle.subtitle.contains("Fable"))
+
+        widgetToggle.binding.wrappedValue = true
+        #expect(fixture.settings.claudeModelScopedWeeklyUsageVisible)
+
+        fixture.settings.showOptionalCreditsAndExtraUsage = false
+        #expect(widgetToggle.isEnabled == nil)
     }
 
     @Test
@@ -745,25 +827,16 @@ extension ProviderSettingsDescriptorTests {
     func `deepseek profile transition survives selected api token cache invalidation`() throws {
         let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-deepseek-token-transition")
         fixture.settings.addTokenAccount(provider: .deepseek, label: "cv", token: "test-token")
-        let snapshot = UsageSnapshot(
+        let snapshot = try UsageSnapshot(
             primary: RateWindow(
                 usedPercent: 0,
                 windowMinutes: nil,
                 resetsAt: nil,
                 resetDescription: "$8.06 (Paid: $8.06 / Granted: $0.00)"),
             secondary: nil,
-            deepseekUsage: DeepSeekUsageSummary(
-                todayTokens: 100,
-                currentMonthTokens: 100,
-                todayCost: 0.1,
-                currentMonthCost: 0.1,
-                requestCount: 1,
-                currentMonthRequestCount: 1,
-                topModel: "deepseek-chat",
-                categoryBreakdown: [],
-                daily: [],
-                currency: "USD",
-                updatedAt: Date()),
+            details: [ProviderDetailSection(rows: [
+                ProviderDetailSection.Row(label: "Today", value: "$0.1000 · 100 tokens"),
+            ])],
             deepseekDetailedUsageState: .available,
             deepseekPlatformProfiles: [
                 DeepSeekPlatformProfile(id: "chrome:Default", name: "Chrome — Personal"),
@@ -796,7 +869,7 @@ extension ProviderSettingsDescriptorTests {
 
         fixture.store.refreshingProviders.remove(.deepseek)
         #expect(fixture.store.presentationSnapshot(for: .deepseek)?.primary != nil)
-        #expect(fixture.store.presentationSnapshot(for: .deepseek)?.deepseekUsage == nil)
+        #expect(fixture.store.presentationSnapshot(for: .deepseek)?.details.isEmpty == true)
 
         fixture.store.clearDeepSeekProfileTransition()
         #expect(fixture.store.presentationSnapshot(for: .deepseek) == nil)
@@ -897,25 +970,16 @@ extension ProviderSettingsDescriptorTests {
     @Test
     func `deepseek selected account failure preserves its balance only transition`() async throws {
         let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-deepseek-transition-failure")
-        fixture.store.snapshots[.deepseek] = UsageSnapshot(
+        fixture.store.snapshots[.deepseek] = try UsageSnapshot(
             primary: RateWindow(
                 usedPercent: 0,
                 windowMinutes: nil,
                 resetsAt: nil,
                 resetDescription: "$8.06"),
             secondary: nil,
-            deepseekUsage: DeepSeekUsageSummary(
-                todayTokens: 100,
-                currentMonthTokens: 100,
-                todayCost: nil,
-                currentMonthCost: nil,
-                requestCount: 1,
-                currentMonthRequestCount: 1,
-                topModel: nil,
-                categoryBreakdown: [],
-                daily: [],
-                currency: "USD",
-                updatedAt: Date()),
+            details: [ProviderDetailSection(rows: [
+                ProviderDetailSection.Row(label: "Today", value: "100 tokens"),
+            ])],
             deepseekDetailedUsageState: .available,
             updatedAt: Date())
         fixture.store.beginDeepSeekProfileTransition()
@@ -930,7 +994,7 @@ extension ProviderSettingsDescriptorTests {
 
         #expect(fixture.store.deepseekProfileTransitionSnapshot != nil)
         #expect(fixture.store.presentationSnapshot(for: .deepseek)?.primary?.resetDescription == "$8.06")
-        #expect(fixture.store.presentationSnapshot(for: .deepseek)?.deepseekUsage == nil)
+        #expect(fixture.store.presentationSnapshot(for: .deepseek)?.details.isEmpty == true)
     }
 
     @Test
@@ -1033,7 +1097,7 @@ extension ProviderSettingsDescriptorTests {
         let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-deepseek-account-usage")
         fixture.settings.showOptionalCreditsAndExtraUsage = true
         fixture.settings.costSummaryOption = .inlineSummary
-        #expect(fixture.settings.costSummaryShowsInlineDashboard(for: .deepseek))
+        #expect(fixture.settings.costSummaryShowsInline(for: .deepseek))
         fixture.settings.addTokenAccount(provider: .deepseek, label: "Personal", token: "token-1")
         fixture.settings.addTokenAccount(provider: .deepseek, label: "Work", token: "token-2")
         let accounts = fixture.settings.tokenAccounts(for: .deepseek)
@@ -1049,15 +1113,15 @@ extension ProviderSettingsDescriptorTests {
             settings: fixture.settings,
             override: TokenAccountOverride(provider: .deepseek, account: inactive)))
         fixture.settings.costSummaryOption = .costSubmenu
-        #expect(fixture.settings.costSummaryShowsInlineDashboard(for: .deepseek))
+        #expect(!fixture.settings.costSummaryShowsInline(for: .deepseek))
         #expect(ProviderTokenAccountSelection.shouldIncludeOptionalUsage(
             provider: .deepseek,
             settings: fixture.settings,
             override: TokenAccountOverride(provider: .deepseek, account: active)))
         fixture.settings.costSummaryOption = .both
-        #expect(fixture.settings.costSummaryShowsInlineDashboard(for: .deepseek))
+        #expect(fixture.settings.costSummaryShowsInline(for: .deepseek))
         fixture.settings.costSummaryOption = .off
-        #expect(!fixture.settings.costSummaryShowsInlineDashboard(for: .deepseek))
+        #expect(!fixture.settings.costSummaryShowsInline(for: .deepseek))
         #expect(!ProviderTokenAccountSelection.shouldIncludeOptionalUsage(
             provider: .deepseek,
             settings: fixture.settings,
@@ -1128,7 +1192,10 @@ extension ProviderSettingsDescriptorTests {
         private let state = ProviderSettingsContextState()
 
         @MainActor
-        func settingsContext(provider: UsageProvider) -> ProviderSettingsContext {
+        func settingsContext(
+            provider: UsageProvider,
+            runLoginFlow: @escaping () async -> Void = {}) -> ProviderSettingsContext
+        {
             let settings = self.settings
             let store = self.store
             let state = self.state
@@ -1163,7 +1230,7 @@ extension ProviderSettingsDescriptorTests {
                     }
                 },
                 requestConfirmation: { _ in },
-                runLoginFlow: {})
+                runLoginFlow: runLoginFlow)
         }
 
         @MainActor

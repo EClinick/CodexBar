@@ -53,7 +53,7 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
                 })
         }
         #expect(replacedConfiguration)
-        #expect(CostUsageCacheIO.load(
+        #expect(CostUsageClaudeCacheIO.load(
             provider: .claude,
             cacheRoot: env.cacheRoot,
             calendar: options.calendar).lastScanUnixMs == 0)
@@ -71,7 +71,7 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
         cache.scanSinceKey = "2026-07-24"
         cache.scanUntilKey = "2026-07-24"
         cache.days = ["2026-07-24": ["claude-sonnet-4-6": [100, 0, 0, 5, 0, 1]]]
-        CostUsageCacheIO.save(
+        _ = try CostUsageClaudeCacheIO.save(
             provider: .claude,
             cache: cache,
             cacheRoot: env.cacheRoot,
@@ -273,9 +273,11 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
             includePiSessions: false,
             scannerOptions: options)
         #expect(disconnectedClaude.daily.first?.totalTokens == 105)
-        #expect(disconnectedClaude.daily.first?.modelBreakdowns?.first?.attribution == nil)
-        #expect(await CostUsageFetcher.loadCachedCodexTokenSnapshot(
+        #expect(disconnectedClaude.daily.first?.modelBreakdowns?.first?.attribution?.route != .cliProxyAPI)
+        let cachedCodex = await CostUsageFetcher.loadCachedCodexTokenSnapshot(
             now: day,
-            scannerOptions: options) == nil)
+            scannerOptions: options)
+        #expect(cachedCodex?.daily.isEmpty == true)
+        #expect(cachedCodex?.last30DaysTokens == 0)
     }
 }

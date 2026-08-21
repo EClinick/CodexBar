@@ -440,7 +440,8 @@ public enum CostUsageCacheLocations {
             [
                 directory.appendingPathComponent(self.cliProxyAPIUsageFileName, isDirectory: false),
                 directory.appendingPathComponent(self.cliProxyAPIPendingFileName, isDirectory: false),
-                CostUsageCacheIO.cacheFileURL(
+                // Provider-specific by design: the attributed proxy rows are persisted in the Claude scan cache.
+                CostUsageClaudeCacheIO.cacheFileURL(
                     provider: .claude,
                     cacheRoot: directory.deletingLastPathComponent()),
             ]

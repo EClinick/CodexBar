@@ -20,6 +20,21 @@ extension UsageStore {
             !self.settings.claudeSwapExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// The active claude-swap account's usage snapshot when the adapter owns Claude
+    /// account presentation (issue #2731: with two accounts the menu shows adapter
+    /// cards while the bar rendered the ambient snapshot, which can have no usable
+    /// windows). Returns nil — keep the ambient snapshot — when the adapter is below
+    /// its presentation threshold or the active account reports no usable usage.
+    func claudeSwapMenuBarSnapshotOverride(for instanceID: ProviderInstanceID) -> UsageSnapshot? {
+        guard instanceID == UsageProvider.claude.instanceID else { return nil }
+        guard ClaudeSwapMenuPrecedence.prefersClaudeSwap(
+            provider: .claude,
+            accountCount: self.claudeSwapAccountSnapshots.count,
+            showSingleAccount: self.settings.claudeSwapShowSingleAccount)
+        else { return nil }
+        return self.claudeSwapAccountSnapshots.first(where: \.isActive)?.snapshot
+    }
+
     func clearClaudeSwapAccountState() {
         let hadState = !self.claudeSwapAccountSnapshots.isEmpty ||
             self.claudeSwapLastRefreshAt != nil || self.claudeSwapLastError != nil ||
@@ -59,10 +74,14 @@ extension UsageStore {
 
         do {
             let list = try await ClaudeSwapAccountReader.readAccountList(executablePath: executablePath)
-            let snapshots = ClaudeSwapAccountProjection.accountSnapshots(from: list)
+            let snapshots = ClaudeSwapAccountProjection.accountSnapshots(
+                from: list,
+                previousAccounts: ClaudeSwapRetainedUsageStore.previousAccounts(
+                    inMemory: self.claudeSwapAccountSnapshots))
             guard self.isCurrentClaudeSwapRefresh(executablePath: executablePath, generation: generation) else {
                 return
             }
+            ClaudeSwapRetainedUsageStore.save(snapshots)
             self.claudeSwapAccountSnapshots = snapshots
             self.claudeSwapLastRefreshAt = Date()
             self.claudeSwapLastError = nil

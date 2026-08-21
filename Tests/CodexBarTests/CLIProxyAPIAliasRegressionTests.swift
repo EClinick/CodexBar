@@ -96,6 +96,38 @@ struct CLIProxyAPIAliasRegressionTests {
     }
 
     @Test
+    func `ambiguous live batch match preserves durable cached telemetry`() {
+        let telemetry = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(provider: "codex", authType: .oauth, model: "gpt-5.5"),
+            evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider])
+        let requestLogOnly = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            evidence: [.cliProxyRequestLog, .modelProvider])
+
+        #expect(CostUsageScanner.shouldPreserveCachedCLIProxyAPIAttribution(
+            telemetry,
+            allowCached: true,
+            hasMatchingObservation: true))
+        #expect(!CostUsageScanner.shouldPreserveCachedCLIProxyAPIAttribution(
+            requestLogOnly,
+            allowCached: true,
+            hasMatchingObservation: true))
+        #expect(CostUsageScanner.shouldPreserveCachedCLIProxyAPIAttribution(
+            requestLogOnly,
+            allowCached: true,
+            hasMatchingObservation: false))
+        #expect(!CostUsageScanner.shouldPreserveCachedCLIProxyAPIAttribution(
+            telemetry,
+            allowCached: false,
+            hasMatchingObservation: false))
+    }
+
+    @Test
     func `codex oauth alias keeps direct historical usage with Claude`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

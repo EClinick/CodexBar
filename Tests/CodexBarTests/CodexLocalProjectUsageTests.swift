@@ -68,16 +68,19 @@ struct CodexLocalProjectUsageTests {
     func `local data scope avoids persisting raw Codex home paths`() {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("workspaces-private-home", isDirectory: true)
-        let scope = CodexLocalDataScope.resolve(options: CostUsageScanner.Options(
-            codexSessionsRoot: home.appendingPathComponent("sessions", isDirectory: true)))
+        let options = CostUsageScanner.Options(
+            codexSessionsRoot: home.appendingPathComponent("sessions", isDirectory: true))
+        let scope = CodexLocalDataScope.resolve(options: options)
+        let scopedOptions = scope.applying(to: options)
 
         #expect(scope.codexHome == home.standardizedFileURL)
         #expect(scope.identifier.hasPrefix("codex-workspaces:"))
         #expect(!scope.identifier.contains(home.path))
+        #expect(scopedOptions.codexTraceDatabaseURL == scope.stateDatabaseURL)
     }
 
     @Test
-    func `v10 cache remains untouched while v11 rebuilds and then refreshes incrementally`() throws {
+    func `predecessor cache remains untouched while SQLite builds and refreshes incrementally`() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
 
@@ -87,8 +90,8 @@ struct CodexLocalProjectUsageTests {
         let v10URL = costCacheRoot.appendingPathComponent("codex-v10.json", isDirectory: false)
         let v10Bytes = Data("recoverable-v10-cursor".utf8)
         try v10Bytes.write(to: v10URL)
-        let v11URL = CostUsageCacheIO.cacheFileURL(provider: .codex, cacheRoot: env.cacheRoot)
-        #expect(!FileManager.default.fileExists(atPath: v11URL.path))
+        let databaseURL = CostUsageStore(cacheRoot: env.cacheRoot).databaseURL
+        #expect(!FileManager.default.fileExists(atPath: databaseURL.path))
 
         try self.writeCodexUsageFile(
             env: env,
@@ -113,8 +116,8 @@ struct CodexLocalProjectUsageTests {
 
         #expect(first.data.first?.totalTokens == 130)
         #expect(try Data(contentsOf: v10URL) == v10Bytes)
-        #expect(FileManager.default.fileExists(atPath: v11URL.path))
-        #expect(CostUsageCacheIO.load(provider: .codex, cacheRoot: env.cacheRoot).files.count == 1)
+        #expect(FileManager.default.fileExists(atPath: databaseURL.path))
+        #expect(CostUsageStoreAccess.read(cacheRoot: env.cacheRoot).files.count == 1)
 
         try self.writeCodexUsageFile(
             env: env,
@@ -135,7 +138,7 @@ struct CodexLocalProjectUsageTests {
             options: options)
 
         #expect(warm.data.first?.totalTokens == 180)
-        #expect(CostUsageCacheIO.load(provider: .codex, cacheRoot: env.cacheRoot).files.count == 2)
+        #expect(CostUsageStoreAccess.read(cacheRoot: env.cacheRoot).files.count == 2)
         #expect(try Data(contentsOf: v10URL) == v10Bytes)
     }
 
@@ -331,7 +334,7 @@ struct CodexLocalProjectUsageTests {
             dayKey: dayKey,
             fixture: fixture,
             costNanos: 1)
-        CostUsageCacheIO.save(provider: .codex, cache: cache, cacheRoot: env.cacheRoot)
+        CostUsageStoreAccess.replace(cacheRoot: env.cacheRoot, cache: cache)
 
         let snapshot = try CodexLocalProjectUsageIndexer.buildSnapshotFromCostCache(
             now: day,
@@ -393,7 +396,7 @@ struct CodexLocalProjectUsageTests {
                 cached: 10,
                 output: 25),
             costNanos: 1)
-        CostUsageCacheIO.save(provider: .codex, cache: cache, cacheRoot: env.cacheRoot)
+        CostUsageStoreAccess.replace(cacheRoot: env.cacheRoot, cache: cache)
 
         let snapshot = try CodexLocalProjectUsageIndexer.buildSnapshotFromCostCache(
             now: day,
@@ -665,7 +668,7 @@ struct CodexLocalProjectUsageTests {
             dayKey: dayKey,
             fixture: fixture,
             costNanos: 1)
-        CostUsageCacheIO.save(provider: .codex, cache: cache, cacheRoot: env.cacheRoot)
+        CostUsageStoreAccess.replace(cacheRoot: env.cacheRoot, cache: cache)
         let snapshot = try CodexLocalProjectUsageIndexer.buildSnapshotFromCostCache(
             now: day,
             historyDays: 1,
@@ -683,7 +686,7 @@ struct CodexLocalProjectUsageTests {
             scannerOptions: options)) != nil)
 
         cache.codexPricingKey = "pricing-b"
-        CostUsageCacheIO.save(provider: .codex, cache: cache, cacheRoot: env.cacheRoot)
+        CostUsageStoreAccess.replace(cacheRoot: env.cacheRoot, cache: cache)
 
         #expect(CodexLocalProjectUsageIndexer.cachedSnapshot(now: day, historyDays: 1, options: .init(
             scannerOptions: options))?.total.totalTokens == 130)
@@ -731,7 +734,7 @@ struct CodexLocalProjectUsageTests {
                 cached: 0,
                 output: 20),
             costNanos: 1)
-        cache.files[env.root.appendingPathComponent("partial.jsonl").path] = self.makeCachedFileUsage(
+        var partialUsage = self.makeCachedFileUsage(
             dayKey: dayKey,
             fixture: CodexUsageFixture(
                 filename: "partial.jsonl",
@@ -741,7 +744,11 @@ struct CodexLocalProjectUsageTests {
                 cached: 0,
                 output: 20),
             costNanos: nil)
-        CostUsageCacheIO.save(provider: .codex, cache: cache, cacheRoot: env.cacheRoot)
+        let unavailableModel = "openai/unknown-test-model"
+        partialUsage.days = [dayKey: [unavailableModel: [80, 0, 20]]]
+        partialUsage.lastModel = unavailableModel
+        cache.files[env.root.appendingPathComponent("partial.jsonl").path] = partialUsage
+        CostUsageStoreAccess.replace(cacheRoot: env.cacheRoot, cache: cache)
 
         let snapshot = try CodexLocalProjectUsageIndexer.buildSnapshotFromCostCache(
             now: day,
@@ -814,7 +821,7 @@ struct CodexLocalProjectUsageTests {
             dayKey: dayKey,
             fixture: chatFixture,
             costNanos: 1)
-        CostUsageCacheIO.save(provider: .codex, cache: cache, cacheRoot: env.cacheRoot)
+        CostUsageStoreAccess.replace(cacheRoot: env.cacheRoot, cache: cache)
 
         let snapshot = try CodexLocalProjectUsageIndexer.buildSnapshotFromCostCache(
             now: day,
@@ -863,7 +870,7 @@ struct CodexLocalProjectUsageTests {
         cache.roots = CostUsageScanner.codexRootsFingerprint(options: options)
         cache.files[firstFileURL.path] = self.makeCachedFileUsage(dayKey: dayKey, fixture: firstFixture, costNanos: 1)
         cache.files[secondFileURL.path] = self.makeCachedFileUsage(dayKey: dayKey, fixture: secondFixture, costNanos: 1)
-        CostUsageCacheIO.save(provider: .codex, cache: cache, cacheRoot: env.cacheRoot)
+        CostUsageStoreAccess.replace(cacheRoot: env.cacheRoot, cache: cache)
 
         let recorder = ProgressRecorder()
         _ = try CodexLocalProjectUsageIndexer.buildSnapshotFromCostCache(
@@ -1466,7 +1473,7 @@ extension CodexLocalProjectUsageTests {
             dayKey: dayKey,
             fixture: unavailableFixture,
             costNanos: nil)
-        let unavailableModel = "openai/gpt-5.4-mini"
+        let unavailableModel = "openai/unknown-test-model"
         unavailableUsage.days = [dayKey: [unavailableModel: [20, 0, 0]]]
         unavailableUsage.lastModel = unavailableModel
 
@@ -1488,7 +1495,7 @@ extension CodexLocalProjectUsageTests {
             catalogOverride: .empty)
         let analytics = try #require(snapshot.modelsAnalytics?.allWorkspaces)
         let priced = try #require(analytics.rows.first { $0.id == "gpt-5.4" })
-        let unavailable = try #require(analytics.rows.first { $0.id == "gpt-5.4-mini" })
+        let unavailable = try #require(analytics.rows.first { $0.id == "unknown-test-model" })
 
         #expect(priced.cost.knownAmount == 0)
         #expect(priced.cost.pricedTokens == 10)

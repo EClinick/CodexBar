@@ -2,12 +2,11 @@ import CodexBarCore
 import Foundation
 
 extension SettingsStore {
-    func costSummaryShowsInlineDashboard(for provider: UsageProvider) -> Bool {
-        // DeepSeek has no cost submenu, so any enabled cost-summary style falls back to inline.
-        if provider == .deepseek {
-            return self.costUsageEnabled
-        }
-        return self.isCostUsageEffectivelyEnabled(for: provider) &&
+    func costSummaryShowsInline(for provider: UsageProvider) -> Bool {
+        // Provider-specific by design: Codex's local ledger can enable its summary without the global scanner.
+        let isEnabled = self.costUsageEnabled ||
+            (provider == .codex && self.codexLocalSessionCostLedgerEnabled)
+        return isEnabled &&
             self.costSummaryDisplayStyle.showsInlineSummary
     }
 
@@ -39,6 +38,7 @@ extension SettingsStore {
         homeDirectory: URL? = nil,
         workingDirectory: URL? = nil) -> Bool
     {
+        // Provider-specific by design: only Codex and Claude have local JSONL scanners that can auto-enable token cost.
         let home = homeDirectory ?? fileManager.homeDirectoryForCurrentUser
 
         func hasAnyJsonl(in root: URL) -> Bool {

@@ -187,7 +187,7 @@ struct KimiSettingsReaderTests {
             accessToken: "oauth",
             expiresAt: Date().addingTimeInterval(3600).timeIntervalSince1970)
 
-        let explicit = ProviderTokenResolver.kimiAPIResolution(environment: [
+        let explicit = ProviderTokenResolver.resolution(for: .kimi, kind: .secondary, environment: [
             "KIMI_CODE_API_KEY": "explicit",
             "KIMI_CODE_HOME": home.path,
         ])
@@ -204,7 +204,7 @@ struct KimiSettingsReaderTests {
                 key: "https://proxy.example.com",
             ]
             #expect(KimiSettingsReader.hasKimiCodeCredential(environment: environment) == false)
-            #expect(ProviderTokenResolver.kimiAPIResolution(environment: environment) == nil)
+            #expect(ProviderTokenResolver.resolution(for: .kimi, kind: .secondary, environment: environment) == nil)
         }
     }
 
@@ -295,7 +295,7 @@ struct KimiAPIFetchStrategyTests {
 
         #expect(KimiBrowserImportPolicy.allowsImport(offContext) == false)
         #expect(KimiBrowserImportPolicy.allowsImport(autoContext))
-        #expect(ProviderTokenResolver.kimiAuthResolution(environment: [:]) == nil)
+        #expect(ProviderTokenResolver.resolution(for: .kimi, environment: [:]) == nil)
     }
 
     @Test
@@ -827,6 +827,7 @@ struct KimiUsageResponseParsingTests {
         #expect(response.subscriptionBalance?.feature == "FEATURE_OMNI")
         #expect(response.subscriptionBalance?.type == "SUBSCRIPTION")
         #expect(response.subscriptionBalance?.amountUsedRatio == 1)
+        #expect(response.subscriptionBalance?.kimiCodeUsedRatio == 0.2854)
         #expect(response.subscriptionBalance?.expireTime == "2026-07-23T00:00:00Z")
         #expect(response.ratelimitCode7d?.ratio == 0.0946)
         #expect(response.ratelimitCode7d?.enabled == true)
@@ -851,6 +852,8 @@ struct KimiUsageResponseParsingTests {
           ]
         }
         """
+        // Keep the cancellation-ignoring request slower than the scaled wall-clock guard.
+        let subscriptionDelaySeconds = 0.5 * TestTimingBudget.slowdownFactor
         let transport = ProviderHTTPTransportHandler { request in
             let url = try #require(request.url)
             let response = try #require(HTTPURLResponse(
@@ -867,7 +870,7 @@ struct KimiUsageResponseParsingTests {
             }
 
             return await withCheckedContinuation { continuation in
-                DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+                DispatchQueue.global().asyncAfter(deadline: .now() + subscriptionDelaySeconds) {
                     continuation.resume(returning: (Data("{}".utf8), response))
                 }
             }
@@ -885,10 +888,12 @@ struct KimiUsageResponseParsingTests {
         #expect(usage.primary?.windowMinutes == KimiProviderDescriptor.weeklyWindowMinutes)
         #expect(usage.secondary?.usedPercent == 25)
         #expect(usage.extraRateWindows == nil)
-        #expect(elapsed < .milliseconds(250), "Subscription enrichment outlived its total budget: \(elapsed)")
+        #expect(
+            elapsed < TestTimingBudget.scaled(.milliseconds(250)),
+            "Subscription enrichment outlived its total budget: \(elapsed)")
 
         // Drain the deliberately cancellation-ignoring test request before the test exits.
-        try await Task.sleep(for: .milliseconds(550))
+        try await Task.sleep(for: TestTimingBudget.scaled(.milliseconds(550)))
     }
 
     @Test
@@ -1092,6 +1097,7 @@ struct KimiUsageSnapshotConversionTests {
             feature: "FEATURE_OMNI",
             type: "SUBSCRIPTION",
             amountUsedRatio: 1,
+            kimiCodeUsedRatio: nil,
             expireTime: "2026-07-23T00:00:00Z")
 
         let snapshot = KimiUsageSnapshot(
@@ -1103,7 +1109,7 @@ struct KimiUsageSnapshotConversionTests {
 
         let monthly = try #require(usageSnapshot.extraRateWindows?.first)
         #expect(monthly.id == "kimi-monthly")
-        #expect(monthly.title == "Monthly")
+        #expect(monthly.title == "Total usage")
         #expect(monthly.window.usedPercent == 100)
         #expect(monthly.window.windowMinutes == ProviderPaceCapability.monthlyWindowSentinelMinutes)
         #expect(monthly.window.resetsAt == Self.date("2026-07-23T00:00:00Z"))
@@ -1123,6 +1129,7 @@ struct KimiUsageSnapshotConversionTests {
             feature: "FEATURE_OMNI",
             type: "SUBSCRIPTION",
             amountUsedRatio: 0.7716,
+            kimiCodeUsedRatio: nil,
             expireTime: "2026-07-23T00:00:00Z")
 
         let snapshot = KimiUsageSnapshot(
@@ -1167,6 +1174,85 @@ struct KimiUsageSnapshotConversionTests {
     }
 
     @Test
+    func `hides code weekly window when it matches the primary weekly lane`() {
+        // Live Kimi responses report the same 7-day Code quota from both GetUsages (FEATURE_CODING
+        // detail) and GetSubscriptionStats (ratelimitCode7d); showing both rows duplicates one lane.
+        let now = Date()
+        let weeklyDetail = KimiUsageDetail(
+            limit: "100",
+            used: "29",
+            remaining: "71",
+            resetTime: "2026-08-13T17:02:44Z")
+        let subscriptionCodeWeeklyLimit = KimiSubscriptionRateLimit(
+            ratio: 0.2935,
+            enabled: true,
+            resetTime: "2026-08-13T17:02:43Z")
+
+        let snapshot = KimiUsageSnapshot(
+            weekly: weeklyDetail,
+            rateLimit: nil,
+            subscriptionBalance: nil,
+            subscriptionCodeWeeklyLimit: subscriptionCodeWeeklyLimit,
+            updatedAt: now)
+
+        #expect(snapshot.toUsageSnapshot().extraRateWindows == nil)
+    }
+
+    @Test
+    func `keeps code weekly window when the weekly detail is unreliable`() throws {
+        let now = Date()
+        let weeklyDetail = KimiUsageDetail(
+            limit: "100",
+            used: nil,
+            remaining: nil,
+            resetTime: nil)
+        let subscriptionCodeWeeklyLimit = KimiSubscriptionRateLimit(
+            ratio: 0,
+            enabled: true,
+            resetTime: nil)
+
+        let snapshot = KimiUsageSnapshot(
+            weekly: weeklyDetail,
+            rateLimit: nil,
+            subscriptionBalance: nil,
+            subscriptionCodeWeeklyLimit: subscriptionCodeWeeklyLimit,
+            updatedAt: now)
+        let usageSnapshot = snapshot.toUsageSnapshot()
+        let windows = try #require(usageSnapshot.extraRateWindows)
+
+        // The numeric-limit fallback creates an unreliable 0% primary lane with no duration; it must
+        // never suppress the subscription Code quota, which is the only reliable 7-day reading here.
+        #expect(usageSnapshot.primary?.windowMinutes == nil)
+        #expect(windows.map(\.id) == ["kimi-code-7d"])
+    }
+
+    @Test
+    func `keeps code weekly window when neither lane reports a reset time`() throws {
+        // Matching percentages alone cannot prove the lanes are the same quota: without reset
+        // evidence on both sides, two independent quotas could coincide, so keep the Code row.
+        let now = Date()
+        let weeklyDetail = KimiUsageDetail(
+            limit: "100",
+            used: "29",
+            remaining: "71",
+            resetTime: nil)
+        let subscriptionCodeWeeklyLimit = KimiSubscriptionRateLimit(
+            ratio: 0.2935,
+            enabled: true,
+            resetTime: nil)
+
+        let snapshot = KimiUsageSnapshot(
+            weekly: weeklyDetail,
+            rateLimit: nil,
+            subscriptionBalance: nil,
+            subscriptionCodeWeeklyLimit: subscriptionCodeWeeklyLimit,
+            updatedAt: now)
+        let windows = try #require(snapshot.toUsageSnapshot().extraRateWindows)
+
+        #expect(windows.map(\.id) == ["kimi-code-7d"])
+    }
+
+    @Test
     func `omits disabled and nonfinite subscription quota ratios`() {
         let weeklyDetail = KimiUsageDetail(
             limit: "2048",
@@ -1187,6 +1273,7 @@ struct KimiUsageSnapshotConversionTests {
                     feature: "FEATURE_OMNI",
                     type: "SUBSCRIPTION",
                     amountUsedRatio: .nan,
+                    kimiCodeUsedRatio: nil,
                     expireTime: nil),
                 subscriptionCodeWeeklyLimit: limit,
                 updatedAt: Date())
@@ -1371,7 +1458,7 @@ struct KimiTokenResolverTests {
     func `resolves token from environment`() {
         KeychainAccessGate.withTaskOverrideForTesting(true) {
             let env = ["KIMI_AUTH_TOKEN": "test.jwt.token"]
-            let token = ProviderTokenResolver.kimiAuthToken(environment: env)
+            let token = ProviderTokenResolver.token(for: .kimi, environment: env)
             #expect(token == "test.jwt.token")
         }
     }
@@ -1381,7 +1468,7 @@ struct KimiTokenResolverTests {
         // This test would require mocking the keychain.
         KeychainAccessGate.withTaskOverrideForTesting(true) {
             let env = ["KIMI_AUTH_TOKEN": "test.env.token"]
-            let token = ProviderTokenResolver.kimiAuthToken(environment: env)
+            let token = ProviderTokenResolver.token(for: .kimi, environment: env)
             #expect(token == "test.env.token")
         }
     }
@@ -1390,7 +1477,7 @@ struct KimiTokenResolverTests {
     func `resolution includes source`() {
         KeychainAccessGate.withTaskOverrideForTesting(true) {
             let env = ["KIMI_AUTH_TOKEN": "test.jwt.token"]
-            let resolution = ProviderTokenResolver.kimiAuthResolution(environment: env)
+            let resolution = ProviderTokenResolver.resolution(for: .kimi, environment: env)
 
             #expect(resolution?.token == "test.jwt.token")
             #expect(resolution?.source == .environment)

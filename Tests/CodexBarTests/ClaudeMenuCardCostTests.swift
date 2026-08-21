@@ -109,7 +109,6 @@ struct ClaudeMenuCardCostTests {
                 currencyCode: "USD",
                 period: "Last 30 days",
                 updatedAt: now),
-            claudeAdminAPIUsage: ClaudeAdminAPIUsageSnapshot(daily: [], updatedAt: now),
             updatedAt: now,
             identity: ProviderIdentitySnapshot(
                 providerID: .claude,
@@ -133,6 +132,7 @@ struct ClaudeMenuCardCostTests {
             usageBarsShowUsed: false,
             resetTimeDisplayStyle: .countdown,
             tokenCostUsageEnabled: false,
+            costSummaryInlineEnabled: true,
             showOptionalCreditsAndExtraUsage: false,
             hidePersonalInfo: false,
             now: now))

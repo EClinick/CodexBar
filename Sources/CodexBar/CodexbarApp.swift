@@ -21,6 +21,11 @@ enum CodexBarLaunchMode: Equatable {
 enum CodexBarEntryPoint {
     @MainActor
     static func main() {
+        // Packaging launch smoke check (#2738): force the resource loads that
+        // trapped in 0.48.0 and exit before any AppKit/UI setup.
+        if CodexBarCoreResourceSmoke.isRequested() {
+            exit(CodexBarCoreResourceSmoke.run())
+        }
         guard CodexBarLaunchMode.resolve(arguments: CommandLine.arguments) == .application else {
             return
         }
@@ -100,44 +105,23 @@ struct CodexBarApp: App {
 
     @SceneBuilder
     var body: some Scene {
-        // Hidden 1×1 window to keep SwiftUI's lifecycle alive so `Settings` scene
-        // shows the native toolbar tabs even though the UI is AppKit-based.
-        WindowGroup("CodexBarLifecycleKeepalive") {
-            HiddenWindowView()
-        }
-        .defaultSize(width: 20, height: 20)
-        .windowStyle(.hiddenTitleBar)
-
         Settings {
-            PreferencesView(
-                settings: self.settings,
-                store: self.store,
-                cloudSyncState: self.appDelegate.cloudSyncState,
-                updater: self.appDelegate.updaterController,
-                selection: self.preferencesSelection,
-                managedCodexAccountCoordinator: self.managedCodexAccountCoordinator,
-                codexAccountPromotionCoordinator: self.codexAccountPromotionCoordinator,
-                runProviderLoginFlow: { provider in
-                    await self.appDelegate.runProviderLoginFlow(provider)
-                })
+            EmptyView()
         }
-        .defaultSize(width: SettingsPane.windowWidth, height: SettingsPane.windowHeight)
-        .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(self.settingsMenuTitle) {
+                    self.appDelegate.openSettings(pane: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
     }
 
-    private func openSettings(pane: SettingsPane) {
-        self.preferencesSelection.pane = pane
-        NSApp.activate(ignoringOtherApps: true)
-        let outcome = SettingsWindowOpener.live().open(preferred: .appKit)
-        let logger = CodexBarLog.logger(LogCategories.app)
-        switch outcome {
-        case .preferred:
-            break
-        case .fallback:
-            logger.warning("Settings AppKit action was not handled; used notification fallback")
-        case .failed:
-            logger.error("Failed to open Settings; AppKit action and notification fallback unavailable")
-        }
+    private var settingsMenuTitle: String {
+        // Establish an Observation dependency so the command title follows in-app language changes.
+        _ = self.settings.appLanguage
+        return L("Settings...")
     }
 
     private static func applyLanguagePreference(from settings: SettingsStore) {
@@ -191,6 +175,8 @@ import Sparkle
 
 @MainActor
 final class SparkleUpdaterController: NSObject, UpdaterProviding, SPUUpdaterDelegate {
+    private static let presentationTimeout: Duration = .seconds(60)
+
     private final class ImmediateInstallHandler: @unchecked Sendable {
         private let handler: () -> Void
 
@@ -210,6 +196,7 @@ final class SparkleUpdaterController: NSObject, UpdaterProviding, SPUUpdaterDele
     let updateStatus = UpdateStatus()
     let unavailableReason: String? = nil
     private var immediateInstallHandler: ImmediateInstallHandler?
+    private var dockPresentationAttemptID: DockIconPresentationAttemptID?
 
     init(savedAutoUpdate: Bool) {
         super.init()
@@ -234,12 +221,14 @@ final class SparkleUpdaterController: NSObject, UpdaterProviding, SPUUpdaterDele
     }
 
     func checkForUpdates(_ sender: Any?) {
+        self.dockPresentationAttemptID = DockIconController.shared.promote(
+            presentationTimeout: Self.presentationTimeout)
         self.controller.checkForUpdates(sender)
     }
 
     func installUpdate() {
         guard let immediateInstallHandler else {
-            self.controller.checkForUpdates(nil)
+            self.checkForUpdates(nil)
             return
         }
 
@@ -291,6 +280,25 @@ final class SparkleUpdaterController: NSObject, UpdaterProviding, SPUUpdaterDele
         Task { @MainActor in
             self.immediateInstallHandler = nil
             self.updateStatus.isUpdateReady = false
+        }
+    }
+
+    nonisolated func updater(
+        _ updater: SPUUpdater,
+        didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
+        error: Error?)
+    {
+        _ = updater
+        CodexBarLog.logger(LogCategories.app).debug(
+            "Sparkle update cycle finished",
+            metadata: [
+                "check": String(describing: updateCheck),
+                "hadError": error == nil ? "0" : "1",
+            ])
+        Task { @MainActor in
+            guard let attemptID = self.dockPresentationAttemptID else { return }
+            self.dockPresentationAttemptID = nil
+            DockIconController.shared.finishPresentationAttempt(attemptID)
         }
     }
 
@@ -368,6 +376,9 @@ private func makeUpdaterController() -> UpdaterProviding {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let settingsMenuReadinessRetryCount = 2
+    private static let settingsMenuFallbackVerificationRetryCount = 2
+
     struct Dependencies {
         let store: UsageStore
         let settings: SettingsStore
@@ -381,6 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let cloudSyncState = CloudSyncState()
     private let confettiOverlayController = ScreenConfettiOverlayController()
     private let confettiLogger = CodexBarLog.logger(LogCategories.confetti)
+    private let dockIconController = DockIconController.shared
     private lazy var memoryPressureMonitor = MemoryPressureMonitor(trimAppCaches: { [weak self] in
         self?.trimRebuildableCachesForMemoryPressure() ?? MemoryPressureCacheTrimSummary()
     })
@@ -393,6 +405,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var managedCodexAccountCoordinator: ManagedCodexAccountCoordinator?
     private var codexAccountPromotionCoordinator: CodexAccountPromotionCoordinator?
     private var cloudSyncCoordinator: CloudSyncCoordinator?
+    private var settingsWindowController: SettingsWindowController?
+    private lazy var placeholderSettingsWindowGuard = PlaceholderSettingsWindowGuard(
+        isKnownSettingsWindow: { [weak self] window in
+            self?.settingsWindowController?.window === window
+        })
     private var hasInstalledLimitResetObservers = false
     #if DEBUG
     private var debugMemoryPressureObserver: NSObjectProtocol?
@@ -409,18 +426,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.managedCodexAccountCoordinator = dependencies.managedCodexAccountCoordinator
         self.codexAccountPromotionCoordinator = dependencies.codexAccountPromotionCoordinator
         self.cloudSyncCoordinator = CloudSyncCoordinator(settings: dependencies.settings, state: self.cloudSyncState)
+        self.settingsWindowController = SettingsWindowController(
+            settings: dependencies.settings,
+            store: dependencies.store,
+            cloudSyncState: self.cloudSyncState,
+            updater: self.updaterController,
+            selection: dependencies.selection,
+            managedCodexAccountCoordinator: dependencies.managedCodexAccountCoordinator,
+            codexAccountPromotionCoordinator: dependencies.codexAccountPromotionCoordinator,
+            runProviderLoginFlow: { [weak self] provider in
+                guard let self else { return }
+                await self.runProviderLoginFlow(provider)
+            })
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         self.configureAppIconForMacOSVersion()
+        // The SwiftUI `Settings` scene is an empty placeholder; macOS otherwise presents it at launch.
+        self.placeholderSettingsWindowGuard.start()
+    }
+
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        // CodexBar lives in the menu bar and has no untitled document to open at launch or on reopen.
+        false
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        self.dockIconController.start()
         self.memoryPressureMonitor.start()
         #if DEBUG
         self.installDebugMemoryPressureObserverIfNeeded()
         #endif
         self.ensureStatusController()
+        self.closeSwiftUISettingsPlaceholderWindow()
+        self.observeSettingsApplicationMenuLanguage()
+        self.scheduleSettingsApplicationMenuValidation(
+            missingItemRetriesRemaining: Self.settingsMenuReadinessRetryCount,
+            fallbackVerificationRetriesRemaining: Self.settingsMenuFallbackVerificationRetryCount)
         self.cloudSyncCoordinator?.start()
         Task { @MainActor [weak self] in
             await Task.yield()
@@ -456,6 +498,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The SwiftUI `Settings` scene exists only to own the app-menu Settings command; the real
+    /// settings window is AppKit-managed (`SettingsWindowController`). macOS can still present or
+    /// state-restore the scene's empty placeholder window at launch — close it and keep it out of
+    /// state restoration so it cannot come back on the next launch.
+    private func closeSwiftUISettingsPlaceholderWindow() {
+        DispatchQueue.main.async {
+            for window in NSApp.windows
+                where window.identifier?.rawValue.hasPrefix("com_apple_SwiftUI_Settings") == true
+            {
+                window.isRestorable = false
+                window.close()
+            }
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         self.cloudSyncCoordinator?.stop()
         self.memoryPressureMonitor.stop()
@@ -476,6 +533,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.ensureStatusController()
         guard let statusController else { return }
         await statusController.runLoginFlowFromSettings(provider: provider)
+    }
+
+    func openSettings(pane: SettingsPane?) {
+        // Escape NSMenu's synchronous tracking callback before activating and presenting a window.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let settingsWindowController = self.settingsWindowController else {
+                self.dockIconController.settingsWindowPresentationFailed()
+                CodexBarLog.logger(LogCategories.app).error("Settings window controller was not configured")
+                return
+            }
+            settingsWindowController.open(pane: pane)
+        }
+    }
+
+    @objc private func showSettingsFromApplicationMenu(_: Any?) {
+        self.openSettings(pane: nil)
     }
 
     @objc private func handleSessionLimitResetNotification(_ notification: Notification) {
@@ -546,6 +620,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func observeSettingsApplicationMenuLanguage() {
+        guard let settings else { return }
+        withObservationTracking {
+            _ = settings.appLanguage
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.observeSettingsApplicationMenuLanguage()
+                self.scheduleSettingsApplicationMenuValidation(
+                    missingItemRetriesRemaining: Self.settingsMenuReadinessRetryCount,
+                    fallbackVerificationRetriesRemaining: Self.settingsMenuFallbackVerificationRetryCount)
+            }
+        }
+    }
+
+    private func scheduleSettingsApplicationMenuValidation(
+        missingItemRetriesRemaining: Int,
+        fallbackVerificationRetriesRemaining: Int)
+    {
+        DispatchQueue.main.async { [weak self] in
+            self?.ensureSingleSettingsApplicationMenuItem(
+                missingItemRetriesRemaining: missingItemRetriesRemaining,
+                fallbackVerificationRetriesRemaining: fallbackVerificationRetriesRemaining)
+        }
+    }
+
+    private func ensureSingleSettingsApplicationMenuItem(
+        missingItemRetriesRemaining: Int,
+        fallbackVerificationRetriesRemaining: Int)
+    {
+        guard let mainMenu = NSApp.mainMenu else {
+            if missingItemRetriesRemaining > 0 {
+                self.scheduleSettingsApplicationMenuValidation(
+                    missingItemRetriesRemaining: missingItemRetriesRemaining - 1,
+                    fallbackVerificationRetriesRemaining: fallbackVerificationRetriesRemaining)
+            } else {
+                CodexBarLog.logger(LogCategories.app).error("Application menu unavailable for Settings validation")
+            }
+            return
+        }
+        let result = SettingsApplicationMenu.ensureSingleItem(
+            in: mainMenu,
+            localizedTitle: L("Settings..."),
+            target: self,
+            action: #selector(self.showSettingsFromApplicationMenu(_:)),
+            allowMissingItemRepair: missingItemRetriesRemaining == 0)
+        switch result {
+        case let .unchanged(isFallback):
+            if isFallback, fallbackVerificationRetriesRemaining > 0 {
+                self.scheduleSettingsApplicationMenuValidation(
+                    missingItemRetriesRemaining: Self.settingsMenuReadinessRetryCount,
+                    fallbackVerificationRetriesRemaining: fallbackVerificationRetriesRemaining - 1)
+            }
+        case .retryNeeded:
+            self.scheduleSettingsApplicationMenuValidation(
+                missingItemRetriesRemaining: max(0, missingItemRetriesRemaining - 1),
+                fallbackVerificationRetriesRemaining: fallbackVerificationRetriesRemaining)
+        case let .repaired(previousCount, installedFallback):
+            CodexBarLog.logger(LogCategories.app).warning(
+                "Repaired application Settings menu",
+                metadata: [
+                    "installedFallback": installedFallback ? "1" : "0",
+                    "previousCount": "\(previousCount)",
+                ])
+            if installedFallback, fallbackVerificationRetriesRemaining > 0 {
+                self.scheduleSettingsApplicationMenuValidation(
+                    missingItemRetriesRemaining: Self.settingsMenuReadinessRetryCount,
+                    fallbackVerificationRetriesRemaining: fallbackVerificationRetriesRemaining - 1)
+            }
+        case .missingApplicationMenu:
+            if missingItemRetriesRemaining > 0 {
+                self.scheduleSettingsApplicationMenuValidation(
+                    missingItemRetriesRemaining: missingItemRetriesRemaining - 1,
+                    fallbackVerificationRetriesRemaining: fallbackVerificationRetriesRemaining)
+            } else {
+                CodexBarLog.logger(LogCategories.app).error("Could not repair application Settings menu")
+            }
+        }
+    }
+
     private func ensureStatusController() {
         if self.statusController != nil {
             return
@@ -558,7 +712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let managedCodexAccountCoordinator,
            let codexAccountPromotionCoordinator
         {
-            self.statusController = StatusItemController.factory(
+            let statusController = StatusItemController.factory(
                 store,
                 settings,
                 account,
@@ -566,9 +720,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 selection,
                 managedCodexAccountCoordinator,
                 codexAccountPromotionCoordinator)
-            if let statusController = self.statusController as? StatusItemController {
-                statusController.cloudSyncState = self.cloudSyncState
-                MenuSwitchFlickerProbe.startIfRequested(controller: statusController)
+            statusController.setSettingsOpenHandler { [weak self] pane in
+                self?.openSettings(pane: pane)
+            }
+            self.statusController = statusController
+            if let concreteStatusController = statusController as? StatusItemController {
+                concreteStatusController.cloudSyncState = self.cloudSyncState
+                MenuSwitchFlickerProbe.startIfRequested(controller: concreteStatusController)
             }
             return
         }
@@ -587,7 +745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsStore: fallbackSettings,
             usageStore: fallbackStore,
             managedAccountCoordinator: fallbackManagedCodexAccountCoordinator)
-        self.statusController = StatusItemController.factory(
+        let statusController = StatusItemController.factory(
             fallbackStore,
             fallbackSettings,
             fallbackAccount,
@@ -595,6 +753,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PreferencesSelection(),
             fallbackManagedCodexAccountCoordinator,
             fallbackCodexAccountPromotionCoordinator)
+        statusController.setSettingsOpenHandler { [weak self] pane in
+            self?.openSettings(pane: pane)
+        }
+        self.statusController = statusController
     }
 
     private func trimRebuildableCachesForMemoryPressure() -> MemoryPressureCacheTrimSummary {

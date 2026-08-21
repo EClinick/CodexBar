@@ -94,6 +94,7 @@ enum CLIClaudeSwapCards {
         hasExplicitAccountSelection: Bool,
         sourceModeOverride: ProviderSourceMode?) -> Bool
     {
+        // Provider-specific by design: claude-swap owns multi-account state only in Claude automatic mode.
         provider == .claude
             && integrationEnabled
             && !hasExplicitAccountSelection
@@ -124,13 +125,19 @@ enum CLIClaudeSwapCards {
         showSingleAccount: Bool = false,
         renderOptions: CLIClaudeSwapCardsRenderOptions,
         ambientFetch: @escaping AmbientFetch,
-        accountListReader: @escaping AccountListReader) async -> UsageCommandOutput
+        accountListReader: @escaping AccountListReader,
+        previousAccounts: [ProviderAccountUsageSnapshot] = []) async -> UsageCommandOutput
     {
         guard eligible else { return await ambientFetch() }
 
         do {
             let list = try await accountListReader(executablePath)
-            let accounts = ClaudeSwapAccountProjection.accountSnapshots(from: list, now: renderOptions.now)
+            let retained = ClaudeSwapRetainedUsageStore.previousAccounts(inMemory: previousAccounts)
+            let accounts = ClaudeSwapAccountProjection.accountSnapshots(
+                from: list,
+                previousAccounts: retained,
+                now: renderOptions.now)
+            ClaudeSwapRetainedUsageStore.save(accounts)
             guard ClaudeSwapAccountProjection.shouldPresentAccounts(
                 accountCount: accounts.count,
                 showSingleAccount: showSingleAccount)
@@ -148,6 +155,7 @@ enum CLIClaudeSwapCards {
             let diagnostic = CLIClaudeSwapText.sanitizeDiagnostic(error.localizedDescription)
             let message = diagnostic.isEmpty ? "claude-swap list failed." : diagnostic
             output.cardFailures.append(CLICardFailure(
+                // Provider-specific by design: a claude-swap subprocess failure is attached to the Claude card lane.
                 provider: .claude,
                 accountLabel: ClaudeSwapAccountProjection.sourceLabel,
                 message: message))

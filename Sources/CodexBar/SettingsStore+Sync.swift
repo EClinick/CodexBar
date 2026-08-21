@@ -56,7 +56,9 @@ extension SettingsStore {
             quotaWarningSoundEnabled: self.quotaWarningSoundEnabled,
             quotaWarningOnScreenAlertEnabled: self.quotaWarningOnScreenAlertEnabled,
             quotaWarningMarkersVisible: self.quotaWarningMarkersVisible,
+            paceVisible: self.paceVisible,
             weeklyProgressWorkDays: self.weeklyProgressWorkDays,
+            workdayTickAppearance: self.workdayTickAppearance.rawValue,
             usageBarsShowUsed: self.usageBarsShowUsed,
             resetTimesShowAbsolute: self.resetTimesShowAbsolute,
             costUsageEnabled: self.costUsageEnabled,
@@ -88,7 +90,15 @@ extension SettingsStore {
         self.quotaWarningSoundEnabled = preferences.quotaWarningSoundEnabled
         self.quotaWarningOnScreenAlertEnabled = preferences.quotaWarningOnScreenAlertEnabled
         self.quotaWarningMarkersVisible = preferences.quotaWarningMarkersVisible
+        if let paceVisible = preferences.paceVisible {
+            self.paceVisible = paceVisible
+        }
         self.weeklyProgressWorkDays = preferences.weeklyProgressWorkDays
+        if let rawAppearance = preferences.workdayTickAppearance,
+           let appearance = WorkdayTickAppearance(rawValue: rawAppearance)
+        {
+            self.workdayTickAppearance = appearance
+        }
         self.usageBarsShowUsed = preferences.usageBarsShowUsed
         self.resetTimesShowAbsolute = preferences.resetTimesShowAbsolute
         self.costUsageEnabled = preferences.costUsageEnabled
@@ -118,15 +128,9 @@ extension SettingsStore {
                 && descriptor.fetchPlan.sourceModes.contains(.cli)
                 && descriptor.fetchPlan.sourceModes.isDisjoint(with: nonCLIModes))
         guard requiresCLI else { return true }
-        switch provider {
-        case .codex:
-            return BinaryLocator.resolveCodexBinary() != nil
-        case .claude:
-            return BinaryLocator.resolveClaudeBinary() != nil
-        case .gemini:
-            return BinaryLocator.resolveGeminiBinary() != nil
-        default:
-            return ([descriptor.cli.name] + descriptor.cli.aliases).contains { TTYCommandRunner.which($0) != nil }
+        if let binaryLocator = descriptor.cli.binaryLocator {
+            return binaryLocator() != nil
         }
+        return ([descriptor.cli.name] + descriptor.cli.aliases).contains { TTYCommandRunner.which($0) != nil }
     }
 }

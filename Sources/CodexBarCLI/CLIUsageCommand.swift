@@ -68,7 +68,7 @@ extension UsageCommandOutput {
 
 extension CodexBarCLI {
     static func runUsage(_ values: ParsedValues) async {
-        let output = CLIOutputPreferences.from(values: values)
+        let output = Self.resolveUsageOutputPreferences(from: values)
         let config = Self.loadConfig(output: output)
         let provider = Self.decodeProvider(from: values, config: config)
         let format = output.format
@@ -135,6 +135,7 @@ extension CodexBarCLI {
                     output: output,
                     kind: .args)
             }
+            // Provider-specific by design: Codex exposes reconciled accounts beyond config token accounts.
             let supportsAllCodexAccounts = providerList[0] == .codex
                 && tokenSelection.allAccounts
                 && tokenSelection.label == nil
@@ -221,16 +222,46 @@ extension CodexBarCLI {
             payload.append(contentsOf: output.payload)
         }
 
+        Self.printUsageOutput(
+            format: format,
+            toonRequested: output.toonRequested,
+            sections: sections,
+            payload: payload,
+            pretty: output.pretty)
+
+        Self.exit(code: exitCode, output: output, kind: exitCode == .success ? .runtime : .provider)
+    }
+
+    /// TOON piggybacks on the JSON fetch/render pipeline (same data, denser rendering at print time)
+    /// rather than being a first-class `OutputFormat` case, so it doesn't ripple into every other
+    /// command's exhaustive `switch format` sites. `toonRequested` also travels on the returned
+    /// preferences so early-exit error paths (`Self.exit`, `Self.loadConfig`) render TOON instead of
+    /// silently falling back to JSON. `allowsToon` is opt-in here and nowhere else: `cost`, `cache`,
+    /// `config`, `hooks`, and `diagnose` advertise only `text | json`, so they keep the legacy
+    /// decoder that ignores unrecognized `--format` values.
+    static func resolveUsageOutputPreferences(from values: ParsedValues) -> CLIOutputPreferences {
+        CLIOutputPreferences.from(values: values, allowsToon: true)
+    }
+
+    private static func printUsageOutput(
+        format: OutputFormat,
+        toonRequested: Bool,
+        sections: [String],
+        payload: [ProviderPayload],
+        pretty: Bool)
+    {
+        if toonRequested {
+            print(ToonFormatter.encode(payload))
+            return
+        }
         switch format {
         case .text:
             if !sections.isEmpty {
                 print(sections.joined(separator: "\n\n"))
             }
         case .json:
-            Self.printJSON(payload, pretty: output.pretty)
+            printJSON(payload, pretty: pretty)
         }
-
-        Self.exit(code: exitCode, output: output, kind: exitCode == .success ? .runtime : .provider)
     }
 
     static func appAutoVerifierArgumentError(
@@ -240,6 +271,7 @@ extension CodexBarCLI {
         tokenSelection: TokenAccountCLISelection) -> String?
     {
         guard enabled else { return nil }
+        // Provider-specific by design: this hidden verifier recreates Claude's owner-CLI lifecycle only.
         guard providers == [.claude], sourceMode == .auto else {
             return "--app-auto-verifier requires --provider claude --source auto."
         }
@@ -255,6 +287,7 @@ extension CodexBarCLI {
         tokenContext: TokenAccountCLIContext,
         command: UsageCommandContext) async -> UsageCommandOutput
     {
+        // Provider-specific by design: Codex can enumerate reconciled live, managed, and profile-home accounts.
         if provider == .codex, command.includeAllCodexAccounts {
             var output = UsageCommandOutput()
             let accounts = tokenContext.visibleCodexAccounts().visibleAccounts
@@ -404,6 +437,7 @@ extension CodexBarCLI {
                         resetStyle: input.command.resetStyle,
                         weeklyWorkDays: input.command.weeklyWorkDays,
                         notes: input.notes))
+                // Provider-specific by design: OpenAI dashboard payloads are behavioral Codex fetch results.
                 if let dashboard = input.dashboard, input.provider == .codex, input.effectiveSourceMode.usesWeb {
                     text += "\n" + Self.renderOpenAIWebDashboardText(dashboard)
                 }
@@ -473,10 +507,15 @@ extension CodexBarCLI {
         }
         #endif
 
+        // Provider-specific by design: Codex PAT User-Agent needs the CLI version before the fetch starts.
+        let resolvedCLIVersion = provider == .codex
+            ? Self.detectVersion(for: provider, browserDetection: command.browserDetection)
+            : nil
         let fetchContext = ProviderFetchContext(
             runtime: command.providerRuntime,
             sourceMode: effectiveSourceMode,
             includeCredits: command.includeCredits,
+            requiresOptionalUsageCompleteness: true,
             webTimeout: command.webTimeout,
             webDebugDumpHTML: command.webDebugDumpHTML,
             verbose: command.verbose,
@@ -489,7 +528,8 @@ extension CodexBarCLI {
             tokenAccountTokenUpdater: tokenContext.tokenUpdater(for: account),
             providerManualTokenUpdater: tokenContext.manualTokenUpdater(),
             persistsCLISessions: Self.persistsCLISessions(provider: provider, command: command),
-            persistentCLISessionIdleWindow: command.persistentCLISessionIdleWindow)
+            persistentCLISessionIdleWindow: command.persistentCLISessionIdleWindow,
+            resolvedCLIVersion: resolvedCLIVersion)
         let outcome = await Self.fetchProviderUsage(provider: provider, context: fetchContext)
         if command.verbose, !command.jsonOnly {
             Self.printFetchAttempts(provider: provider, attempts: outcome.attempts)
@@ -510,6 +550,7 @@ extension CodexBarCLI {
             }
 
             var dashboard = result.dashboard
+            // Provider-specific by design: JSON preserves Codex's optional behavioral dashboard payload.
             if dashboard == nil, command.format == .json, provider == .codex {
                 dashboard = Self.loadOpenAIDashboardIfAvailable(
                     usage: usage,
@@ -520,13 +561,15 @@ extension CodexBarCLI {
             let shouldDetectVersion = Self.shouldDetectVersion(provider: provider, result: result)
             let version = Self.normalizeVersion(
                 raw: shouldDetectVersion
-                    ? Self.detectVersion(for: provider, browserDetection: command.browserDetection)
+                    ? (resolvedCLIVersion
+                        ?? Self.detectVersion(for: provider, browserDetection: command.browserDetection))
                     : nil)
             let source = result.sourceLabel
             let notes = Self.usageTextNotes(
                 provider: provider,
                 sourceMode: effectiveSourceMode,
-                resolvedSourceLabel: source) + (result.diagnostic.map { [$0] } ?? [])
+                resolvedSourceLabel: source,
+                dataConfidence: usage.dataConfidence) + (result.diagnostic.map { [$0] } ?? [])
 
             Self.appendSuccessRenderOutput(
                 UsageSuccessRenderInput(
@@ -585,6 +628,7 @@ extension CodexBarCLI {
         let descriptor = ProviderDescriptorRegistry.descriptor(for: provider)
         guard descriptor.cli.versionDetector != nil else { return false }
         guard result.strategyKind != .webDashboard else { return false }
+        // Provider-specific by design: Claude OAuth is in-process and has no CLI version to report.
         return !(provider == .claude && result.strategyKind == .oauth)
     }
 
@@ -612,6 +656,7 @@ extension CodexBarCLI {
         jsonOnly: Bool,
         persistsCLISessions: Bool) -> Bool
     {
+        // Provider-specific by design: --antigravity-plan-debug interrogates its persistent helper session.
         provider == .antigravity
             && planDebugEnabled
             && !jsonOnly
@@ -633,6 +678,7 @@ extension CodexBarCLI {
         provider: UsageProvider,
         command: UsageCommandContext) async -> AntigravityPlanInfoSummary?
     {
+        // Provider-specific by design: --antigravity-plan-debug requests its plan-only diagnostic.
         guard command.antigravityPlanDebug,
               provider == .antigravity,
               !command.jsonOnly
@@ -650,6 +696,7 @@ extension CodexBarCLI {
         provider: UsageProvider,
         command: UsageCommandContext) async
     {
+        // Provider-specific by design: --augment-debug emits Augment's explicit diagnostic dump.
         guard command.augmentDebug, provider == .augment else { return }
         #if os(macOS)
         let dump = await AugmentStatusProbe.latestDumps()
@@ -729,9 +776,9 @@ extension CodexBarCLI {
         environment: [String: String]? = nil,
         settings: ProviderSettingsSnapshot? = nil) -> Bool
     {
-        if self.webSupportExempt(
-            sourceMode,
-            provider: provider,
+        let descriptor = ProviderDescriptorRegistry.descriptor(for: provider)
+        if descriptor.cli.isBrowserSupportExempt(
+            sourceMode: sourceMode,
             environment: environment,
             settings: settings)
         {
@@ -741,113 +788,9 @@ extension CodexBarCLI {
         case .web:
             true
         case .auto:
-            ProviderDescriptorRegistry.descriptor(for: provider).fetchPlan.sourceModes.contains(.web)
+            descriptor.fetchPlan.sourceModes.contains(.web)
         case .cli, .oauth, .api:
             false
-        }
-    }
-
-    /// Providers that can satisfy a source mode without the macOS-only web/browser path.
-    private static func webSupportExempt(
-        _ sourceMode: ProviderSourceMode,
-        provider: UsageProvider,
-        environment: [String: String]?,
-        settings: ProviderSettingsSnapshot?) -> Bool
-    {
-        if provider == .grok || provider == .amp {
-            return true
-        }
-        if sourceMode == .auto, provider == .codex || provider == .claude {
-            // Claude's cross-platform planner skips its unavailable web step and falls back to the CLI.
-            return true
-        }
-        if self.cookieSourceExempt(sourceMode, provider: provider, settings: settings) {
-            return true
-        }
-        return self.credentialExempt(
-            sourceMode,
-            provider: provider,
-            environment: environment,
-            settings: settings)
-    }
-
-    /// Exemptions granted by a manual cookie header instead of browser auto-import.
-    private static func cookieSourceExempt(
-        _ sourceMode: ProviderSourceMode,
-        provider: UsageProvider,
-        settings: ProviderSettingsSnapshot?) -> Bool
-    {
-        switch provider {
-        case .opencodego:
-            return sourceMode == .auto || settings?.opencodego?.cookieSource == .manual
-        case .commandcode:
-            return settings?.commandcode?.cookieSource == .manual
-        case .alibabatokenplan:
-            // The Alibaba/Qwen Token Plan fetch is plain URLSession + cookies; only browser
-            // cookie auto-import needs macOS, so a manual cookie header works off macOS too.
-            return settings?.alibabaTokenPlan?.cookieSource == .manual
-        case .qoder:
-            return settings?.qoder?.cookieSource == .manual
-        case .cursor:
-            #if os(Linux)
-            // Linux uses Cursor app auth and manual cookies; browser import remains macOS-only.
-            return settings?.cursor?.cookieSource != .off
-            #else
-            return false
-            #endif
-        default:
-            return false
-        }
-    }
-
-    /// Exemptions granted by an already-configured credential (token, API key, or local cache).
-    private static func credentialExempt(
-        _ sourceMode: ProviderSourceMode,
-        provider: UsageProvider,
-        environment: [String: String]?,
-        settings: ProviderSettingsSnapshot?) -> Bool
-    {
-        switch provider {
-        case .sakana:
-            guard sourceMode == .auto || sourceMode == .web else { return false }
-            return environment.map { SakanaSettingsReader.cookieHeader(environment: $0) != nil } == true
-        case .qwencloud:
-            guard sourceMode == .auto || sourceMode == .web,
-                  settings?.qwenCloud?.cookieSource != .off else { return false }
-            let hasEnvironmentCookie = environment.map {
-                QwenCloudSettingsReader.cookieHeader(environment: $0) != nil
-            } == true
-            let hasManualCookie = settings?.qwenCloud?.cookieSource == .manual &&
-                CookieHeaderNormalizer.normalize(settings?.qwenCloud?.manualCookieHeader) != nil
-            return hasEnvironmentCookie || hasManualCookie
-        case .ollama:
-            guard sourceMode == .auto else { return false }
-            let hasEnvironmentToken = environment.map {
-                ProviderTokenResolver.ollamaToken(environment: $0) != nil
-            } == true
-            return settings?.ollama?.cookieSource == .off || hasEnvironmentToken
-        case .kimi:
-            guard sourceMode == .auto else { return false }
-            return environment.map { environment in
-                ProviderTokenResolver.kimiAPIToken(environment: environment) != nil ||
-                    KimiSettingsReader.hasKimiCodeCredential(environment: environment)
-            } == true
-        case .factory:
-            // Linux Auto/legacy-cli can use FACTORY_API_KEY without browser cookies.
-            guard sourceMode == .auto || sourceMode == .cli else { return false }
-            return environment.map { FactorySettingsReader.apiKey(environment: $0) != nil } == true
-        case .minimax:
-            // The MiniMax API fetch is plain HTTPS + Bearer auth, so a configured key works off
-            // macOS. Standard `sk-api-` keys are the exception: Auto resolves them to the Coding
-            // Plan web strategy, which still needs the macOS-only web path.
-            guard sourceMode == .auto, let environment else { return false }
-            guard MiniMaxAPISettingsReader.apiToken(environment: environment) != nil else { return false }
-            return MiniMaxAPISettingsReader.apiKeyKind(environment: environment) != .standard
-        case .mimo:
-            guard sourceMode == .auto, let environment else { return false }
-            return MiMoLocalUsageFallback.cacheExists(environment: environment)
-        default:
-            return false
         }
     }
 }

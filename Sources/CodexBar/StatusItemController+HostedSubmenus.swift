@@ -59,7 +59,6 @@ extension StatusItemController {
             Self.usageHistoryChartID,
             Self.storageBreakdownID,
             Self.statusComponentsID,
-            Self.zaiHourlyUsageChartID,
         ]
         return menu.items.contains { item in
             guard let id = item.representedObject as? String else { return false }
@@ -143,14 +142,6 @@ extension StatusItemController {
             } else {
                 false
             }
-        case Self.zaiHourlyUsageChartID:
-            if let providerRawValue = placeholder.toolTip,
-               let provider = UsageProvider(rawValue: providerRawValue)
-            {
-                self.appendZaiHourlyUsageChartItem(to: menu, provider: provider, width: width)
-            } else {
-                false
-            }
         default:
             false
         }
@@ -174,9 +165,6 @@ extension StatusItemController {
         }
         let signature = self.hostedSubviewRenderSignature(identity: identity, width: width)
         if self.hostedSubviewRenderSignatures.object(forKey: menu)?.signature == signature {
-            if identity.chartID == Self.zaiHourlyUsageChartID {
-                self.refreshHostedSubviewHeights(in: menu)
-            }
             return
         }
 
@@ -210,12 +198,6 @@ extension StatusItemController {
         case Self.statusComponentsID:
             if let provider = identity.provider {
                 self.appendStatusComponentsItem(to: menu, provider: provider, width: width)
-            } else {
-                false
-            }
-        case Self.zaiHourlyUsageChartID:
-            if let provider = identity.provider {
-                self.appendZaiHourlyUsageChartItem(to: menu, provider: provider, width: width)
             } else {
                 false
             }
@@ -290,8 +272,6 @@ extension StatusItemController {
             .text(identity.provider.map(self.storageBreakdownRenderSignature(for:)) ?? "missing-provider")
         case Self.statusComponentsID:
             .text(identity.provider.map(self.statusComponentsRenderSignature(for:)) ?? "missing-provider")
-        case Self.zaiHourlyUsageChartID:
-            .text(identity.provider.map(self.zaiHourlyUsageRenderSignature(for:)) ?? "missing-provider")
         default:
             .text("unknown")
         }
@@ -306,7 +286,24 @@ extension StatusItemController {
         guard let snapshot = self.tokenSnapshotForCostHistorySubmenu(provider: provider) else {
             return .text("none")
         }
-        return .costHistory(CostHistoryChartMenuView.renderFingerprint(from: snapshot, provider: provider))
+        let displayConversion = self.costHistoryDisplayConversion(for: snapshot)
+        return .costHistory(CostHistoryChartMenuView.renderFingerprint(
+            from: snapshot,
+            provider: provider,
+            displayCurrencyCode: displayConversion.currencyCode,
+            displayCostMultiplier: displayConversion.multiplier))
+    }
+
+    /// Resolves the user's preferred display currency for cost-history values, falling back to
+    /// the snapshot's native currency when no exchange rate is available.
+    private func costHistoryDisplayConversion(
+        for snapshot: CostUsageTokenSnapshot) -> (currencyCode: String, multiplier: Double)
+    {
+        let converted = UsageFormatter.convertedCost(
+            1,
+            preferredCurrency: self.settings.preferredCurrencyCode,
+            providerCurrency: snapshot.currencyCode)
+        return (converted.currencyCode, converted.value)
     }
 
     private func usageHistoryRenderSignature(for provider: UsageProvider) -> String {
@@ -344,49 +341,6 @@ extension StatusItemController {
             footprint.unreadablePaths.joined(separator: ";"),
             components,
             String(Double(self.storageBreakdownMenuMaxHeight()).bitPattern, radix: 16),
-        ].joined(separator: "|")
-    }
-
-    private func zaiHourlyUsageRenderSignature(for provider: UsageProvider) -> String {
-        guard let zai = self.store.snapshot(for: provider.instanceID)?.zaiUsage,
-              let modelUsage = zai.modelUsage else { return "none" }
-        return Self.zaiHourlyUsageRenderSignature(
-            modelUsage: modelUsage,
-            dailyModelUsage: zai.dailyModelUsage,
-            now: Date())
-    }
-
-    static func zaiHourlyUsageRenderSignature(
-        modelUsage: ZaiModelUsageData,
-        dailyModelUsage: ZaiModelUsageData? = nil,
-        now: Date) -> String
-    {
-        let models = modelUsage.modelDataList
-            .map { model in
-                let usage = model.tokensUsage
-                    .map { $0.map(String.init) ?? "nil" }
-                    .joined(separator: ",")
-                return "\(model.modelName ?? "")=\(usage)"
-            }
-            .joined(separator: ";")
-        let ranges: [ZaiHourlyRange] = [.today(referenceDate: now), .last24h, .last7d, .last30d]
-        let visibleBars = ranges
-            .map { range in
-                let data = range.isDaily ? (dailyModelUsage ?? modelUsage) : modelUsage
-                return ZaiHourlyBars.from(modelData: data, range: range, now: now)
-                    .map { bar in
-                        let segments = bar.segments
-                            .map { "\($0.model)=\($0.tokens)" }
-                            .joined(separator: ",")
-                        return "\(bar.label):\(segments)"
-                    }
-                    .joined(separator: ";")
-            }
-        return [
-            modelUsage.xTime.joined(separator: ","),
-            dailyModelUsage?.xTime.joined(separator: ",") ?? "",
-            models,
-            visibleBars.joined(separator: "|"),
         ].joined(separator: "|")
     }
 
@@ -475,12 +429,15 @@ extension StatusItemController {
             return true
         }
 
+        let displayConversion = self.costHistoryDisplayConversion(for: tokenSnapshot)
         let chartView = CostHistoryChartMenuView(
             provider: provider,
             daily: tokenSnapshot.daily,
             totalCostUSD: tokenSnapshot.last30DaysCostUSD,
-            currencyCode: tokenSnapshot.currencyCode,
+            currencyCode: displayConversion.currencyCode,
+            costMultiplier: displayConversion.multiplier,
             historyDays: tokenSnapshot.historyDays,
+            historyCoverageIsEstablished: tokenSnapshot.historyCoverageIsEstablished,
             windowLabel: tokenSnapshot.historyLabel,
             projects: provider == .codex ? tokenSnapshot.projects : [],
             sessions: provider == .codex ? tokenSnapshot.sessions : [],
@@ -622,44 +579,6 @@ extension StatusItemController {
     private func storageBreakdownMenuMaxHeight() -> CGFloat {
         let visibleHeight = NSScreen.main?.visibleFrame.height ?? 900
         return min(620, max(360, floor(visibleHeight * 0.72)))
-    }
-
-    @discardableResult
-    func appendZaiHourlyUsageChartItem(
-        to submenu: NSMenu,
-        provider: UsageProvider,
-        width: CGFloat) -> Bool
-    {
-        guard provider == .zai,
-              let snapshot = self.store.snapshot(for: provider.instanceID),
-              let modelUsage = snapshot.zaiUsage?.modelUsage
-        else { return false }
-
-        if !self.menuCardRenderingEnabledForController {
-            let chartItem = NSMenuItem()
-            chartItem.isEnabled = false
-            chartItem.representedObject = Self.zaiHourlyUsageChartID
-            chartItem.toolTip = provider.rawValue
-            submenu.addItem(chartItem)
-            return true
-        }
-
-        let chartView = ZaiHourlyUsageChartMenuView(
-            modelUsage: modelUsage,
-            dailyModelUsage: snapshot.zaiUsage?.dailyModelUsage,
-            width: width)
-        let hosting = MenuHostingView(rootView: chartView)
-        hosting.frame = NSRect(
-            origin: .zero,
-            size: NSSize(width: width, height: self.hostedSubviewFittingHeight(for: hosting, width: width)))
-
-        let chartItem = NSMenuItem()
-        chartItem.view = hosting
-        chartItem.isEnabled = false
-        chartItem.representedObject = Self.zaiHourlyUsageChartID
-        chartItem.toolTip = provider.rawValue
-        submenu.addItem(chartItem)
-        return true
     }
 }
 

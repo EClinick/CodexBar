@@ -29,19 +29,17 @@ extension CodexBarCLI {
             }
             return .custom(enabled)
         }
-        if enabled.count >= 3 { return .custom(enabled) }
-        if let first = enabled.first { return ProviderSelection(provider: first) }
+        if enabled.count >= 3 {
+            return .custom(enabled)
+        }
+        if let first = enabled.first {
+            return ProviderSelection(provider: first)
+        }
         return .custom([])
     }
 
     static func decodeFormat(from values: ParsedValues) -> OutputFormat {
-        if let raw = values.options["format"]?.last, let parsed = OutputFormat(argument: raw) {
-            return parsed
-        }
-        if values.flags.contains("jsonShortcut") || values.flags.contains("json") || values.flags.contains("jsonOnly") {
-            return .json
-        }
-        return .text
+        CLIOutputPreferences.resolveOutputFormat(from: values).format
     }
 
     static func decodeTokenAccountSelection(from values: ParsedValues) throws -> TokenAccountCLISelection {
@@ -60,9 +58,13 @@ extension CodexBarCLI {
 
     static func shouldUseColor(noColor: Bool, format: OutputFormat) -> Bool {
         guard format == .text else { return false }
-        if noColor { return false }
+        if noColor {
+            return false
+        }
         let env = ProcessInfo.processInfo.environment
-        if env["TERM"]?.lowercased() == "dumb" { return false }
+        if env["TERM"]?.lowercased() == "dumb" {
+            return false
+        }
         return isatty(STDOUT_FILENO) == 1
     }
 
@@ -103,8 +105,15 @@ extension CodexBarCLI {
     static func usageTextNotes(
         provider: UsageProvider,
         sourceMode: ProviderSourceMode,
-        resolvedSourceLabel: String) -> [String]
+        resolvedSourceLabel: String,
+        dataConfidence: UsageDataConfidence = .unknown) -> [String]
     {
+        // Provider-specific by design: OpenCode Go local quota windows need an explicit authority warning.
+        if provider == .opencodego, dataConfidence == .estimated {
+            return ["Quota estimated from local usage history"]
+        }
+
+        // Provider-specific by design: Kilo automatic mode reports when its CLI fallback won strategy selection.
         guard provider == .kilo,
               sourceMode == .auto,
               resolvedSourceLabel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "cli"
@@ -119,6 +128,7 @@ extension CodexBarCLI {
         sourceMode: ProviderSourceMode,
         attempts: [ProviderFetchAttempt]) -> String?
     {
+        // Provider-specific by design: Kilo exposes its ordered API-to-CLI fallback attempts in verbose output.
         guard provider == .kilo, sourceMode == .auto, !attempts.isEmpty else { return nil }
         let parts = attempts.map { attempt in
             let label = Self.fetchKindLabel(attempt.kind)
@@ -183,6 +193,42 @@ extension CodexBarCLI {
             }
         }
         return UserDefaults.standard.object(forKey: "weeklyProgressWorkDays") as? Int
+    }
+
+    /// The app's "Hide personal information" privacy toggle. Read per request so the
+    /// serve dashboard follows the setting without a restart, the same way reset style
+    /// and weekly work days already do.
+    static func hidePersonalInfoFromDefaults() -> Bool {
+        self.boolFromAppDefaults("hidePersonalInfo") ?? false
+    }
+
+    static func boolFromAppDefaults(_ key: String) -> Bool? {
+        let domains = [
+            "com.steipete.codexbar",
+            "com.steipete.codexbar.debug",
+        ]
+        for domain in domains {
+            if let value = UserDefaults(suiteName: domain)?.object(forKey: key) as? Bool {
+                return value
+            }
+        }
+        return UserDefaults.standard.object(forKey: key) as? Bool
+    }
+
+    static func stringFromAppDefaults(_ key: String) -> String? {
+        let domains = [
+            "com.steipete.codexbar",
+            "com.steipete.codexbar.debug",
+        ]
+        for domain in domains {
+            if let value = UserDefaults(suiteName: domain)?.string(forKey: key), !value.isEmpty {
+                return value
+            }
+        }
+        if let value = UserDefaults.standard.string(forKey: key), !value.isEmpty {
+            return value
+        }
+        return nil
     }
 
     static func fetchProviderUsage(
@@ -355,7 +401,7 @@ extension CodexBarCLI {
                     antigravityPlanInfo: nil,
                     openaiDashboard: nil,
                     error: self.makeErrorPayload(code: .failure, message: error.localizedDescription, kind: .config))
-                self.printJSON([payload], pretty: output.pretty)
+                self.printProviderPayloads([payload], output: output)
             } else {
                 self.writeStderr("Error: \(error.localizedDescription)\n")
             }
@@ -408,6 +454,10 @@ extension CodexBarCLI {
 
     static func _decodeFormatForTesting(from values: ParsedValues) -> OutputFormat {
         self.decodeFormat(from: values)
+    }
+
+    static func _decodeCostGroupByForTesting(from values: ParsedValues) -> CostGroupBy {
+        self.decodeCostGroupBy(from: values)
     }
 
     static func _decodeWebTimeoutForTesting(from values: ParsedValues) throws -> TimeInterval? {

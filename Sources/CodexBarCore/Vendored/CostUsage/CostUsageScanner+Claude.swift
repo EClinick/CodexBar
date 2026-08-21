@@ -134,7 +134,9 @@ extension CostUsageScanner {
         fileManager: FileManager = .default,
         workingDirectory: URL? = nil) -> [URL]
     {
-        if let override = options.claudeProjectsRoots { return override }
+        if let override = options.claudeProjectsRoots {
+            return override
+        }
 
         var roots: [URL] = []
 
@@ -200,6 +202,7 @@ extension CostUsageScanner {
                 checkCancellation: nil)) ?? ClaudeParseResult(days: [:], rows: [], parsedBytes: startOffset)
     }
 
+    // swiftlint:disable:next function_body_length
     static func parseClaudeFileCancellable(
         fileURL: URL,
         range: CostUsageDayRange,
@@ -229,13 +232,19 @@ extension CostUsageScanner {
         }
 
         func toInt(_ v: Any?) -> Int {
-            if let n = v as? NSNumber { return n.intValue }
+            if let n = v as? NSNumber {
+                return n.intValue
+            }
             return 0
         }
 
         func toBool(_ value: Any?) -> Bool {
-            if let bool = value as? Bool { return bool }
-            if let number = value as? NSNumber { return number.boolValue }
+            if let bool = value as? Bool {
+                return bool
+            }
+            if let number = value as? NSNumber {
+                return number.boolValue
+            }
             return false
         }
 
@@ -287,7 +296,9 @@ extension CostUsageScanner {
                             total: cacheCreate)
                         let cacheRead = max(0, toInt(usage["cache_read_input_tokens"]))
                         let output = max(0, toInt(usage["output_tokens"]))
-                        if input == 0, cacheCreate == 0, cacheRead == 0, output == 0 { return }
+                        if input == 0, cacheCreate == 0, cacheRead == 0, output == 0 {
+                            return
+                        }
 
                         let rawTokens = ClaudeRawTokens(
                             input: input,
@@ -438,6 +449,9 @@ extension CostUsageScanner {
     }
 
     private static func reconciledClaudeRows(cache: CostUsageCache) -> [ClaudeUsageRow] {
+        #if DEBUG
+        recordClaudeScanWork(.reconcile)
+        #endif
         var rows: [ClaudeUsageRow] = []
         var winners: [String: (path: String, row: ClaudeUsageRow)] = [:]
 
@@ -491,6 +505,18 @@ extension CostUsageScanner {
             winners[key].map { (key: .canonical(key), row: $0.row) }
         })
         return rows
+    }
+
+    private enum ClaudeAttributionReconciliationKey: Hashable {
+        case canonical(String)
+        case unkeyed(path: String, index: Int)
+    }
+
+    private struct ClaudeAttributionReconciliationItem {
+        let key: ClaudeAttributionReconciliationKey
+        let request: CLIProxyAPIAttributionResolver.Request
+        let modelProvider: CostUsageAttribution.ModelProvider
+        let cachedAttribution: CostUsageAttribution?
     }
 
     private static func reconcileClaudeAttributions(
@@ -574,6 +600,34 @@ extension CostUsageScanner {
             }
             cache.files[path] = file
         }
+    }
+
+    private static func removeCachedCLIProxyAPIAttribution(cache: inout CostUsageCache) {
+        for path in cache.files.keys {
+            guard var file = cache.files[path], let rows = file.claudeRows else { continue }
+            file.claudeRows = rows.map { row in
+                guard row.attribution?.route == .cliProxyAPI else { return row }
+                return ClaudeUsageRow(
+                    dayKey: row.dayKey,
+                    model: row.model,
+                    sessionId: row.sessionId,
+                    messageId: row.messageId,
+                    requestId: row.requestId,
+                    timestampUnixMs: row.timestampUnixMs,
+                    isSidechain: row.isSidechain,
+                    pathRole: row.pathRole,
+                    input: row.input,
+                    cacheRead: row.cacheRead,
+                    cacheCreate: row.cacheCreate,
+                    cacheCreate1h: row.cacheCreate1h,
+                    output: row.output,
+                    costNanos: row.costNanos,
+                    costPriced: row.costPriced,
+                    attribution: nil)
+            }
+            cache.files[path] = file
+        }
+        self.rebuildClaudeDays(cache: &cache)
     }
 
     private static func rebuildClaudeDays(cache: inout CostUsageCache) {
@@ -664,13 +718,25 @@ extension CostUsageScanner {
 
         // Fallback: check for explicit Vertex AI metadata fields
         var candidates: [[String: Any]] = [obj]
-        if let metadata = obj["metadata"] as? [String: Any] { candidates.append(metadata) }
-        if let request = obj["request"] as? [String: Any] { candidates.append(request) }
-        if let context = obj["context"] as? [String: Any] { candidates.append(context) }
-        if let client = obj["client"] as? [String: Any] { candidates.append(client) }
+        if let metadata = obj["metadata"] as? [String: Any] {
+            candidates.append(metadata)
+        }
+        if let request = obj["request"] as? [String: Any] {
+            candidates.append(request)
+        }
+        if let context = obj["context"] as? [String: Any] {
+            candidates.append(context)
+        }
+        if let client = obj["client"] as? [String: Any] {
+            candidates.append(client)
+        }
         if let message = obj["message"] as? [String: Any] {
-            if let metadata = message["metadata"] as? [String: Any] { candidates.append(metadata) }
-            if let request = message["request"] as? [String: Any] { candidates.append(request) }
+            if let metadata = message["metadata"] as? [String: Any] {
+                candidates.append(metadata)
+            }
+            if let request = message["request"] as? [String: Any] {
+                candidates.append(request)
+            }
         }
 
         return candidates.contains { Self.containsVertexAIMetadata(in: $0) }
@@ -699,9 +765,13 @@ extension CostUsageScanner {
                 return true
             }
             if let nested = value as? [String: Any] {
-                if Self.containsVertexAIMetadata(in: nested) { return true }
+                if Self.containsVertexAIMetadata(in: nested) {
+                    return true
+                }
             } else if let array = value as? [Any] {
-                if Self.containsVertexAIMetadata(in: array) { return true }
+                if Self.containsVertexAIMetadata(in: array) {
+                    return true
+                }
             }
         }
 
@@ -711,7 +781,9 @@ extension CostUsageScanner {
     private static func containsVertexAIMetadata(in array: [Any]) -> Bool {
         for entry in array {
             if let dict = entry as? [String: Any] {
-                if self.containsVertexAIMetadata(in: dict) { return true }
+                if self.containsVertexAIMetadata(in: dict) {
+                    return true
+                }
             }
         }
 
@@ -733,14 +805,48 @@ extension CostUsageScanner {
         return [rootPath]
     }
 
+    private final class ClaudeModelsDevCatalogResolver {
+        private let now: Date
+        private let cacheRoot: URL?
+        private var catalog: ModelsDevCatalog?
+
+        init(now: Date, cacheRoot: URL?) {
+            self.now = now
+            self.cacheRoot = cacheRoot
+        }
+
+        func resolve() -> ModelsDevCatalog {
+            if let catalog = self.catalog {
+                return catalog
+            }
+            let catalog = CostUsagePricing.modelsDevCatalog(now: self.now, cacheRoot: self.cacheRoot)
+                ?? ModelsDevCatalog(providers: [:])
+            self.catalog = catalog
+            return catalog
+        }
+    }
+
+    private struct ClaudeSourceFile {
+        let url: URL
+        let stamp: CostUsageClaudeFileStamp
+    }
+
+    private struct ClaudeSourceInventory {
+        var files: [String: ClaudeSourceFile] = [:]
+
+        var stamps: [String: CostUsageClaudeFileStamp] {
+            self.files.mapValues(\.stamp)
+        }
+    }
+
     private final class ClaudeScanState {
         var cache: CostUsageCache
-        var touched: Set<String>
         let range: CostUsageDayRange
         let providerFilter: ClaudeLogProviderFilter
         let forceFullScan: Bool
+        let changedPaths: Set<String>
         let attributionResolver: CLIProxyAPIAttributionResolver?
-        let modelsDevCatalog: ModelsDevCatalog?
+        let modelsDevCatalogResolver: ClaudeModelsDevCatalogResolver
         let modelsDevCacheRoot: URL?
         let checkCancellation: CancellationCheck?
 
@@ -749,18 +855,19 @@ extension CostUsageScanner {
             range: CostUsageDayRange,
             providerFilter: ClaudeLogProviderFilter,
             forceFullScan: Bool,
+            changedPaths: Set<String>,
             attributionResolver: CLIProxyAPIAttributionResolver?,
-            modelsDevCatalog: ModelsDevCatalog?,
+            modelsDevCatalogResolver: ClaudeModelsDevCatalogResolver,
             modelsDevCacheRoot: URL?,
             checkCancellation: CancellationCheck?)
         {
             self.cache = cache
-            self.touched = []
             self.range = range
             self.providerFilter = providerFilter
             self.forceFullScan = forceFullScan
+            self.changedPaths = changedPaths
             self.attributionResolver = attributionResolver
-            self.modelsDevCatalog = modelsDevCatalog
+            self.modelsDevCatalogResolver = modelsDevCatalogResolver
             self.modelsDevCacheRoot = modelsDevCacheRoot
             self.checkCancellation = checkCancellation
         }
@@ -774,12 +881,12 @@ extension CostUsageScanner {
     {
         try state.checkCancellation?()
         let path = url.path
-        state.touched.insert(path)
 
         if let cached = state.cache.files[path],
            cached.mtimeUnixMs == mtimeMs,
            cached.size == size,
-           !state.forceFullScan
+           !state.forceFullScan,
+           !state.changedPaths.contains(path)
         {
             return
         }
@@ -789,13 +896,16 @@ extension CostUsageScanner {
             let canIncremental = size > cached.size && startOffset > 0 && startOffset <= size
                 && cached.claudeRows != nil
             if canIncremental {
+                #if DEBUG
+                Self.recordClaudeScanWork(.transcriptParse)
+                #endif
                 let delta = try Self.parseClaudeFileCancellable(
                     fileURL: url,
                     range: state.range,
                     providerFilter: state.providerFilter,
                     startOffset: startOffset,
                     attributionResolver: state.attributionResolver,
-                    modelsDevCatalog: state.modelsDevCatalog,
+                    modelsDevCatalog: state.modelsDevCatalogResolver.resolve(),
                     modelsDevCacheRoot: state.modelsDevCacheRoot,
                     checkCancellation: state.checkCancellation)
                 let mergedRows = Self.mergeClaudeRows(existing: cached.claudeRows ?? [], delta: delta.rows)
@@ -808,12 +918,15 @@ extension CostUsageScanner {
             }
         }
 
+        #if DEBUG
+        Self.recordClaudeScanWork(.transcriptParse)
+        #endif
         let parsed = try Self.parseClaudeFileCancellable(
             fileURL: url,
             range: state.range,
             providerFilter: state.providerFilter,
             attributionResolver: state.attributionResolver,
-            modelsDevCatalog: state.modelsDevCatalog,
+            modelsDevCatalog: state.modelsDevCatalogResolver.resolve(),
             modelsDevCacheRoot: state.modelsDevCacheRoot,
             checkCancellation: state.checkCancellation)
         let usage = Self.makeClaudeFileUsage(
@@ -824,65 +937,33 @@ extension CostUsageScanner {
         state.cache.files[path] = usage
     }
 
-    private static func scanClaudeRoot(
-        root: URL,
-        state: ClaudeScanState) throws
+    private static func inventoryClaudeRoots(
+        _ roots: [URL],
+        checkCancellation: CancellationCheck?) throws -> ClaudeSourceInventory
     {
-        try state.checkCancellation?()
-        let rootPath = root.path
-        let rootCandidates = Self.claudeRootCandidates(for: rootPath)
-        let prefixes = Set(rootCandidates).map { path in
-            path.hasSuffix("/") ? path : "\(path)/"
-        }
-        let rootExists = rootCandidates.contains { FileManager.default.fileExists(atPath: $0) }
+        var inventory = ClaudeSourceInventory()
 
-        guard rootExists else {
-            let stale = state.cache.files.keys.filter { path in
-                prefixes.contains(where: { path.hasPrefix($0) })
+        for root in roots {
+            try checkCancellation?()
+            let rootPath = root.path
+            let rootCandidates = Self.claudeRootCandidates(for: rootPath)
+            guard let existingRootPath = rootCandidates.first(where: { FileManager.default.fileExists(atPath: $0) })
+            else { continue }
+            let existingRoot = existingRootPath == rootPath ? root : URL(fileURLWithPath: existingRootPath)
+            guard let enumerator = FileManager.default.enumerator(
+                at: existingRoot,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles, .skipsPackageDescendants])
+            else { continue }
+
+            for case let url as URL in enumerator {
+                try checkCancellation?()
+                guard url.pathExtension.lowercased() == "jsonl" else { continue }
+                guard let stamp = CostUsageClaudeFileStamp.read(at: url), stamp.size > 0 else { continue }
+                inventory.files[url.path] = ClaudeSourceFile(url: url, stamp: stamp)
             }
-            for path in stale {
-                state.cache.files.removeValue(forKey: path)
-            }
-            return
         }
-
-        // Always enumerate the directory tree. The per-file mtime/size cache in
-        // processClaudeFile already skips unchanged files, so the only cost here is
-        // the directory walk itself. The previous root-mtime optimization skipped
-        // enumeration entirely when the root directory mtime was unchanged, but on
-        // POSIX systems a directory mtime only updates for direct child changes —
-        // not for files created or modified inside subdirectories. This caused new
-        // session logs to go undetected until the cache was manually cleared.
-        let keys: [URLResourceKey] = [
-            .isRegularFileKey,
-            .contentModificationDateKey,
-            .fileSizeKey,
-        ]
-
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants])
-        else { return }
-
-        for case let url as URL in enumerator {
-            try state.checkCancellation?()
-            guard url.pathExtension.lowercased() == "jsonl" else { continue }
-            guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
-            guard values.isRegularFile == true else { continue }
-            let size = Int64(values.fileSize ?? 0)
-            if size <= 0 { continue }
-
-            let mtime = values.contentModificationDate?.timeIntervalSince1970 ?? 0
-            let mtimeMs = Int64(mtime * 1000)
-            try Self.processClaudeFile(
-                url: url,
-                size: size,
-                mtimeMs: mtimeMs,
-                state: state)
-        }
-
-        // Root mtime caching removed — see comment above.
+        return inventory
     }
 
     private struct ClaudeCLIProxyAPIAttributionState {
@@ -920,6 +1001,7 @@ extension CostUsageScanner {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     static func loadClaudeDaily(
         provider: UsageProvider,
         range: CostUsageDayRange,
@@ -932,59 +1014,115 @@ extension CostUsageScanner {
             checkCancellation: checkCancellation)
         let cliProxyAPIConfigurationGeneration = cliProxyAPIAttributionState.configurationGeneration
         let attributionResolver = cliProxyAPIAttributionState.resolver
-        var cache = CostUsageCacheIO.load(
+        let roots = self.defaultClaudeProjectsRoots(options: options)
+        let inventory = try Self.inventoryClaudeRoots(roots, checkCancellation: checkCancellation)
+        try checkCancellation?()
+
+        let cacheURL = CostUsageClaudeCacheIO.cacheFileURL(provider: provider, cacheRoot: options.cacheRoot)
+        let canonicalCachePath = cacheURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let cacheArtifactStamp = CostUsageClaudeFileStamp.read(at: cacheURL)
+        let pricingURL = ModelsDevCache.cacheFileURL(cacheRoot: options.cacheRoot)
+        let pricingArtifactStamp = CostUsageClaudeFileStamp.read(at: pricingURL)
+        let cliProxyUsageURL = CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: options.cacheRoot)
+        let cliProxyUsageArtifactStamp = CostUsageClaudeFileStamp.read(at: cliProxyUsageURL)
+        let reportKey = Self.claudeReportMemoKey(
+            provider: provider,
+            providerFilter: options.claudeLogProviderFilter,
+            attributionFilter: options.claudeAttributionFilter,
+            cliProxyAPIConfigurationGeneration: cliProxyAPIConfigurationGeneration,
+            range: range,
+            roots: roots,
+            artifactStamps: (
+                cache: cacheArtifactStamp,
+                pricing: pricingArtifactStamp,
+                proxyUsage: cliProxyUsageArtifactStamp))
+        let memo = CostUsageClaudeReportMemo.shared
+        let priorMemo = memo.entry(provider: provider, canonicalCachePath: canonicalCachePath)
+        let sourceInventory = inventory.stamps
+
+        if !options.forceRescan,
+           let priorMemo,
+           priorMemo.sourceInventory == sourceInventory,
+           priorMemo.reportKey == reportKey
+        {
+            try checkCancellation?()
+            return priorMemo.report
+        }
+
+        var cache = CostUsageClaudeCacheIO.load(
             provider: provider,
             cacheRoot: options.cacheRoot,
             calendar: range.calendar)
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
-
         let refreshMs = Int64(max(0, options.refreshMinIntervalSeconds) * 1000)
         let windowExpanded = Self.requestedWindowExpandsCache(range: range, cache: cache)
         let requiresRowBackfill = cache.files.values.contains {
             $0.claudeRows == nil && !$0.days.isEmpty
         }
+        let sourceInventoryChanged = priorMemo.map { $0.sourceInventory != sourceInventory } ?? false
+        let cacheArtifactChanged = priorMemo.map {
+            $0.reportKey.cacheArtifactStamp != cacheArtifactStamp
+        } ?? false
+        let scanConfigurationChanged = priorMemo.map {
+            $0.reportKey.scanConfiguration != reportKey.scanConfiguration
+        } ?? false
         let shouldRefresh = options.forceRescan
             || windowExpanded
             || requiresRowBackfill
+            || sourceInventoryChanged
+            || cacheArtifactChanged
+            || scanConfigurationChanged
             || refreshMs == 0
             || cache.lastScanUnixMs == 0
             || nowMs - cache.lastScanUnixMs > refreshMs
-
         let providerFilter = options.claudeLogProviderFilter
+        let hasStableProcessBaseline = priorMemo != nil
+            && !sourceInventoryChanged
+            && !cacheArtifactChanged
+            && !scanConfigurationChanged
+        let shouldMutateCache = shouldRefresh && (!hasStableProcessBaseline || options.forceRescan || windowExpanded)
+        let modelsDevCatalogResolver = ClaudeModelsDevCatalogResolver(now: now, cacheRoot: options.cacheRoot)
 
-        var touched: Set<String> = []
-
-        if shouldRefresh {
+        if shouldMutateCache {
             try checkCancellation?()
             if options.forceRescan {
                 cache = CostUsageCache()
             }
-            let modelsDevCatalog = CostUsagePricing.modelsDevCatalog(now: now, cacheRoot: options.cacheRoot)
+            let changedPaths: Set<String> = if let priorMemo {
+                Set(inventory.files.keys.filter { path in
+                    priorMemo.sourceInventory[path] != sourceInventory[path]
+                })
+            } else {
+                []
+            }
             let scanState = ClaudeScanState(
                 cache: cache,
                 range: range,
                 providerFilter: providerFilter,
                 forceFullScan: options.forceRescan
                     || windowExpanded
+                    || scanConfigurationChanged
                     || requiresRowBackfill,
+                changedPaths: changedPaths,
                 attributionResolver: attributionResolver,
-                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCatalogResolver: modelsDevCatalogResolver,
                 modelsDevCacheRoot: options.cacheRoot,
                 checkCancellation: checkCancellation)
 
-            let roots = self.defaultClaudeProjectsRoots(options: options)
-            for root in roots {
-                try Self.scanClaudeRoot(
-                    root: root,
+            for path in inventory.files.keys.sorted() {
+                guard let source = inventory.files[path] else { continue }
+                try Self.processClaudeFile(
+                    url: source.url,
+                    size: source.stamp.size,
+                    mtimeMs: source.stamp.mtimeUnixMs,
                     state: scanState)
             }
             try checkCancellation?()
 
             cache = scanState.cache
-            touched = scanState.touched
             cache.roots = nil
 
-            for key in cache.files.keys where !touched.contains(key) {
+            for key in cache.files.keys where sourceInventory[key] == nil {
                 cache.files.removeValue(forKey: key)
             }
 
@@ -992,7 +1130,7 @@ extension CostUsageScanner {
                 Self.reconcileClaudeAttributions(
                     cache: &cache,
                     attributionResolver: attributionResolver,
-                    modelsDevCatalog: modelsDevCatalog,
+                    modelsDevCatalog: modelsDevCatalogResolver.resolve(),
                     modelsDevCacheRoot: options.cacheRoot)
             }
             Self.rebuildClaudeDays(cache: &cache)
@@ -1000,51 +1138,10 @@ extension CostUsageScanner {
             cache.scanSinceKey = range.scanSinceKey
             cache.scanUntilKey = range.scanUntilKey
             cache.lastScanUnixMs = nowMs
-            try checkCancellation?()
-            try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
-                stateRoot: options.cacheRoot)
-            {
-                guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
-                    stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
-                else { throw CancellationError() }
-                if CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
-                    stateRoot: options.cacheRoot)
-                {
-                    for path in cache.files.keys {
-                        guard var file = cache.files[path], let rows = file.claudeRows else { continue }
-                        file.claudeRows = rows.map { row in
-                            guard row.attribution?.route == .cliProxyAPI else { return row }
-                            return ClaudeUsageRow(
-                                dayKey: row.dayKey,
-                                model: row.model,
-                                sessionId: row.sessionId,
-                                messageId: row.messageId,
-                                requestId: row.requestId,
-                                timestampUnixMs: row.timestampUnixMs,
-                                isSidechain: row.isSidechain,
-                                pathRole: row.pathRole,
-                                input: row.input,
-                                cacheRead: row.cacheRead,
-                                cacheCreate: row.cacheCreate,
-                                cacheCreate1h: row.cacheCreate1h,
-                                output: row.output,
-                                costNanos: row.costNanos,
-                                costPriced: row.costPriced,
-                                attribution: nil)
-                        }
-                        cache.files[path] = file
-                    }
-                }
-                CostUsageCacheIO.save(
-                    provider: provider,
-                    cache: cache,
-                    cacheRoot: options.cacheRoot,
-                    calendar: range.calendar)
-            }
         }
 
-        let modelsDevCatalog = CostUsagePricing.modelsDevCatalog(now: now, cacheRoot: options.cacheRoot)
-        return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+        var committedCacheStamp: CostUsageClaudeFileStamp?
+        let report = try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
             stateRoot: options.cacheRoot)
         {
             guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
@@ -1053,6 +1150,17 @@ extension CostUsageScanner {
 
             let reportAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
                 stateRoot: options.cacheRoot)
+            if !reportAttributionEnabled {
+                Self.removeCachedCLIProxyAPIAttribution(cache: &cache)
+            }
+            if shouldMutateCache {
+                committedCacheStamp = try CostUsageClaudeCacheIO.save(
+                    provider: provider,
+                    cache: cache,
+                    cacheRoot: options.cacheRoot,
+                    calendar: range.calendar,
+                    checkCancellation: checkCancellation)
+            }
             let reportAttributionFilter: ClaudeAttributionFilter = if reportAttributionEnabled {
                 options.claudeAttributionFilter
             } else {
@@ -1061,37 +1169,97 @@ extension CostUsageScanner {
                 case .codexBackendOnly: .codexBackendOnly
                 }
             }
-            let report = Self.buildClaudeReportFromCache(
+            let built = Self.buildClaudeReportFromCache(
                 cache: cache,
                 range: range,
                 attributionFilter: reportAttributionFilter,
                 attributionResolver: reportAttributionEnabled ? attributionResolver : nil,
                 allowCachedCLIProxyAPIAttribution: reportAttributionEnabled,
-                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCatalog: modelsDevCatalogResolver.resolve(),
                 modelsDevCacheRoot: options.cacheRoot)
             try checkCancellation?()
             guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
                 stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
             else { throw CancellationError() }
-            return report
+            return built
         }
+
+        let finalCacheArtifactStamp = CostUsageClaudeFileStamp.read(at: cacheURL)
+        let finalPricingArtifactStamp = CostUsageClaudeFileStamp.read(at: pricingURL)
+        let finalCLIProxyUsageArtifactStamp = CostUsageClaudeFileStamp.read(at: cliProxyUsageURL)
+        let finalReportKey = Self.claudeReportMemoKey(
+            provider: provider,
+            providerFilter: providerFilter,
+            attributionFilter: options.claudeAttributionFilter,
+            cliProxyAPIConfigurationGeneration: cliProxyAPIConfigurationGeneration,
+            range: range,
+            roots: roots,
+            artifactStamps: (
+                cache: finalCacheArtifactStamp,
+                pricing: finalPricingArtifactStamp,
+                proxyUsage: finalCLIProxyUsageArtifactStamp))
+        let cacheArtifactIsCurrent = if shouldMutateCache {
+            committedCacheStamp != nil && finalCacheArtifactStamp == committedCacheStamp
+        } else {
+            finalCacheArtifactStamp == cacheArtifactStamp
+        }
+        if cacheArtifactIsCurrent,
+           finalPricingArtifactStamp == pricingArtifactStamp,
+           finalCLIProxyUsageArtifactStamp == cliProxyUsageArtifactStamp
+        {
+            memo.store(
+                provider: provider,
+                canonicalCachePath: canonicalCachePath,
+                sourceInventory: sourceInventory,
+                reportKey: finalReportKey,
+                report: report)
+        }
+        return report
+    }
+
+    // swiftlint:disable:next function_parameter_count
+    private static func claudeReportMemoKey(
+        provider: UsageProvider,
+        providerFilter: ClaudeLogProviderFilter,
+        attributionFilter: ClaudeAttributionFilter,
+        cliProxyAPIConfigurationGeneration: String?,
+        range: CostUsageDayRange,
+        roots: [URL],
+        artifactStamps: (
+            cache: CostUsageClaudeFileStamp?,
+            pricing: CostUsageClaudeFileStamp?,
+            proxyUsage: CostUsageClaudeFileStamp?))
+        -> CostUsageClaudeReportMemoKey
+    {
+        let providerFilterKey = switch providerFilter {
+        case .all: "all"
+        case .vertexAIOnly: "vertex-ai-only"
+        case .excludeVertexAI: "exclude-vertex-ai"
+        }
+        let attributionFilterKey = switch attributionFilter {
+        case .all: "all"
+        case .codexBackendOnly: "codex-backend-only"
+        case .excludeCodexBackend: "exclude-codex-backend"
+        }
+        return CostUsageClaudeReportMemoKey(
+            provider: provider,
+            providerFilter: providerFilterKey,
+            attributionFilter: attributionFilterKey,
+            cliProxyAPIConfigurationGeneration: cliProxyAPIConfigurationGeneration,
+            sinceKey: range.sinceKey,
+            untilKey: range.untilKey,
+            scanSinceKey: range.scanSinceKey,
+            scanUntilKey: range.scanUntilKey,
+            timeZoneIdentifier: range.calendar.timeZone.identifier,
+            roots: roots.map { $0.standardizedFileURL.resolvingSymlinksInPath().path }.sorted(),
+            cacheArtifactStamp: artifactStamps.cache,
+            pricingArtifactStamp: artifactStamps.pricing,
+            cliProxyUsageArtifactStamp: artifactStamps.proxyUsage)
     }
 
     private struct ClaudeReportAggregation {
         var dayModels: [String: [ClaudeDayModelKey: [Int]]] = [:]
         var repricedCosts: [ClaudeDayModelKey: ClaudeRepricedCost] = [:]
-    }
-
-    private enum ClaudeAttributionReconciliationKey: Hashable {
-        case canonical(String)
-        case unkeyed(path: String, index: Int)
-    }
-
-    private struct ClaudeAttributionReconciliationItem {
-        let key: ClaudeAttributionReconciliationKey
-        let request: CLIProxyAPIAttributionResolver.Request
-        let modelProvider: CostUsageAttribution.ModelProvider
-        let cachedAttribution: CostUsageAttribution?
     }
 
     private struct ClaudeAttributionAggregationContext {
@@ -1132,15 +1300,14 @@ extension CostUsageScanner {
                     cacheCreate: item.row.cacheCreate,
                     output: item.row.output))
         }
-        let liveAttributions: [CostUsageAttribution?] = if let attributionResolver = attributionContext.resolver {
-            attributionResolver.attributions(for: requests).map(Optional.some)
+        let liveAttributions: [CostUsageAttribution?] = if let resolver = attributionContext.resolver {
+            resolver.attributions(for: requests).map(Optional.some)
         } else {
             Array(repeating: nil, count: rowsWithProviders.count)
         }
 
         for (index, item) in rowsWithProviders.enumerated() {
             let row = item.row
-            let modelProvider = item.modelProvider
             let request = requests[index]
             let liveAttribution = liveAttributions[index]
             let cachedAttribution: CostUsageAttribution? =
@@ -1153,25 +1320,23 @@ extension CostUsageScanner {
             let attribution: CostUsageAttribution? = if let liveAttribution,
                                                         liveAttribution.route == .cliProxyAPI
             {
-                Self.preferredCLIProxyAPIAttribution(
-                    live: liveAttribution,
-                    cached: cachedAttribution)
-            } else if attributionContext.allowCachedCLIProxyAPIAttribution,
-                      row.attribution?.route == .cliProxyAPI,
-                      attributionContext.resolver?.hasMatchingObservation(for: request) != true
+                Self.preferredCLIProxyAPIAttribution(live: liveAttribution, cached: cachedAttribution)
+            } else if Self.shouldPreserveCachedCLIProxyAPIAttribution(
+                row.attribution,
+                allowCached: attributionContext.allowCachedCLIProxyAPIAttribution,
+                hasMatchingObservation: attributionContext.resolver?.hasMatchingObservation(for: request) == true)
             {
                 row.attribution
-            } else if modelProvider != .anthropic {
+            } else if item.modelProvider != .anthropic {
                 liveAttribution ?? cachedAttribution
             } else {
                 nil
             }
-            let isCodexBackend = attribution?.route == .cliProxyAPI
-                && attribution?.upstream?.isCodex == true
+            let isCodexBackend = attribution?.route == .cliProxyAPI && attribution?.upstream?.isCodex == true
             let isUnresolvedAttribution = if attribution?.route == .cliProxyAPI {
                 attribution?.upstream == nil
             } else {
-                modelProvider != .anthropic && modelProvider != .unknown
+                item.modelProvider != .anthropic && item.modelProvider != .unknown
             }
             let includeRow = switch attributionContext.filter {
             case .all: true
@@ -1180,11 +1345,11 @@ extension CostUsageScanner {
             }
             guard includeRow else { continue }
 
+            #if DEBUG
+            Self.recordClaudeScanWork(.reprice)
+            #endif
+            let key = ClaudeDayModelKey(day: row.dayKey, model: row.model, attribution: attribution)
             var models = result.dayModels[row.dayKey] ?? [:]
-            let key = ClaudeDayModelKey(
-                day: row.dayKey,
-                model: row.model,
-                attribution: attribution)
             var packed = models[key] ?? [0, 0, 0, 0, 0, 0]
             packed[0] += row.input
             packed[1] += row.cacheRead
@@ -1194,8 +1359,8 @@ extension CostUsageScanner {
             models[key] = packed
             result.dayModels[row.dayKey] = models
 
-            var cost = result.repricedCosts[key] ?? ClaudeRepricedCost()
-            cost.sampleCount += 1
+            var repriced = result.repricedCosts[key] ?? ClaudeRepricedCost()
+            repriced.sampleCount += 1
             let wasPriced = row.costPriced ?? (row.costNanos > 0)
             let upstreamModel = attribution?.route == .cliProxyAPI
                 ? attribution?.upstream?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1222,11 +1387,11 @@ extension CostUsageScanner {
                 pricingModel: pricingModel,
                 currentCost: currentCost)
             if let resolvedCost {
-                cost.total += resolvedCost
+                repriced.total += resolvedCost
             } else {
-                cost.unresolved = true
+                repriced.unresolved = true
             }
-            result.repricedCosts[key] = cost
+            result.repricedCosts[key] = repriced
         }
         return result
     }
@@ -1245,6 +1410,18 @@ extension CostUsageScanner {
         return cached
     }
 
+    static func shouldPreserveCachedCLIProxyAPIAttribution(
+        _ cached: CostUsageAttribution?,
+        allowCached: Bool,
+        hasMatchingObservation: Bool) -> Bool
+    {
+        guard allowCached,
+              let cached,
+              cached.route == .cliProxyAPI
+        else { return false }
+        return !hasMatchingObservation || cached.evidence.contains(.cliProxyUsageTelemetry)
+    }
+
     static func resolvedClaudeRowCost(
         wasPriced: Bool,
         cachedCostNanos: Int,
@@ -1260,7 +1437,7 @@ extension CostUsageScanner {
             return currentCost
         }
         guard wasPriced, pricingModelUnchanged else { return nil }
-        return Double(cachedCostNanos) / Self.costScale
+        return Double(cachedCostNanos) / 1_000_000_000.0
     }
 
     private static func currentClaudeRowCost(
@@ -1298,9 +1475,7 @@ extension CostUsageScanner {
             cacheCreationInputTokens: row.cacheCreate,
             cacheCreationInputTokens1h: row.cacheCreate1h ?? 0,
             outputTokens: row.output,
-            pricingDate: row.timestampUnixMs.map {
-                Date(timeIntervalSince1970: Double($0) / 1000)
-            },
+            pricingDate: row.timestampUnixMs.map { Date(timeIntervalSince1970: Double($0) / 1000) },
             modelsDevCatalog: modelsDevCatalog,
             modelsDevCacheRoot: modelsDevCacheRoot)
     }
@@ -1341,7 +1516,8 @@ extension CostUsageScanner {
             guard let models = dayModels[day] else { continue }
             let modelKeys = models.keys.sorted {
                 if $0.model != $1.model { return $0.model < $1.model }
-                return ($0.attribution?.upstream?.provider ?? "") < ($1.attribution?.upstream?.provider ?? "")
+                return ($0.attribution?.deterministicSortKey ?? "")
+                    < ($1.attribution?.deterministicSortKey ?? "")
             }
 
             var dayInput = 0

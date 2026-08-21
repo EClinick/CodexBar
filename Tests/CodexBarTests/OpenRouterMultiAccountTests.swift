@@ -1,9 +1,9 @@
-import CodexBarCore
 import Commander
 import Foundation
 import Testing
 @testable import CodexBar
 @testable import CodexBarCLI
+@testable import CodexBarCore
 
 private actor OpenRouterAccountFetchRecorder {
     struct Request: Sendable {
@@ -57,6 +57,21 @@ private struct OpenRouterAccountFetchStrategy: ProviderFetchStrategy {
 @Suite(.serialized)
 struct OpenRouterMultiAccountTests {
     @Test
+    func `app settings snapshot contributes the optional management key`() throws {
+        let settings = Self.makeSettings(suite: "OpenRouterMultiAccountTests-management-key")
+        settings.updateProviderConfig(provider: .openrouter) { config in
+            config.pluginSecrets = [
+                OpenRouterSettingsReader.managementAPIKeyEnvironmentKey: "fixture-management-key",
+            ]
+        }
+
+        let snapshot = ProviderRegistry.makeSettingsSnapshot(settings: settings, tokenOverride: nil)
+        let providerSettings = try #require(snapshot[OpenRouterProviderSettingsKey.self])
+
+        #expect(providerSettings.managementAPIKey == "fixture-management-key")
+    }
+
+    @Test
     func `catalog entry exposes OpenRouter accounts in provider settings`() throws {
         let support = try #require(TokenAccountSupportCatalog.support(for: .openrouter))
         #expect(support.title == "API keys")
@@ -82,7 +97,7 @@ struct OpenRouterMultiAccountTests {
     @Test
     func `two OpenRouter accounts fetch with isolated keys and caches`() async throws {
         let settings = Self.makeSettings(suite: "OpenRouterMultiAccountTests-fetch")
-        settings.openRouterAPIToken = "decoy-token"
+        settings[providerConfig: .openrouter, field: .apiKey] = "decoy-token"
         settings.addTokenAccount(provider: .openrouter, label: "Personal", token: "test-key")
         settings.addTokenAccount(provider: .openrouter, label: "Work", token: "test-auth-token")
         let accounts = settings.tokenAccounts(for: .openrouter)
@@ -101,15 +116,15 @@ struct OpenRouterMultiAccountTests {
         let snapshots = try #require(store.accountSnapshots[.openrouter])
         #expect(snapshots.map(\.account.id) == accounts.map(\.id))
         #expect(snapshots.map { $0.snapshot?.accountEmail(for: .openrouter) } == ["Personal", "Work"])
-        #expect(snapshots.map(\.snapshot?.openRouterUsage?.balance) == [90, 60])
+        #expect(snapshots.map { $0.snapshot?.detailRow(label: "Remaining")?.value } == ["$90.00", "$60.00"])
         #expect(Set(snapshots.map(\.cacheKey)).count == 2)
 
         settings.setActiveTokenAccountIndex(0, for: .openrouter)
         store.activateCachedTokenAccountSnapshot(provider: .openrouter, accountID: accounts[0].id)
-        #expect(store.snapshot(for: .openrouter)?.openRouterUsage?.balance == 90)
+        #expect(store.snapshot(for: .openrouter)?.detailRow(label: "Remaining")?.value == "$90.00")
         settings.setActiveTokenAccountIndex(1, for: .openrouter)
         store.activateCachedTokenAccountSnapshot(provider: .openrouter, accountID: accounts[1].id)
-        #expect(store.snapshot(for: .openrouter)?.openRouterUsage?.balance == 60)
+        #expect(store.snapshot(for: .openrouter)?.detailRow(label: "Remaining")?.value == "$60.00")
     }
 
     @Test

@@ -477,6 +477,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         configuredCodexModel: String?) -> CostUsageAttribution.Upstream?
     {
         let providers = Array(Set(self.authProviders))
+        // Provider-specific by design: CLIProxyAPI's auth inventory names its Codex OAuth backend with a raw string.
         let codexProviders = providers.filter {
             $0.provider.caseInsensitiveCompare("codex") == .orderedSame
         }
@@ -497,6 +498,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
               !self.hasConfiguredOpenAIAPIUpstream,
               providers.count == 1,
               let provider = providers.first,
+              // Provider-specific by design: only CLIProxyAPI's Codex OAuth backend proves subscription attribution.
               provider.provider.caseInsensitiveCompare("codex") == .orderedSame
         else { return nil }
         return CostUsageAttribution.Upstream(
@@ -656,6 +658,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                   let rawType = auth.type?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !rawType.isEmpty
             else { return nil }
+            // Provider-specific by design: CLIProxyAPI serializes Codex OAuth credentials under the raw type name.
             let isCodex = rawType.caseInsensitiveCompare("codex") == .orderedSame
             return AuthProvider(
                 provider: isCodex ? "codex" : rawType.lowercased(),
@@ -717,6 +720,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         guard !self.loadCodexOAuthModelAliases(home: home, fileManager: fileManager).isEmpty else {
             return false
         }
+        // Provider-specific by design: a Codex auth inventory entry is required to activate Codex model aliases.
         return self.loadAuthProviders(home: home, fileManager: fileManager).contains {
             $0.provider.caseInsensitiveCompare("codex") == .orderedSame
         }

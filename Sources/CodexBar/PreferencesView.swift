@@ -22,6 +22,9 @@ enum SettingsPane: Hashable {
     static let windowMinWidth: CGFloat = 800
     static let windowMinHeight: CGFloat = 540
     static let sidebarWidth: CGFloat = 260
+    static let sidebarMinWidth: CGFloat = 200
+    static let sidebarMaxWidth: CGFloat = 380
+    static let sidebarWidthDefaultsKey = "settingsSidebarWidth"
     static let detailMaxWidth: CGFloat = 780
 
     var title: String {
@@ -56,6 +59,13 @@ struct PreferencesView: View {
     let codexAccountPromotionCoordinator: CodexAccountPromotionCoordinator
     let runProviderLoginFlow: @MainActor (UsageProvider) async -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(SettingsPane.sidebarWidthDefaultsKey) private var sidebarWidth: Double = SettingsPane.sidebarWidth
+
+    /// The persisted width, guarded against out-of-range values (edited defaults,
+    /// bounds that shrank in an update) so a bad stored value can't wreck the layout.
+    private var clampedSidebarWidth: CGFloat {
+        min(max(self.sidebarWidth, SettingsPane.sidebarMinWidth), SettingsPane.sidebarMaxWidth)
+    }
 
     init(
         settings: SettingsStore,
@@ -85,9 +95,10 @@ struct PreferencesView: View {
         HStack(spacing: 0) {
             // Golden Gate-style sidebar: edge-to-edge material with a hairline separator,
             // no floating card chrome. The material ignores the safe area so it runs up
-            // behind the transparent titlebar.
+            // behind the transparent titlebar. The width is user-resizable via the
+            // input-only drag strip overlaid on the detail pane's leading edge.
             SettingsSidebarView(settings: self.settings, store: self.store, selection: self.$selection.pane)
-                .frame(width: SettingsPane.sidebarWidth)
+                .frame(width: self.clampedSidebarWidth)
                 .background {
                     SettingsSidebarMaterial()
                         .ignoresSafeArea()
@@ -102,6 +113,9 @@ struct PreferencesView: View {
                     maxHeight: .infinity,
                     alignment: .topLeading)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .overlay(alignment: .leading) {
+                    self.sidebarResizeHandle
+                }
         }
         .frame(
             minWidth: SettingsPane.windowMinWidth,
@@ -124,6 +138,21 @@ struct PreferencesView: View {
         .onChange(of: self.settings.shouldRequestAdaptiveActivityScanConsent) { _, shouldRequest in
             guard shouldRequest else { return }
             AdaptiveActivityConsentPresenter.presentIfNeeded(settings: self.settings)
+        }
+    }
+
+    @ViewBuilder
+    private var sidebarResizeHandle: some View {
+        let handle = SidebarResizeHandle(
+            width: self.$sidebarWidth,
+            minWidth: SettingsPane.sidebarMinWidth,
+            maxWidth: SettingsPane.sidebarMaxWidth)
+            .frame(width: SidebarResizeHandleView.grabWidth)
+            .ignoresSafeArea()
+        if #available(macOS 15.0, *) {
+            handle.pointerStyle(.columnResize)
+        } else {
+            handle
         }
     }
 
@@ -191,6 +220,32 @@ enum SettingsWindowSizing {
             frame.size = repairedSize
             window.setFrame(frame, display: true)
         }
+    }
+}
+
+@MainActor
+enum SettingsWindowStageBehavior {
+    /// Keep Settings on the current Stage Manager stage / Space instead of
+    /// yanking focus back to wherever the window last appeared.
+    static let collectionBehavior: NSWindow.CollectionBehavior = [
+        .moveToActiveSpace,
+        .fullScreenAuxiliary,
+    ]
+
+    static func applyCollectionBehavior(_ window: NSWindow) {
+        // Assign the exact OptionSet. `.canJoinAllSpaces` is mutually exclusive
+        // with `.moveToActiveSpace`, and SwiftUI may restore a stale Space mask.
+        if window.collectionBehavior != self.collectionBehavior {
+            window.collectionBehavior = self.collectionBehavior
+        }
+    }
+
+    static func present(_ window: NSWindow) {
+        self.applyCollectionBehavior(window)
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
     }
 }
 
@@ -313,6 +368,9 @@ final class SettingsWindowAppearanceView: NSView {
         guard let window else { return }
         if !window.styleMask.contains(.resizable) {
             window.styleMask.insert(.resizable)
+        }
+        if !window.styleMask.contains(.miniaturizable) {
+            window.styleMask.insert(.miniaturizable)
         }
         if !window.titlebarAppearsTransparent {
             window.titlebarAppearsTransparent = true

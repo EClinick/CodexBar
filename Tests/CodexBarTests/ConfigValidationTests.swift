@@ -84,9 +84,25 @@ struct ConfigValidationTests {
     @Test
     func `reports unsupported source`() {
         var config = CodexBarConfig.makeDefault()
+        // Gemini has no CLI source; Codex now accepts `.api` for PAT.
+        config.setProviderConfig(ProviderConfig(id: .gemini, source: .cli))
+        let issues = CodexBarConfigValidator.validate(config)
+        #expect(issues.contains(where: {
+            $0.provider == .gemini && $0.code == "unsupported_source"
+        }))
+    }
+
+    @Test
+    func `allows Codex API source without config apiKey`() {
+        var config = CodexBarConfig.makeDefault()
         config.setProviderConfig(ProviderConfig(id: .codex, source: .api))
         let issues = CodexBarConfigValidator.validate(config)
-        #expect(issues.contains(where: { $0.code == "unsupported_source" }))
+        #expect(!issues.contains(where: {
+            $0.provider == .codex && $0.code == "unsupported_source"
+        }))
+        #expect(!issues.contains(where: {
+            $0.provider == .codex && $0.code == "api_key_missing"
+        }))
     }
 
     @Test
@@ -284,6 +300,19 @@ struct ConfigValidationTests {
     }
 
     @Test
+    func `allows OpenRouter endpoint`() {
+        var config = CodexBarConfig.makeDefault()
+        config.setProviderConfig(ProviderConfig(
+            id: .openrouter,
+            apiKey: "fixture",
+            enterpriseHost: "https://router.example.com/api/v1"))
+        let issues = CodexBarConfigValidator.validate(config)
+
+        #expect(!issues.contains(where: { $0.provider == .openrouter && $0.code == "enterprise_host_unused" }))
+        #expect(!issues.contains(where: { $0.provider == .openrouter && $0.code == "invalid_enterprise_host" }))
+    }
+
+    @Test
     func `unsupported enterprise host warning lists every supported provider`() throws {
         var config = CodexBarConfig.makeDefault()
         config.setProviderConfig(ProviderConfig(id: .gemini, enterpriseHost: "https://example.com"))
@@ -292,8 +321,8 @@ struct ConfigValidationTests {
         }))
 
         #expect(issue.message ==
-            "enterpriseHost is set but only azureopenai, clawrouter, copilot, kimi, litellm, llmproxy, sub2api, and " +
-            "wayfinder " +
+            "enterpriseHost is set but only azureopenai, clawrouter, copilot, kimi, litellm, llmproxy, openrouter, " +
+            "sub2api, and wayfinder " +
             "support enterpriseHost.")
     }
 
@@ -347,12 +376,11 @@ struct ConfigValidationTests {
         var config = CodexBarConfig.makeDefault()
         config.setProviderConfig(ProviderConfig(id: .gemini, workspaceID: "workspace-123"))
         let issues = CodexBarConfigValidator.validate(config)
-        #expect(issues.contains(where: { $0.provider == .gemini && $0.code == "workspace_unused" }))
-        #expect(issues.contains(where: { issue in
-            issue.provider == .gemini &&
-                issue.code == "workspace_unused" &&
-                issue.message.contains("openai")
-        }))
+        let issue = issues.first { $0.provider == .gemini && $0.code == "workspace_unused" }
+        let expectedMessage =
+            "workspaceID is set but only azureopenai, openai, opencode, opencodego, devin, deepgram, and xai " +
+            "support workspaceID."
+        #expect(issue?.message == expectedMessage)
     }
 
     @Test

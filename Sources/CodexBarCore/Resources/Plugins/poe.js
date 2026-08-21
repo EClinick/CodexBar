@@ -3,12 +3,14 @@ defineProvider({
   name: "Poe",
   endpoints: ["https://api.poe.com"],
   auth: { type: "bearer", secret: "POE_API_KEY" },
-  settings: [{
-    key: "POE_API_KEY",
-    title: "API key",
-    subtitle: "Poe API key used for point balance and history.",
-    type: "secure",
-  }],
+  settings: [
+    {
+      key: "POE_API_KEY",
+      title: "API key",
+      subtitle: "Poe API key used for point balance and history.",
+      type: "secure",
+    },
+  ],
 
   async fetchUsage(ctx) {
     const balanceResponse = await ctx.http.getJSON("https://api.poe.com/usage/current_balance");
@@ -30,9 +32,9 @@ defineProvider({
       return number;
     }
     function compact(value) {
-      return new Intl.NumberFormat("en-US", {
+      return ctx.format.number(value, {
         maximumFractionDigits: value >= 1000 ? 0 : 1,
-      }).format(value);
+      });
     }
     function entryDate(value) {
       if (typeof value === "number" && Number.isFinite(value)) {
@@ -48,6 +50,19 @@ defineProvider({
       }
       return null;
     }
+    function timeString(date) {
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+    }
+    function summaryRow(label, summary) {
+      const secondary = [`${summary.requests} requests`];
+      if (summary.hasCost) secondary.push(`$${summary.cost.toFixed(2)}`);
+      return {
+        label,
+        value: `${compact(summary.points)} points`,
+        secondaryValue: secondary.join(" · "),
+      };
+    }
 
     const balance = optionalNumber(payload.current_point_balance, "current_point_balance");
     const entries = [];
@@ -60,8 +75,13 @@ defineProvider({
         if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
         const root = response.json;
         if (!root || typeof root !== "object" || Array.isArray(root)) throw new Error("invalid history JSON");
-        const rows = Array.isArray(root.data) ? root.data :
-          Array.isArray(root.items) ? root.items : Array.isArray(root.results) ? root.results : [];
+        const rows = Array.isArray(root.data)
+          ? root.data
+          : Array.isArray(root.items)
+            ? root.items
+            : Array.isArray(root.results)
+              ? root.results
+              : [];
         for (const row of rows) {
           if (!row || typeof row !== "object" || Array.isArray(row)) continue;
           const date = entryDate(row.creation_time ?? row.timestamp ?? row.created_at);
@@ -69,20 +89,27 @@ defineProvider({
           const points = Math.max(0, optionalNumber(row.cost_points ?? row.points ?? row.point_cost, "points") ?? 0);
           const cost = optionalNumber(row.cost_usd ?? row.usd, "cost_usd");
           const model = typeof row.bot_name === "string" && row.bot_name.trim() ? row.bot_name.trim() : "unknown";
-          const usageType = typeof row.usage_type === "string" && row.usage_type.trim()
-            ? row.usage_type.trim() : "unknown";
+          const usageType =
+            typeof row.usage_type === "string" && row.usage_type.trim() ? row.usage_type.trim() : "unknown";
           entries.push({ date, points, cost, model, usageType });
         }
         const next = typeof root.next_cursor === "string" && root.next_cursor.trim() ? root.next_cursor.trim() : null;
-        cursor = next || (root.has_more === true && rows.length && typeof rows[rows.length - 1].query_id === "string"
-          ? rows[rows.length - 1].query_id.trim() : null);
+        cursor =
+          next ||
+          (root.has_more === true && rows.length && typeof rows[rows.length - 1].query_id === "string"
+            ? rows[rows.length - 1].query_id.trim()
+            : null);
         if (!cursor) break;
         const lastDate = rows.length
-          ? entryDate(rows[rows.length - 1].creation_time ?? rows[rows.length - 1].timestamp ?? rows[rows.length - 1].created_at)
+          ? entryDate(
+              rows[rows.length - 1].creation_time ??
+                rows[rows.length - 1].timestamp ??
+                rows[rows.length - 1].created_at,
+            )
           : null;
         if (lastDate && lastDate.getTime() < cutoff) break;
       }
-    } catch (_) {}
+    } catch {}
 
     const daily = new Map();
     const models = new Map();
@@ -92,29 +119,75 @@ defineProvider({
       const bucket = daily.get(day) || { points: 0, requests: 0, cost: 0, hasCost: false };
       bucket.points += entry.points;
       bucket.requests += 1;
-      if (entry.cost !== null) { bucket.cost += Math.max(0, entry.cost); bucket.hasCost = true; }
+      if (entry.cost !== null) {
+        bucket.cost += Math.max(0, entry.cost);
+        bucket.hasCost = true;
+      }
       daily.set(day, bucket);
       models.set(entry.model, (models.get(entry.model) || 0) + entry.points);
       types.set(entry.usageType, (types.get(entry.usageType) || 0) + entry.points);
     }
     const days = Array.from(daily.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    const summarize = count => days.slice(-count).reduce((sum, item) => {
-      sum.points += item[1].points;
-      sum.requests += item[1].requests;
-      if (item[1].hasCost) { sum.cost += item[1].cost; sum.hasCost = true; }
-      return sum;
-    }, { points: 0, requests: 0, cost: 0, hasCost: false });
+    const summarize = (count) =>
+      days.slice(-count).reduce(
+        (sum, item) => {
+          sum.points += item[1].points;
+          sum.requests += item[1].requests;
+          if (item[1].hasCost) {
+            sum.cost += item[1].cost;
+            sum.hasCost = true;
+          }
+          return sum;
+        },
+        { points: 0, requests: 0, cost: 0, hasCost: false },
+      );
     const seven = summarize(7);
     const thirty = summarize(30);
+    const now = new Date(Date.now());
+    const todayUTC = now.toISOString().slice(0, 10);
+    const todayEntries = entries.filter((entry) => entry.date.toISOString().slice(0, 10) === todayUTC);
+    const today = todayEntries.reduce(
+      (sum, entry) => {
+        sum.points += entry.points;
+        sum.requests += 1;
+        if (entry.cost !== null) {
+          sum.cost += Math.max(0, entry.cost);
+          sum.hasCost = true;
+        }
+        return sum;
+      },
+      { points: 0, requests: 0, cost: 0, hasCost: false },
+    );
     const topModel = Array.from(models.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
-    const topType = Array.from(types.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    const topTypes = Array.from(types.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     const rows = [];
     if (balance !== null) rows.push({ label: "Current balance", value: `${compact(balance)} points` });
     if (entries.length) {
-      rows.push({ label: "Last 7 days", value: `${compact(seven.points)} points`, secondaryValue: `${seven.requests} requests` });
-      rows.push({ label: "Last 30 days", value: `${compact(thirty.points)} points`, secondaryValue: `${thirty.requests} requests` });
-      if (topModel) rows.push({ label: "Top model", value: topModel[0], secondaryValue: `${compact(topModel[1])} points` });
-      if (topType) rows.push({ label: "Top usage type", value: topType[0], secondaryValue: `${compact(topType[1])} points` });
+      rows.push(summaryRow("Today", today));
+      rows.push(summaryRow("Last 7 days", seven));
+      rows.push(summaryRow("Last 30 days", thirty));
+      if (topModel)
+        rows.push({ label: "Top model", value: topModel[0], secondaryValue: `${compact(topModel[1])} points` });
+      if (topTypes.length) {
+        rows.push({
+          label: "Usage mix",
+          value: topTypes
+            .slice(0, 2)
+            .map((item) => `${item[0]}: ${compact(item[1])} points`)
+            .join(" · "),
+        });
+      }
+      entries
+        .slice()
+        .sort((a, b) => b.date - a.date)
+        .slice(0, 3)
+        .forEach((entry, index) => {
+          rows.push({
+            label: index === 0 ? "Recent activity" : timeString(entry.date),
+            value: index === 0 ? `${timeString(entry.date)} · ${entry.model}` : entry.model,
+            secondaryValue: `${compact(entry.points)} points`,
+          });
+        });
     }
     const section = { title: "Points", rows };
     if (days.length) {
@@ -122,7 +195,7 @@ defineProvider({
         kind: "bars",
         title: "Daily points",
         unit: "points",
-        points: days.map(item => ({ label: item[0], value: item[1].points })),
+        points: days.map((item) => ({ label: item[0], value: item[1].points })),
       };
     }
     const result = { details: [section], identity: {} };

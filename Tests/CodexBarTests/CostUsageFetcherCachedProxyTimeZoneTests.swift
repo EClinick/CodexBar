@@ -67,14 +67,14 @@ struct CostUsageFetcherCachedProxyTimeZoneTests {
             includePiSessions: false,
             scannerOptions: options)
 
-        let claudeCache = CostUsageCacheIO.load(provider: .claude, cacheRoot: env.cacheRoot)
+        let claudeCache = CostUsageClaudeCacheIO.load(provider: .claude, cacheRoot: env.cacheRoot)
         #expect(!claudeCache.days.isEmpty)
         var staleZoneCalendar = options.calendar
         staleZoneCalendar.timeZone = try #require(
             ["UTC", "Asia/Bangkok"]
                 .compactMap(TimeZone.init(identifier:))
                 .first { $0.identifier != options.calendar.timeZone.identifier })
-        CostUsageCacheIO.save(
+        _ = try CostUsageClaudeCacheIO.save(
             provider: .claude,
             cache: claudeCache,
             cacheRoot: env.cacheRoot,
@@ -84,6 +84,7 @@ struct CostUsageFetcherCachedProxyTimeZoneTests {
             now: day,
             scannerOptions: options)
 
-        #expect(cachedSnapshot == nil)
+        #expect(cachedSnapshot?.daily.isEmpty == true)
+        #expect(cachedSnapshot?.last30DaysTokens == 0)
     }
 }

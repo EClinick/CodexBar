@@ -6,124 +6,21 @@ import Testing
 
 struct ShareStatsTests {
     @Test
-    func `proxy spend does not inherit an ambient codex subscription`() {
-        #expect(!spendDashboardShouldUseAmbientCodexSubscription(
-            rowID: SpendDashboardSource.codexProxySourceID,
-            codexRowCount: 1))
-        #expect(spendDashboardShouldUseAmbientCodexSubscription(
-            rowID: "codex:managed-account",
-            codexRowCount: 1))
-        #expect(!spendDashboardShouldUseAmbientCodexSubscription(
-            rowID: "codex:managed-account",
-            codexRowCount: 2))
+    func `descriptor share plan labels preserve the legacy central table`() throws {
+        var fingerprint: UInt64 = 1_469_598_103_934_665_603
+        for descriptor in ProviderDescriptorRegistry.all where !descriptor.metadata.sharePlanLabels.isEmpty {
+            Self.hash(descriptor.id.rawValue, into: &fingerprint)
+            for key in descriptor.metadata.sharePlanLabels.keys.sorted() {
+                Self.hash(key, into: &fingerprint)
+                try Self.hash(#require(descriptor.metadata.sharePlanLabels[key]), into: &fingerprint)
+            }
+        }
+
+        #expect(fingerprint == 2_500_333_924_415_227_190)
     }
 
     @Test
-    func `proxy spend is not counted as an account or subscription`() throws {
-        let rows = [
-            SpendDashboardModel.ProviderRow(
-                id: "codex:managed-account",
-                rank: 1,
-                provider: .codex,
-                displayName: "Codex",
-                totalTokens: 100,
-                totalCost: 1,
-                coveredDayCount: 1),
-            SpendDashboardModel.ProviderRow(
-                id: SpendDashboardSource.codexProxySourceID,
-                rank: 2,
-                provider: .codex,
-                displayName: "Codex · CLIProxyAPI",
-                totalTokens: 100,
-                totalCost: 1,
-                coveredDayCount: 1),
-            SpendDashboardModel.ProviderRow(
-                id: "cursor",
-                rank: 3,
-                provider: .cursor,
-                displayName: "Cursor",
-                totalTokens: 100,
-                totalCost: 1,
-                coveredDayCount: 1),
-        ]
-
-        #expect(spendDashboardCodexAccountRowCount(rows) == 1)
-        #expect(spendDashboardSubscriptionCount(rows) == 2)
-
-        let group = SpendDashboardModel.CurrencyGroup(
-            currencyCode: "USD",
-            providers: rows,
-            models: [
-                SpendDashboardModel.ModelRow(
-                    rank: 1,
-                    provider: .codex,
-                    providerName: "Codex · CLIProxyAPI",
-                    modelName: "gpt-5.4",
-                    totalTokens: 100,
-                    totalCost: 1),
-            ],
-            dailyPoints: [],
-            totalTokens: 300,
-            totalCost: 3,
-            coveredDayCount: 1,
-            chartDomain: Self.date...Self.date,
-            modelHistoryCompleteness: .complete)
-        let payload = try #require(ShareStatsBuilder.make(
-            model: SpendDashboardModel(requestedDays: 1, groups: [group])))
-
-        #expect(payload.providers.map(\.providerName) == ["Codex", "Cursor"])
-        #expect(payload.currencies.first?.estimatedCost == 3)
-        #expect(payload.topModels.first?.estimatedCost == 1)
-    }
-
-    @Test
-    func `proxy attributed models share under their verified upstream provider`() throws {
-        let attribution = CostUsageAttribution(
-            client: .claudeCode,
-            route: .cliProxyAPI,
-            modelProvider: .google,
-            upstream: .init(provider: "gemini", authType: .oauth),
-            evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider])
-        let group = SpendDashboardModel.CurrencyGroup(
-            currencyCode: "USD",
-            providers: [
-                SpendDashboardModel.ProviderRow(
-                    id: "claude",
-                    rank: 1,
-                    provider: .claude,
-                    displayName: "Claude",
-                    totalTokens: 100,
-                    totalCost: 1,
-                    coveredDayCount: 1),
-            ],
-            models: [
-                SpendDashboardModel.ModelRow(
-                    rank: 1,
-                    provider: .claude,
-                    providerName: "Claude",
-                    modelName: "gemini-3-pro",
-                    totalTokens: 100,
-                    totalCost: 1,
-                    attribution: attribution),
-            ],
-            dailyPoints: [],
-            totalTokens: 100,
-            totalCost: 1,
-            coveredDayCount: 1,
-            chartDomain: Self.date...Self.date,
-            modelHistoryCompleteness: .complete)
-
-        let payload = try #require(ShareStatsBuilder.make(
-            model: SpendDashboardModel(requestedDays: 1, groups: [group])))
-        let model = try #require(payload.topModels.first)
-
-        #expect(model.provider == .gemini)
-        #expect(model.providerName == "Gemini")
-        #expect(model.modelName == "Gemini")
-    }
-
-    @Test
-    func `builder preserves native currencies and unavailable spend`() throws {
+    func `builder preserves native currencies and partial group spend`() throws {
         let subscriptionNames = try [
             "codex:one": #require(Self.subscriptionName(provider: .codex, rawName: "pro")),
             "cursor": #require(Self.subscriptionName(provider: .cursor, rawName: "Cursor Pro")),
@@ -134,10 +31,15 @@ struct ShareStatsTests {
             subscriptionNames: subscriptionNames))
 
         #expect(payload.days == 30)
-        #expect(payload.totalTokens == nil)
+        #expect(payload.totalTokens == 500)
+        #expect(payload.hasPartialTokens)
         #expect(payload.currencies == [
             ShareStatsCurrencyPayload(currencyCode: "GBP", estimatedCost: 12, coveredDayCount: 10),
-            ShareStatsCurrencyPayload(currencyCode: "USD", estimatedCost: nil, coveredDayCount: 0),
+            ShareStatsCurrencyPayload(
+                currencyCode: "USD",
+                estimatedCost: 4,
+                coveredDayCount: 0,
+                isPartial: true),
         ])
         #expect(payload.providers.map(\.providerName) == ["Claude", "Codex · #1", "Cursor"])
         #expect(payload.providers.map(\.subscriptionName) == ["Max", "Pro 20x", "Cursor Pro"])
@@ -147,9 +49,26 @@ struct ShareStatsTests {
         let text = ShareStatsFormatting.text(payload)
         #expect(text.contains("GBP: £12.00 estimated · coverage 10/30 days"))
         #expect(text.contains("Claude · Max: 300 tokens · ~£12.00 est · 10/30 days"))
-        #expect(text.contains("USD: Spend unavailable · coverage 0/30 days"))
+        #expect(text.contains("USD: $4.00 estimated (partial) · coverage 0/30 days"))
+        #expect(text.contains("~500 tracked tokens (partial)"))
         #expect(text.contains("Cursor · Cursor Pro: Spend unavailable"))
         #expect(!text.contains("£12.00 +"))
+    }
+
+    @Test
+    func `copied share stats uses all-time labels for the scan window`() throws {
+        let payload = try #require(ShareStatsBuilder.make(
+            model: SpendDashboardModel(
+                requestedDays: SpendDashboardSource.scanDays,
+                groups: Self.dashboard.groups)))
+        let text = ShareStatsFormatting.text(payload)
+
+        #expect(payload.days == SpendDashboardSource.scanDays)
+        #expect(text.contains("My AI subscriptions · all time"))
+        #expect(text.contains("GBP: £12.00 estimated · coverage 10/all"))
+        #expect(text.contains("Claude: 300 tokens · ~£12.00 est · 10/all"))
+        #expect(!text.contains("last \(SpendDashboardSource.scanDays) days"))
+        #expect(!text.contains("/\(SpendDashboardSource.scanDays) days"))
     }
 
     @Test
@@ -269,6 +188,7 @@ struct ShareStatsTests {
                     coveredDayCount: 7),
             ],
             models: rows,
+            projects: [],
             dailyPoints: [],
             totalTokens: 1,
             totalCost: nil,
@@ -324,6 +244,7 @@ struct ShareStatsTests {
                         totalTokens: nil,
                         totalCost: nil),
                 ],
+                projects: [],
                 dailyPoints: [],
                 totalTokens: 10,
                 totalCost: -.infinity,
@@ -365,6 +286,7 @@ struct ShareStatsTests {
                     totalTokens: 10,
                     totalCost: 2),
             ],
+            projects: [],
             dailyPoints: [],
             totalTokens: nil,
             totalCost: nil,
@@ -423,13 +345,21 @@ struct ShareStatsTests {
     }
 
     @Test
-    func `overall token total becomes unavailable on overflow`() {
+    func `overall token total skips unavailable groups and fails closed on overflow`() {
         #expect(ShareStatsBuilder.combinedTotalTokens([Int.max, 1]) == nil)
-        #expect(ShareStatsBuilder.combinedTotalTokens([10, nil]) == nil)
+        #expect(ShareStatsBuilder.combinedTotalTokens([10, nil]) == 10)
+        #expect(ShareStatsBuilder.combinedTotalTokens([nil, nil]) == nil)
         #expect(ShareStatsBuilder.combinedTotalTokens([10, 20]) == 30)
     }
 
     private static let date = Date(timeIntervalSince1970: 1_783_382_400)
+
+    private static func hash(_ value: String, into fingerprint: inout UInt64) {
+        for byte in value.utf8 {
+            fingerprint = (fingerprint ^ UInt64(byte)) &* 1_099_511_628_211
+        }
+        fingerprint = (fingerprint ^ 0xFF) &* 1_099_511_628_211
+    }
 
     private static func subscriptionName(
         provider: UsageProvider,
@@ -484,6 +414,7 @@ struct ShareStatsTests {
                         totalTokens: 1000,
                         totalCost: 1),
                 ],
+                projects: [],
                 dailyPoints: [],
                 totalTokens: 300,
                 totalCost: 12,
@@ -519,9 +450,10 @@ struct ShareStatsTests {
                         totalTokens: 200,
                         totalCost: 4)
                 },
+                projects: [],
                 dailyPoints: [],
-                totalTokens: nil,
-                totalCost: nil,
+                totalTokens: 200,
+                totalCost: 4,
                 coveredDayCount: 0,
                 chartDomain: self.date...self.date,
                 modelHistoryCompleteness: .complete),

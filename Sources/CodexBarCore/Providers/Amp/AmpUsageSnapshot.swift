@@ -10,22 +10,6 @@ public struct AmpWorkspaceBalance: Codable, Equatable, Sendable {
     }
 }
 
-public struct AmpUsageDetails: Codable, Equatable, Sendable {
-    public let individualCredits: Double?
-    public let workspaceBalances: [AmpWorkspaceBalance]
-    public let subscriptionPlan: String?
-
-    public init(
-        individualCredits: Double?,
-        workspaceBalances: [AmpWorkspaceBalance],
-        subscriptionPlan: String? = nil)
-    {
-        self.individualCredits = individualCredits
-        self.workspaceBalances = workspaceBalances
-        self.subscriptionPlan = subscriptionPlan
-    }
-}
-
 public struct AmpSubscriptionUsage: Equatable, Sendable {
     public let plan: String
     public let otherUsedPercent: Double
@@ -101,6 +85,9 @@ extension AmpUsageSnapshot {
                     nil
                 }
                 let resetsAt: Date? = {
+                    if self.freeResetDescription == "resets daily" {
+                        return Self.nextFreeTierReset(after: now)
+                    }
                     guard quota > 0, let hourlyReplenishment, hourlyReplenishment > 0 else { return nil }
                     return now.addingTimeInterval(max(0, used / hourlyReplenishment * 3600))
                 }()
@@ -129,6 +116,11 @@ extension AmpUsageSnapshot {
                 resetDescription: usage.resetDescription)
         }
         let primary = subscriptionPrimary ?? freeWindow
+        let extraRateWindows: [NamedRateWindow]? = if self.subscription != nil, let freeWindow {
+            [NamedRateWindow(id: "amp-free", title: "Amp Free", window: freeWindow)]
+        } else {
+            nil
+        }
 
         let identity = ProviderIdentitySnapshot(
             providerID: .amp,
@@ -136,24 +128,34 @@ extension AmpUsageSnapshot {
             accountOrganization: self.accountOrganization,
             loginMethod: self.subscription?.plan ?? (primary == nil ? "Amp" : "Amp Free"))
 
-        let ampUsage: AmpUsageDetails? = if self.individualCredits != nil || !self.workspaceBalances.isEmpty ||
-            self.subscription != nil
-        {
-            AmpUsageDetails(
-                individualCredits: self.individualCredits,
-                workspaceBalances: self.workspaceBalances,
-                subscriptionPlan: self.subscription?.plan)
-        } else {
-            nil
+        var detailRows: [ProviderDetailSection.Row] = []
+        if let individualCredits = self.individualCredits {
+            detailRows.append(.makeRow(
+                label: "Individual credits",
+                value: UsageFormatter.usdString(individualCredits)))
         }
+        detailRows.append(contentsOf: self.workspaceBalances.map {
+            .makeRow(label: "Workspace \($0.name)", value: UsageFormatter.usdString($0.remaining))
+        })
 
         return UsageSnapshot(
             primary: primary,
             secondary: subscriptionSecondary,
             tertiary: nil,
-            ampUsage: ampUsage,
+            extraRateWindows: extraRateWindows,
             providerCost: nil,
+            details: detailRows.isEmpty ? [] : [.makeSection(title: "Credits", rows: detailRows)],
             updatedAt: self.updatedAt,
             identity: identity)
+    }
+
+    private static func nextFreeTierReset(after date: Date) -> Date? {
+        var calendar = Calendar(identifier: .gregorian)
+        guard let timeZone = TimeZone(identifier: "America/New_York") else { return nil }
+        calendar.timeZone = timeZone
+        return calendar.nextDate(
+            after: date,
+            matching: DateComponents(hour: 20),
+            matchingPolicy: .nextTime)
     }
 }

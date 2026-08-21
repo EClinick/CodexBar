@@ -170,6 +170,7 @@ extension UsageStore {
         refresh: ((UsageProvider, Bool) async -> Void)? = nil) async
     {
         self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-reconnected")
+        // Provider-specific by design: reconnecting can change both sides of the Codex/Claude attribution split.
         for provider in [UsageProvider.claude, .codex] {
             if let refresh {
                 await refresh(provider, true)
