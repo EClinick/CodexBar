@@ -95,7 +95,7 @@ extension UsageStore {
     }
 
     func tokenSnapshot(for provider: UsageProvider) -> CostUsageTokenSnapshot? {
-        self.tokenSnapshots[provider.instanceID]
+        self.accountScopedTokenSnapshot(for: provider)
     }
 
     func tokenSnapshotForCurrentProviderConfig(

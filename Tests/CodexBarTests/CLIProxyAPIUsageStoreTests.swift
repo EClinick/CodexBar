@@ -207,6 +207,33 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
+    func `collector maintenance retries failed recovery before the daily deadline`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let recorder = CLIProxyAPICleanupRetryRecorder()
+
+        store.startCLIProxyAPIUsageCollector(
+            collectionInterval: .milliseconds(1),
+            pendingPruneInterval: .seconds(24 * 60 * 60),
+            failedPruneRetryInterval: .milliseconds(1),
+            maintenance: { recorder.attempt() },
+            collector: { .disabled })
+        for _ in 0..<100 where recorder.count < 2 {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        let task = store.stopCLIProxyAPIUsageCollector()
+        await task?.value
+
+        #expect(recorder.count == 2)
+    }
+
+    @Test
     func `reconnecting invalidates and force refreshes both proxy affected token snapshots`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         let root = FileManager.default.temporaryDirectory

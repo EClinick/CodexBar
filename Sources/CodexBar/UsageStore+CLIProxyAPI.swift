@@ -17,11 +17,23 @@ extension UsageStore {
     private static let cliProxyAPIUsageCollectionInterval: Duration = .seconds(30)
     private static let cliProxyAPIPendingPruneInterval: Duration = .seconds(24 * 60 * 60)
 
-    func startCLIProxyAPIUsageCollector(initialConfigurationGeneration: String? = nil) {
+    func startCLIProxyAPIUsageCollector(
+        initialConfigurationGeneration: String? = nil,
+        collectionInterval: Duration? = nil,
+        pendingPruneInterval: Duration? = nil,
+        failedPruneRetryInterval: Duration? = nil,
+        maintenance: (@Sendable () -> Bool)? = nil,
+        collector: (@Sendable () async -> CLIProxyAPIUsageCollectionResult)? = nil)
+    {
         self.stopCLIProxyAPIUsageCollector()
         self.cliProxyAPICleanupRetryTask?.cancel()
         self.cliProxyAPICleanupRetryTask = nil
-        let pendingPruneInterval = Self.cliProxyAPIPendingPruneInterval
+        let collectionInterval = collectionInterval ?? Self.cliProxyAPIUsageCollectionInterval
+        let pendingPruneInterval = pendingPruneInterval ?? Self.cliProxyAPIPendingPruneInterval
+        let failedPruneRetryInterval = failedPruneRetryInterval ?? Self.cliProxyAPIUsageCollectionInterval
+        let maintenance = maintenance ?? {
+            CLIProxyAPIUsageCollector.pruneExpiredUsage()
+        }
         let initialConfigurationGeneration = initialConfigurationGeneration ??
             CostUsageCacheLocations.cliProxyAPIConfigurationGeneration()
         self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) { [weak self] in
@@ -31,15 +43,15 @@ extension UsageStore {
             while !Task.isCancelled {
                 let now = ContinuousClock.now
                 if nextPendingPruneAt.map({ now >= $0 }) ?? true {
-                    _ = CLIProxyAPIUsageCollector.pruneExpiredUsage()
-                    nextPendingPruneAt = now.advanced(by: pendingPruneInterval)
+                    let retryDelay = maintenance() ? pendingPruneInterval : failedPruneRetryInterval
+                    nextPendingPruneAt = now.advanced(by: retryDelay)
                 }
-                guard let result = await self?.collectCLIProxyAPIUsageNow() else { return }
+                guard let result = await self?.collectCLIProxyAPIUsageNow(collector: collector) else { return }
                 collectorState = await self?.handleCLIProxyAPIUsageCollectionResult(
                     result,
                     collectorState: collectorState) ?? collectorState
                 do {
-                    try await Task.sleep(for: Self.cliProxyAPIUsageCollectionInterval)
+                    try await Task.sleep(for: collectionInterval)
                 } catch {
                     return
                 }

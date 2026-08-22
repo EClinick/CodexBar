@@ -4,6 +4,17 @@ import Testing
 
 struct CostUsageFetcherCachedProxyTimeZoneTests {
     @Test
+    func `calendar scoped fetcher retains the default proxy home`() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
+
+        let options = try #require(CostUsageFetcher(calendar: calendar).scannerOptionsOverride())
+
+        #expect(options.calendar.timeZone == calendar.timeZone)
+        #expect(options.cliProxyAPIHome?.lastPathComponent == ".cli-proxy-api")
+    }
+
+    @Test
     func `proxy snapshot uses the configured calendar at a day boundary`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

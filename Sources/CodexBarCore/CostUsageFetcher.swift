@@ -74,6 +74,7 @@ public struct CostUsageFetcher: Sendable {
         } else {
             var options = CostUsageScanner.Options()
             options.cacheRoot = cacheRoot
+            options.cliProxyAPIHome = Self.defaultCLIProxyAPIHome()
             if let calendar {
                 options.calendar = calendar
             }
@@ -309,7 +310,7 @@ public struct CostUsageFetcher: Sendable {
             refreshPricingInBackground: refreshPricingInBackground)
     }
 
-    private func scannerOptionsOverride() -> CostUsageScanner.Options? {
+    func scannerOptionsOverride() -> CostUsageScanner.Options? {
         self.scannerOptions
     }
 
