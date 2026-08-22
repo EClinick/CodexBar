@@ -81,8 +81,16 @@ struct SpendDashboardCodexProxySourceTests {
     }
 
     @Test
-    func `cancelled proxy load invalidates retained proxy source`() async {
+    func `cancelled proxy load preserves direct account and invalidates retained proxy source`() async {
         let now = Date(timeIntervalSince1970: 1_784_179_200)
+        let account = CodexSpendScanRequest(
+            id: "first",
+            displayName: "Codex · first",
+            source: .profileHome(path: "/synthetic/first"),
+            homePath: "/synthetic/first",
+            authFingerprint: nil,
+            authFileWasReadable: false,
+            cacheIdentity: "first-cache")
         let staleProxyInput = SpendDashboardModel.ProviderInput(
             id: SpendDashboardSource.codexProxySourceID,
             provider: .codex,
@@ -92,24 +100,21 @@ struct SpendDashboardCodexProxySourceTests {
         let request = SpendDashboardLoadRequest(
             configuration: SpendDashboardConfiguration(
                 costUsageEnabled: true,
-                providerIDs: [UsageProvider.claude.rawValue],
-                codexAccountIdentities: []),
+                providerIDs: [UsageProvider.codex.rawValue],
+                codexAccountIdentities: ["\(account.id)|\(account.cacheIdentity)"]),
             capturedInputs: [staleProxyInput],
             unavailableSourceIDs: [],
-            codexRequests: [],
+            codexRequests: [account],
             now: now,
             force: false)
-        let emptySnapshot = Self.snapshot(cost: 0, now: now)
+        let accountSnapshot = Self.snapshot(cost: 1, now: now)
 
         let result = await SpendDashboardSource.load(
             request,
-            codexSnapshotLoader: { _ in
-                Issue.record("No account-scoped Codex snapshot should be requested.")
-                return emptySnapshot
-            },
+            codexSnapshotLoader: { _ in accountSnapshot },
             codexProxySnapshotLoader: { _ in throw CancellationError() })
 
-        #expect(result.inputs.isEmpty)
+        #expect(result.inputs.map(\.id) == ["codex:first"])
         #expect(result.failedSourceIDs == [SpendDashboardSource.codexProxySourceID])
         #expect(result.invalidatedSourceIDs == [SpendDashboardSource.codexProxySourceID])
     }
