@@ -155,9 +155,10 @@ extension UsageStore {
             }
             collectorState.configurationAvailability = .unavailable
             collectorState.configurationGeneration = configurationGeneration()
-        case .collected:
+        case let .collected(count):
             let currentGeneration = configurationGeneration()
-            if collectorState.configurationAvailability == .unavailable ||
+            if count > 0 ||
+                collectorState.configurationAvailability == .unavailable ||
                 (collectorState.configurationGeneration != nil &&
                     collectorState.configurationGeneration != currentGeneration)
             {

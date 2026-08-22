@@ -422,6 +422,45 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
+    func `new telemetry invalidates and refreshes proxy affected snapshots`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let snapshot = Self.tokenSnapshot()
+        store.publishTokenSnapshot(snapshot, for: .codex)
+        store.publishTokenSnapshot(snapshot, for: .claude)
+        let codexPublicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
+        let claudePublicationRevision = store.tokenSnapshotPublicationRevision(for: .claude)
+        let dashboardRevision = store.spendDashboardCodexCostCatchUpRevision
+        var refreshes: [(UsageProvider, Bool)] = []
+
+        let collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .collected(1),
+            collectorState: CLIProxyAPIUsageCollectorState(
+                configurationAvailability: .available,
+                configurationGeneration: "current-generation"),
+            configurationGeneration: { "current-generation" },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
+
+        #expect(collectorState.configurationAvailability == .available)
+        #expect(collectorState.configurationGeneration == "current-generation")
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
+        #expect(store.tokenSnapshot(for: .claude) == nil)
+        #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
+        #expect(store.spendDashboardCodexCostCatchUpRevision == dashboardRevision + 1)
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
+    }
+
+    @Test
     func `failed generation transition stays pending until collection succeeds`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         settings.costUsageEnabled = true

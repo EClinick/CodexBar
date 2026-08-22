@@ -988,6 +988,7 @@ extension CostUsageScanner {
     private struct ClaudeCLIProxyAPIAttributionState {
         let configurationGeneration: String?
         let resolver: CLIProxyAPIAttributionResolver?
+        let usageArtifactStamp: CostUsageClaudeFileStamp?
     }
 
     private static func captureClaudeCLIProxyAPIAttributionState(
@@ -1014,9 +1015,12 @@ extension CostUsageScanner {
             } else {
                 attributionResolver = nil
             }
+            let usageArtifactStamp = CostUsageClaudeFileStamp.read(
+                at: CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: options.cacheRoot))
             return ClaudeCLIProxyAPIAttributionState(
                 configurationGeneration: configurationGeneration,
-                resolver: attributionResolver)
+                resolver: attributionResolver,
+                usageArtifactStamp: usageArtifactStamp)
         }
     }
 
@@ -1031,8 +1035,10 @@ extension CostUsageScanner {
         let cliProxyAPIAttributionState = try self.captureClaudeCLIProxyAPIAttributionState(
             options: options,
             checkCancellation: checkCancellation)
+        self.claudeCLIProxyAPIAttributionCaptureObserverStore?.observer()
         let cliProxyAPIConfigurationGeneration = cliProxyAPIAttributionState.configurationGeneration
         let attributionResolver = cliProxyAPIAttributionState.resolver
+        let cliProxyUsageArtifactStamp = cliProxyAPIAttributionState.usageArtifactStamp
         let roots = self.defaultClaudeProjectsRoots(options: options)
         let inventory = try Self.inventoryClaudeRoots(roots, checkCancellation: checkCancellation)
         try checkCancellation?()
@@ -1043,7 +1049,6 @@ extension CostUsageScanner {
         let pricingURL = ModelsDevCache.cacheFileURL(cacheRoot: options.cacheRoot)
         let pricingArtifactStamp = CostUsageClaudeFileStamp.read(at: pricingURL)
         let cliProxyUsageURL = CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: options.cacheRoot)
-        let cliProxyUsageArtifactStamp = CostUsageClaudeFileStamp.read(at: cliProxyUsageURL)
         let reportKey = Self.claudeReportMemoKey(
             provider: provider,
             providerFilter: options.claudeLogProviderFilter,
