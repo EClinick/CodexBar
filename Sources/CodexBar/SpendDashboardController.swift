@@ -11,6 +11,7 @@ struct SpendDashboardConfiguration: Equatable, Sendable {
     let providerIDs: [String]
     let codexAccountIdentities: [String]
     let codexAccountDisplayNames: [String: String]
+    let cliProxyAPIConfigurationGeneration: String?
     let sourceOwnershipFingerprints: [String]
     let sourceRevisions: [String]
     let bucketTimeZoneIdentifier: String
@@ -25,6 +26,7 @@ struct SpendDashboardConfiguration: Equatable, Sendable {
         providerIDs: [String],
         codexAccountIdentities: [String],
         codexAccountDisplayNames: [String: String] = [:],
+        cliProxyAPIConfigurationGeneration: String? = nil,
         sourceOwnershipFingerprints: [String] = [],
         sourceRevisions: [String] = [],
         bucketTimeZoneIdentifier: String = "",
@@ -38,6 +40,7 @@ struct SpendDashboardConfiguration: Equatable, Sendable {
         self.providerIDs = providerIDs
         self.codexAccountIdentities = codexAccountIdentities
         self.codexAccountDisplayNames = codexAccountDisplayNames
+        self.cliProxyAPIConfigurationGeneration = cliProxyAPIConfigurationGeneration
         self.sourceOwnershipFingerprints = sourceOwnershipFingerprints
         self.sourceRevisions = sourceRevisions
         self.bucketTimeZoneIdentifier = bucketTimeZoneIdentifier
@@ -219,6 +222,10 @@ enum SpendDashboardSource {
             providerIDs: providers.map(\.rawValue),
             codexAccountIdentities: codexSources.map(\.identity),
             codexAccountDisplayNames: codexDisplayNames,
+            cliProxyAPIConfigurationGeneration: self.shouldLoadCodexProxy(
+                providerIDs: providers.map(\.rawValue))
+                ? CostUsageCacheLocations.cliProxyAPIConfigurationGeneration()
+                : nil,
             sourceOwnershipFingerprints: self.sourceOwnershipFingerprints(
                 providers: providers,
                 settings: settings,
@@ -1763,6 +1770,7 @@ final class SpendDashboardController {
         lhs.costUsageEnabled == rhs.costUsageEnabled &&
             lhs.providerIDs == rhs.providerIDs &&
             lhs.codexAccountIdentities == rhs.codexAccountIdentities &&
+            lhs.cliProxyAPIConfigurationGeneration == rhs.cliProxyAPIConfigurationGeneration &&
             lhs.sourceOwnershipFingerprints == rhs.sourceOwnershipFingerprints &&
             lhs.bucketTimeZoneIdentifier == rhs.bucketTimeZoneIdentifier &&
             lhs.openCodexUsageLogsEnabled == rhs.openCodexUsageLogsEnabled &&
@@ -1779,6 +1787,7 @@ final class SpendDashboardController {
         guard lhs.costUsageEnabled == rhs.costUsageEnabled,
               lhs.providerIDs == rhs.providerIDs,
               lhs.codexAccountIdentities == rhs.codexAccountIdentities,
+              lhs.cliProxyAPIConfigurationGeneration == rhs.cliProxyAPIConfigurationGeneration,
               lhs.sourceOwnershipFingerprints == rhs.sourceOwnershipFingerprints,
               lhs.sourceRevisions == rhs.sourceRevisions,
               lhs.bucketTimeZoneIdentifier == rhs.bucketTimeZoneIdentifier,
@@ -1807,7 +1816,11 @@ final class SpendDashboardController {
         let changedCodexIDs = codexIDs.filter {
             previousCodexOwnership[$0] != currentCodexOwnership[$0]
         }
-        return Set(changedProviderIDs).union(changedCodexIDs)
+        var invalidatedSourceIDs = Set(changedProviderIDs).union(changedCodexIDs)
+        if previous.cliProxyAPIConfigurationGeneration != current.cliProxyAPIConfigurationGeneration {
+            invalidatedSourceIDs.insert(SpendDashboardSource.codexProxySourceID)
+        }
+        return invalidatedSourceIDs
     }
 
     private static func sourceOwnershipByID(_ fingerprints: [String]) -> [String: String] {
