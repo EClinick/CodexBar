@@ -10,6 +10,7 @@ struct CLIProxyAPIUsageCollectorState: Equatable {
 
     var configurationAvailability: ConfigurationAvailability = .unknown
     var configurationGeneration: String?
+    var telemetryRevision: String?
 }
 
 @MainActor
@@ -39,7 +40,8 @@ extension UsageStore {
         self.cliProxyAPIUsageCollectorTask = Task.detached(priority: .utility) { [weak self] in
             var nextPendingPruneAt: ContinuousClock.Instant?
             var collectorState = CLIProxyAPIUsageCollectorState(
-                configurationGeneration: initialConfigurationGeneration)
+                configurationGeneration: initialConfigurationGeneration,
+                telemetryRevision: CLIProxyAPIUsageTelemetryRevision.current())
             while !Task.isCancelled {
                 let now = ContinuousClock.now
                 if nextPendingPruneAt.map({ now >= $0 }) ?? true {
@@ -143,6 +145,9 @@ extension UsageStore {
         configurationGeneration: () -> String? = {
             CostUsageCacheLocations.cliProxyAPIConfigurationGeneration()
         },
+        telemetryRevision: () -> String? = {
+            CLIProxyAPIUsageTelemetryRevision.current()
+        },
         refresh: ((UsageProvider, Bool) async -> Void)? = nil) async -> CLIProxyAPIUsageCollectorState
     {
         var collectorState = collectorState
@@ -155,17 +160,21 @@ extension UsageStore {
             }
             collectorState.configurationAvailability = .unavailable
             collectorState.configurationGeneration = configurationGeneration()
+            collectorState.telemetryRevision = telemetryRevision()
         case let .collected(count):
             let currentGeneration = configurationGeneration()
+            let currentTelemetryRevision = telemetryRevision()
             if count > 0 ||
                 collectorState.configurationAvailability == .unavailable ||
                 (collectorState.configurationGeneration != nil &&
-                    collectorState.configurationGeneration != currentGeneration)
+                    collectorState.configurationGeneration != currentGeneration) ||
+                collectorState.telemetryRevision != currentTelemetryRevision
             {
                 await self.refreshCLIProxyAPICostAttribution(refresh: refresh)
             }
             collectorState.configurationAvailability = .available
             collectorState.configurationGeneration = currentGeneration
+            collectorState.telemetryRevision = currentTelemetryRevision
         case .failed:
             let currentGeneration = configurationGeneration()
             if collectorState.configurationGeneration != nil,

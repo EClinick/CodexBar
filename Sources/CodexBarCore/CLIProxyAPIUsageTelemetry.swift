@@ -358,6 +358,19 @@ enum CLIProxyAPIUsageCacheIO {
             .appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName, isDirectory: false)
     }
 
+    static func revision(
+        cacheRoot: URL? = nil,
+        fileManager: FileManager = .default) -> String?
+    {
+        let url = self.cacheFileURL(cacheRoot: cacheRoot)
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path) else { return nil }
+        let fileNumber = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+        let modificationDate = (attributes[.modificationDate] as? Date)?
+            .timeIntervalSinceReferenceDate.bitPattern ?? 0
+        let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        return "\(fileNumber):\(modificationDate):\(fileSize)"
+    }
+
     static func legacyCacheFileURL(cacheRoot: URL? = nil) -> URL {
         let root = cacheRoot ?? self.defaultLegacyCacheRoot()
         return root
@@ -515,6 +528,15 @@ enum CLIProxyAPIUsageCacheIO {
         } catch {
             return false
         }
+    }
+}
+
+package enum CLIProxyAPIUsageTelemetryRevision {
+    package static func current(
+        cacheRoot: URL? = nil,
+        fileManager: FileManager = .default) -> String?
+    {
+        CLIProxyAPIUsageCacheIO.revision(cacheRoot: cacheRoot, fileManager: fileManager)
     }
 }
 

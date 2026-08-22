@@ -461,6 +461,41 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
+    func `telemetry imported by another process refreshes proxy affected snapshots`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        store.publishTokenSnapshot(Self.tokenSnapshot(), for: .claude)
+        var refreshes: [(UsageProvider, Bool)] = []
+
+        let collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .collected(0),
+            collectorState: CLIProxyAPIUsageCollectorState(
+                configurationAvailability: .available,
+                configurationGeneration: "current-generation",
+                telemetryRevision: "before-import"),
+            configurationGeneration: { "current-generation" },
+            telemetryRevision: { "after-import" },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
+
+        #expect(collectorState.configurationAvailability == .available)
+        #expect(collectorState.configurationGeneration == "current-generation")
+        #expect(collectorState.telemetryRevision == "after-import")
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenSnapshot(for: .claude) == nil)
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
+    }
+
+    @Test
     func `failed generation transition stays pending until collection succeeds`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         settings.costUsageEnabled = true
@@ -648,6 +683,43 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(store.tokenSnapshot(for: .codex) == nil)
         #expect(store.tokenSnapshotPublicationRevision(for: .codex) == publicationRevision + 1)
         #expect(store.tokenRefreshInFlight.isEmpty)
+        #expect(store.tokenRefreshSequenceTask == nil)
+    }
+
+    @Test
+    func `clearing cost cache drops a queued forced token scan`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let refreshCount = LockIsolated(0)
+        store._test_tokenUsageRefreshOverride = { _, _ in
+            refreshCount.setValue(refreshCount.value + 1)
+            while !Task.isCancelled {
+                await Task.yield()
+            }
+        }
+        defer { store._test_tokenUsageRefreshOverride = nil }
+
+        store.scheduleTokenRefreshForTesting()
+        while refreshCount.value == 0 {
+            await Task.yield()
+        }
+        store.scheduleForcedTokenRefresh()
+        #expect(store.pendingForcedTokenRefresh)
+
+        let error = await store.clearCostUsageCache(clearDirectories: {
+            (cleared: 0, errorMessage: nil)
+        })
+        try? await Task.sleep(for: .milliseconds(50))
+
+        #expect(error == nil)
+        #expect(refreshCount.value == 1)
+        #expect(!store.pendingForcedTokenRefresh)
         #expect(store.tokenRefreshSequenceTask == nil)
     }
 

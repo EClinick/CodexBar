@@ -42,6 +42,7 @@ extension UsageStore {
     /// less than `forcedTokenRefreshMinInterval` ago already delivered fresh cost data, so the
     /// request is dropped instead of queued.
     func scheduleForcedTokenRefresh(now: Date = Date()) {
+        guard !self.costUsageCacheClearInProgress else { return }
         if let last = self.lastForcedTokenRefreshStartedAt,
            now.timeIntervalSince(last) >= 0,
            now.timeIntervalSince(last) < Self.forcedTokenRefreshMinInterval
@@ -59,6 +60,7 @@ extension UsageStore {
     }
 
     func refreshTokenUsageSequenceNow(force: Bool) async {
+        guard !self.costUsageCacheClearInProgress else { return }
         guard let task = await self.serializedTokenRefreshTask(force: force, scope: .all) else { return }
         await self.awaitTokenRefreshSequence(task)
     }
@@ -84,6 +86,7 @@ extension UsageStore {
     }
 
     func drainTokenRefreshesForCostCacheClear() async {
+        self.pendingForcedTokenRefresh = false
         self.tokenRefreshRetryProviders.removeAll()
         let sequenceTask = self.tokenRefreshSequenceTask
         sequenceTask?.cancel()
@@ -91,6 +94,7 @@ extension UsageStore {
         while !self.tokenRefreshInFlight.isEmpty {
             await Task.yield()
         }
+        self.pendingForcedTokenRefresh = false
         self.tokenRefreshRetryProviders.removeAll()
     }
 
@@ -98,6 +102,7 @@ extension UsageStore {
         force: Bool,
         scope: TokenRefreshSequenceScope) async -> Task<Void, Never>?
     {
+        guard !self.costUsageCacheClearInProgress else { return nil }
         if force {
             while let existing = self.tokenRefreshSequenceTask {
                 existing.cancel()
@@ -169,7 +174,10 @@ extension UsageStore {
     /// on start instead.
     @discardableResult
     private func startPendingForcedTokenRefreshIfPossible() -> Bool {
-        guard self.pendingForcedTokenRefresh, !Task.isCancelled else { return false }
+        guard !self.costUsageCacheClearInProgress,
+              self.pendingForcedTokenRefresh,
+              !Task.isCancelled
+        else { return false }
         self.pendingForcedTokenRefresh = false
         guard !self.hasForcedRefreshEnrichmentInFlight else { return false }
         // The forced all-provider pass rescans every enabled lane, so stale-retry lanes fold into it.
@@ -179,6 +187,7 @@ extension UsageStore {
     }
 
     func requestTokenRefreshAfterStaleCompletion(for provider: UsageProvider) {
+        guard !self.costUsageCacheClearInProgress else { return }
         self.tokenRefreshRetryProviders.insert(provider.instanceID)
         Task { @MainActor [weak self] in
             await Task.yield()
@@ -188,7 +197,8 @@ extension UsageStore {
 
     @discardableResult
     private func startPendingTokenRefreshRetryIfPossible() -> Bool {
-        guard !self.tokenRefreshRetryProviders.isEmpty,
+        guard !self.costUsageCacheClearInProgress,
+              !self.tokenRefreshRetryProviders.isEmpty,
               self.tokenRefreshSequenceTask == nil,
               self.settings.costUsageEnabled || self.settings.codexLocalSessionCostLedgerEnabled
         else {
