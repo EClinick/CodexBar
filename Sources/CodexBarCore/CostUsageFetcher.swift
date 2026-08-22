@@ -314,9 +314,12 @@ public struct CostUsageFetcher: Sendable {
         self.scannerOptions
     }
 
-    private func scannerOptions(calendar: Calendar?) -> CostUsageScanner.Options? {
+    func scannerOptions(calendar: Calendar?) -> CostUsageScanner.Options? {
         guard calendar != nil || self.scannerOptions != nil else { return self.scannerOptions }
-        var options = self.scannerOptions ?? CostUsageScanner.Options()
+        var options = Self.resolvedScannerOptions(
+            self.scannerOptions,
+            provider: .codex,
+            codexHomePath: nil)
         if let calendar {
             options.calendar = calendar
         }
