@@ -177,13 +177,19 @@ extension UsageStore {
             collectorState.telemetryRevision = currentTelemetryRevision
         case .failed:
             let currentGeneration = configurationGeneration()
-            if collectorState.configurationGeneration != nil,
-               collectorState.configurationGeneration != currentGeneration
-            {
+            let currentTelemetryRevision = telemetryRevision()
+            let configurationChanged = collectorState.configurationGeneration != nil &&
+                collectorState.configurationGeneration != currentGeneration
+            if collectorState.telemetryRevision != currentTelemetryRevision {
+                await self.refreshCLIProxyAPICostAttribution(refresh: refresh)
+            } else if configurationChanged {
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-configuration-changed")
+            }
+            if configurationChanged {
                 collectorState.configurationAvailability = .unavailable
                 collectorState.configurationGeneration = currentGeneration
             }
+            collectorState.telemetryRevision = currentTelemetryRevision
         case .disabled:
             break
         }
