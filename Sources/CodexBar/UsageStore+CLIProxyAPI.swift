@@ -70,7 +70,8 @@ extension UsageStore {
     @discardableResult
     func removeCLIProxyAPIConfiguration(
         remove: (() async -> CLIProxyAPIConfigurationRemovalResult)? = nil,
-        scheduleCleanupRetry: (() -> Void)? = nil) async
+        scheduleCleanupRetry: (() -> Void)? = nil,
+        refresh: ((UsageProvider, Bool) async -> Void)? = nil) async
         -> CLIProxyAPIConfigurationRemovalResult
     {
         let collectorTask = self.stopCLIProxyAPIUsageCollector()
@@ -85,7 +86,8 @@ extension UsageStore {
             }.value
         }
         if result != .configurationRemovalFailed {
-            self.invalidateCLIProxyAPICostAttribution()
+            self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
+            await self.refreshCLIProxyAPIAffectedProviders(refresh: refresh)
         }
         if result == .telemetryCleanupFailed {
             if let scheduleCleanupRetry {
@@ -182,7 +184,13 @@ extension UsageStore {
         refresh: ((UsageProvider, Bool) async -> Void)? = nil) async
     {
         self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-reconnected")
-        // Provider-specific by design: reconnecting can change both sides of the Codex/Claude attribution split.
+        await self.refreshCLIProxyAPIAffectedProviders(refresh: refresh)
+    }
+
+    private func refreshCLIProxyAPIAffectedProviders(
+        refresh: ((UsageProvider, Bool) async -> Void)?) async
+    {
+        // Provider-specific by design: connection changes can affect both sides of the Codex/Claude attribution split.
         for provider in [UsageProvider.claude, .codex] {
             if let refresh {
                 await refresh(provider, true)

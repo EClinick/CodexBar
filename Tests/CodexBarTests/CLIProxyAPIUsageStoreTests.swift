@@ -112,11 +112,16 @@ struct CLIProxyAPIUsageStoreTests {
         let claudePublicationRevision = store.tokenSnapshotPublicationRevision(for: .claude)
         let claudePublicationGuard = store.tokenRefreshPublicationGuard(for: .claude)
         let claudeScopeSignature = store.tokenSnapshotScopeSignature(for: .claude)
+        var refreshes: [(UsageProvider, Bool)] = []
 
-        let removed = await store.removeCLIProxyAPIConfiguration {
-            collectorFinishedBeforePurge = collectorFinished.value
-            return .removed
-        }
+        let removed = await store.removeCLIProxyAPIConfiguration(
+            remove: {
+                collectorFinishedBeforePurge = collectorFinished.value
+                return .removed
+            },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
         await task.value
 
         #expect(removed == .removed)
@@ -131,6 +136,8 @@ struct CLIProxyAPIUsageStoreTests {
             publicationGuard: claudePublicationGuard,
             historyDays: settings.costUsageHistoryDays,
             costScopeSignature: claudeScopeSignature))
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
         #expect(await recorder.wasCancelled)
     }
 
@@ -151,12 +158,16 @@ struct CLIProxyAPIUsageStoreTests {
             startupBehavior: .testing,
             environmentBase: environment)
         store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
-        let removed = await store.removeCLIProxyAPIConfiguration {
-            .configurationRemovalFailed
-        }
+        var refreshes: [(UsageProvider, Bool)] = []
+        let removed = await store.removeCLIProxyAPIConfiguration(
+            remove: { .configurationRemovalFailed },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
 
         #expect(removed == .configurationRemovalFailed)
         #expect(store.tokenSnapshot(for: .codex) != nil)
+        #expect(refreshes.isEmpty)
     }
 
     @Test
@@ -177,14 +188,20 @@ struct CLIProxyAPIUsageStoreTests {
             environmentBase: environment)
         store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
         var scheduledCleanupRetry = false
+        var refreshes: [(UsageProvider, Bool)] = []
 
         let removed = await store.removeCLIProxyAPIConfiguration(
             remove: { .telemetryCleanupFailed },
-            scheduleCleanupRetry: { scheduledCleanupRetry = true })
+            scheduleCleanupRetry: { scheduledCleanupRetry = true },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
 
         #expect(removed == .telemetryCleanupFailed)
         #expect(store.tokenSnapshot(for: .codex) == nil)
         #expect(scheduledCleanupRetry)
+        #expect(refreshes.map(\.0) == [.claude, .codex])
+        #expect(refreshes.map(\.1) == [true, true])
     }
 
     @Test
