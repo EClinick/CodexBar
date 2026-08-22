@@ -7,6 +7,17 @@ import Testing
 @Suite(.serialized)
 struct CostUsageFetcherTests {
     @Test
+    func `regular refresh options preserve the default proxy home`() {
+        let options = CostUsageFetcher().resolvedTokenSnapshotScannerOptions(
+            provider: .claude,
+            codexHomePath: nil,
+            calendar: nil)
+
+        #expect(options.cliProxyAPIHome == FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cli-proxy-api", isDirectory: true))
+    }
+
+    @Test
     func `native codex sessions survive when pi usage is present but pi merge is disabled`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

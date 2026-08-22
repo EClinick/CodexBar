@@ -1347,37 +1347,37 @@ struct ProviderArchitectureGatekeeperTests {
             reason: "This provider-owned integration passes its fixed identity to a shared helper."),
         SuppressedProviderReference(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 329,
+            line: 344,
             anchor: "provider: .codex,",
             expectedProviderIDs: ["codex"],
             reason: "This provider-specific core branch passes its already-selected identity to a shared helper."),
         SuppressedProviderReference(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 341,
+            line: 356,
             anchor: "provider: .codex,",
             expectedProviderIDs: ["codex"],
             reason: "This provider-specific core branch passes its already-selected identity to a shared helper."),
         SuppressedProviderReference(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 357,
+            line: 372,
             anchor: "provider: .codex,",
             expectedProviderIDs: ["codex"],
             reason: "This provider-specific core branch passes its already-selected identity to a shared helper."),
         SuppressedProviderReference(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 880,
+            line: 895,
             anchor: "provider: .codex,",
             expectedProviderIDs: ["codex"],
             reason: "This provider-specific core branch passes its already-selected identity to a shared helper."),
         SuppressedProviderReference(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 961,
+            line: 976,
             anchor: "provider: .codex,",
             expectedProviderIDs: ["codex"],
             reason: "This provider-specific core branch passes its already-selected identity to a shared helper."),
         SuppressedProviderReference(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 1071,
+            line: 1086,
             anchor: "provider: .codex,",
             expectedProviderIDs: ["codex"],
             reason: "This provider-specific core branch passes its already-selected identity to a shared helper."),
@@ -3453,7 +3453,7 @@ struct ProviderArchitectureGatekeeperTests {
             reason: "This exact shared construct dispatches a provider-owned capability at the generic integration boundary."),
         AllowedProviderConstruct(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 667,
+            line: 682,
             anchor: "if provider == .codex {",
             expectedProviderIDs: ["codex"],
             expectedReferenceCount: 1,
@@ -3461,7 +3461,7 @@ struct ProviderArchitectureGatekeeperTests {
             reason: "This exact cost scanner dispatch selects a provider-owned transcript, cache, or pricing format."),
         AllowedProviderConstruct(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 697,
+            line: 712,
             anchor: "provider == .claude || (provider == .codex && options.shouldMergeGlobalCodexUsage)",
             expectedProviderIDs: ["claude", "codex"],
             expectedReferenceCount: 4,
@@ -3469,7 +3469,7 @@ struct ProviderArchitectureGatekeeperTests {
             reason: "This exact cost scanner dispatch selects a provider-owned transcript, cache, or pricing format."),
         AllowedProviderConstruct(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 747,
+            line: 762,
             anchor: "options.provider == .codex || options.provider == .claude",
             expectedProviderIDs: ["claude", "codex"],
             expectedReferenceCount: 2,
@@ -3477,7 +3477,7 @@ struct ProviderArchitectureGatekeeperTests {
             reason: "This exact cost scanner dispatch selects a provider-owned transcript, cache, or pricing format."),
         AllowedProviderConstruct(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 778,
+            line: 793,
             anchor: "guard provider == .codex || provider == .claude else { return nil }",
             expectedProviderIDs: ["claude", "codex"],
             expectedReferenceCount: 2,
@@ -3485,7 +3485,7 @@ struct ProviderArchitectureGatekeeperTests {
             reason: "This exact cost scanner dispatch selects a provider-owned transcript, cache, or pricing format."),
         AllowedProviderConstruct(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 1629,
+            line: 1644,
             anchor: "if provider == .vertexai {",
             expectedProviderIDs: ["claude", "vertexai"],
             expectedReferenceCount: 2,
@@ -3493,7 +3493,7 @@ struct ProviderArchitectureGatekeeperTests {
             reason: "This exact cost scanner dispatch selects a provider-owned transcript, cache, or pricing format."),
         AllowedProviderConstruct(
             path: "Sources/CodexBarCore/CostUsageFetcher.swift",
-            line: 2019,
+            line: 2034,
             anchor: "if provider == .cursor {",
             expectedProviderIDs: ["cursor"],
             expectedReferenceCount: 1,

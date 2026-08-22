@@ -229,10 +229,10 @@ public struct CostUsageFetcher: Sendable {
         bypassScannerDebounce: Bool,
         calendar: Calendar? = nil) async throws -> CostUsageTokenSnapshot
     {
-        var options = self.scannerOptionsOverride() ?? CostUsageScanner.Options()
-        if let calendar {
-            options.calendar = calendar
-        }
+        let options = self.resolvedTokenSnapshotScannerOptions(
+            provider: provider,
+            codexHomePath: codexHomePath,
+            calendar: calendar)
         return try await Self.loadTokenSnapshot(
             provider: provider,
             environment: environment,
@@ -317,6 +317,21 @@ public struct CostUsageFetcher: Sendable {
     private func scannerOptions(calendar: Calendar?) -> CostUsageScanner.Options? {
         guard calendar != nil || self.scannerOptions != nil else { return self.scannerOptions }
         var options = self.scannerOptions ?? CostUsageScanner.Options()
+        if let calendar {
+            options.calendar = calendar
+        }
+        return options
+    }
+
+    func resolvedTokenSnapshotScannerOptions(
+        provider: UsageProvider,
+        codexHomePath: String?,
+        calendar: Calendar?) -> CostUsageScanner.Options
+    {
+        var options = Self.resolvedScannerOptions(
+            self.scannerOptionsOverride(),
+            provider: provider,
+            codexHomePath: codexHomePath)
         if let calendar {
             options.calendar = calendar
         }

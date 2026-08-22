@@ -283,6 +283,59 @@ struct CLIProxyAPIUsageCollectorTests {
     }
 
     @Test
+    func `temporary credential failure rejects a replaced configuration after lock acquisition`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cliproxy-replaced-configuration-\(UUID().uuidString)", isDirectory: true)
+        let cacheRoot = root.appendingPathComponent("cost-usage", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let initialGeneration = try #require(
+            CostUsageCacheLocations.prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root))
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(initialGeneration))
+        let lockAcquired = DispatchSemaphore(value: 0)
+        let replaceConfiguration = DispatchSemaphore(value: 0)
+        let configurationChecked = DispatchSemaphore(value: 0)
+        let popProbe = CLIProxyAPICollectionContinuationProbe()
+        let lockHolder = Task.detached {
+            try await CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root) {
+                lockAcquired.signal()
+                _ = await Self.waitForSignal(replaceConfiguration, timeout: .distantFuture)
+                let replacement = try #require(
+                    CostUsageCacheLocations.prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root))
+                #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(replacement))
+            }
+        }
+        #expect(await Self.waitForSignal(lockAcquired, timeout: .now() + 1))
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(managementKey: "management-secret"),
+            dataLoader: { request in
+                await popProbe.recordPop()
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil))
+                return (Data("[]".utf8), response)
+            })
+        let collection = Task.detached {
+            await CLIProxyAPIUsageCollector.collect(
+                cacheRoot: cacheRoot,
+                settings: .init(managementKey: "management-secret"),
+                currentSettingsResult: {
+                    configurationChecked.signal()
+                    return .temporarilyUnavailable
+                },
+                client: client)
+        }
+        #expect(await Self.waitForSignal(configurationChecked, timeout: .now() + 1))
+        replaceConfiguration.signal()
+
+        try await lockHolder.value
+        #expect(await collection.value == .notConfigured)
+        #expect(await popProbe.popCount == 0)
+    }
+
+    @Test
     func `collector rechecks configuration before every destructive pop`() async throws {
         let fileManager = FileManager.default
         let cacheRoot = fileManager.temporaryDirectory

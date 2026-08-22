@@ -1174,20 +1174,40 @@ public enum CLIProxyAPIUsageCollector {
         shouldContinue: @escaping @Sendable () async -> Bool = { true }) async
         -> CLIProxyAPIUsageCollectionResult
     {
+        await self.collect(
+            cacheRoot: cacheRoot,
+            settings: settings,
+            currentSettingsResult: { CLIProxyAPIConnectionSettingsStore.loadResult() },
+            shouldContinue: shouldContinue)
+    }
+
+    static func collect(
+        cacheRoot: URL? = nil,
+        settings: CLIProxyAPIConnectionSettings?,
+        currentSettingsResult: @escaping @Sendable ()
+            -> KeychainCacheStore.LoadResult<CLIProxyAPIConnectionSettings>,
+        shouldContinue: @escaping @Sendable () async -> Bool = { true },
+        client: CLIProxyAPIUsageQueueClient? = nil) async
+        -> CLIProxyAPIUsageCollectionResult
+    {
         guard let settings, settings.isConfigured else { return .notConfigured }
+        let stateRoot = cacheRoot?.deletingLastPathComponent()
+        let configurationGeneration = CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot)
         return await self.collect(
             cacheRoot: cacheRoot,
             configurationIsCurrent: {
-                guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: cacheRoot)
+                guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: stateRoot)
                 else { return false }
-                return switch CLIProxyAPIConnectionSettingsStore.loadResult() {
+                return switch currentSettingsResult() {
                 case let .found(currentSettings): currentSettings == settings
-                case .temporarilyUnavailable: true
+                case .temporarilyUnavailable:
+                    CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot) ==
+                        configurationGeneration
                 case .missing, .invalid: false
                 }
             },
             shouldContinue: shouldContinue,
-            client: CLIProxyAPIUsageQueueClient(settings: settings))
+            client: client ?? CLIProxyAPIUsageQueueClient(settings: settings))
     }
 
     static func collect(
