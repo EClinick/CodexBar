@@ -703,6 +703,18 @@ public enum CostUsageCacheLocations {
         }
     }
 
+    @discardableResult
+    package static func publishCLIProxyAPIAttributionIsolationAsync(
+        expectedGeneration: String?,
+        stateRoot: URL? = nil) async -> Bool
+    {
+        await Task.detached(priority: .utility) {
+            self.publishCLIProxyAPIAttributionIsolation(
+                expectedGeneration: expectedGeneration,
+                stateRoot: stateRoot)
+        }.value
+    }
+
     private static func cliProxyAPIDisconnectedURL(
         stateRoot: URL?,
         fileManager: FileManager) -> URL

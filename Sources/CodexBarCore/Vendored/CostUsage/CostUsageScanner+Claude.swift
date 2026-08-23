@@ -985,45 +985,6 @@ extension CostUsageScanner {
         return inventory
     }
 
-    private struct ClaudeCLIProxyAPIAttributionState {
-        let configurationGeneration: String?
-        let resolver: CLIProxyAPIAttributionResolver?
-        let usageArtifactStamp: CostUsageClaudeFileStamp?
-    }
-
-    private static func captureClaudeCLIProxyAPIAttributionState(
-        options: Options,
-        checkCancellation: CancellationCheck?) throws -> ClaudeCLIProxyAPIAttributionState
-    {
-        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
-            stateRoot: options.cacheRoot)
-        {
-            let configurationGeneration = CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
-                stateRoot: options.cacheRoot)
-            let attributionResolver: CLIProxyAPIAttributionResolver?
-            if !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(stateRoot: options.cacheRoot),
-               let home = options.cliProxyAPIHome
-            {
-                let usageRecords = CLIProxyAPIUsageCacheIO.loadAssumingInterprocessLockHeld(
-                    cacheRoot: options.cacheRoot)
-                attributionResolver = try CLIProxyAPIAttributionResolver.load(
-                    home: home,
-                    cacheRoot: options.cacheRoot,
-                    forceReload: options.forceRescan,
-                    usageRecords: usageRecords,
-                    checkCancellation: checkCancellation)
-            } else {
-                attributionResolver = nil
-            }
-            let usageArtifactStamp = CostUsageClaudeFileStamp.read(
-                at: CLIProxyAPIUsageCacheIO.cacheFileURL(cacheRoot: options.cacheRoot))
-            return ClaudeCLIProxyAPIAttributionState(
-                configurationGeneration: configurationGeneration,
-                resolver: attributionResolver,
-                usageArtifactStamp: usageArtifactStamp)
-        }
-    }
-
     // swiftlint:disable:next function_body_length
     static func loadClaudeDaily(
         provider: UsageProvider,
@@ -1037,6 +998,7 @@ extension CostUsageScanner {
             checkCancellation: checkCancellation)
         self.claudeCLIProxyAPIAttributionCaptureObserverStore?.observer()
         let cliProxyAPIConfigurationGeneration = cliProxyAPIAttributionState.configurationGeneration
+        let cliProxyAPIAttributionEnabled = cliProxyAPIAttributionState.attributionEnabled
         let attributionResolver = cliProxyAPIAttributionState.resolver
         let cliProxyUsageArtifactStamp = cliProxyAPIAttributionState.usageArtifactStamp
         let roots = self.defaultClaudeProjectsRoots(options: options)
@@ -1054,6 +1016,7 @@ extension CostUsageScanner {
             providerFilter: options.claudeLogProviderFilter,
             attributionFilter: options.claudeAttributionFilter,
             cliProxyAPIConfigurationGeneration: cliProxyAPIConfigurationGeneration,
+            cliProxyAPIAttributionEnabled: cliProxyAPIAttributionEnabled,
             range: range,
             roots: roots,
             artifactStamps: (
@@ -1076,6 +1039,9 @@ extension CostUsageScanner {
             {
                 guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
                     stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
+                else { throw CancellationError() }
+                guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+                    stateRoot: options.cacheRoot) == cliProxyAPIAttributionEnabled
                 else { throw CancellationError() }
                 return priorMemo.report
             }
@@ -1224,6 +1190,7 @@ extension CostUsageScanner {
             providerFilter: providerFilter,
             attributionFilter: options.claudeAttributionFilter,
             cliProxyAPIConfigurationGeneration: cliProxyAPIConfigurationGeneration,
+            cliProxyAPIAttributionEnabled: cliProxyAPIAttributionEnabled,
             range: range,
             roots: roots,
             artifactStamps: (
@@ -1255,6 +1222,7 @@ extension CostUsageScanner {
         providerFilter: ClaudeLogProviderFilter,
         attributionFilter: ClaudeAttributionFilter,
         cliProxyAPIConfigurationGeneration: String?,
+        cliProxyAPIAttributionEnabled: Bool,
         range: CostUsageDayRange,
         roots: [URL],
         artifactStamps: (
@@ -1278,6 +1246,7 @@ extension CostUsageScanner {
             providerFilter: providerFilterKey,
             attributionFilter: attributionFilterKey,
             cliProxyAPIConfigurationGeneration: cliProxyAPIConfigurationGeneration,
+            cliProxyAPIAttributionEnabled: cliProxyAPIAttributionEnabled,
             sinceKey: range.sinceKey,
             untilKey: range.untilKey,
             scanSinceKey: range.scanSinceKey,

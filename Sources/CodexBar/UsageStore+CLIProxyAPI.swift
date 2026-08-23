@@ -143,8 +143,8 @@ extension UsageStore {
         isExplicitlyDisconnected: () -> Bool = {
             CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected()
         },
-        publishAttributionIsolation: (String?) -> Bool = { expectedGeneration in
-            CostUsageCacheLocations.publishCLIProxyAPIAttributionIsolation(
+        publishAttributionIsolation: (String?) async -> Bool = { expectedGeneration in
+            await CostUsageCacheLocations.publishCLIProxyAPIAttributionIsolationAsync(
                 expectedGeneration: expectedGeneration)
         },
         configurationGeneration: () -> String? = {
@@ -176,7 +176,7 @@ extension UsageStore {
                 (collectorState.configurationAvailability == .unknown && explicitlyDisconnected) ||
                 collectorState.configurationTransitionPending
             {
-                guard publishAttributionIsolation(currentGeneration) else {
+                guard await publishAttributionIsolation(currentGeneration) else {
                     collectorState.configurationGeneration = currentGeneration
                     collectorState.telemetryRevision = telemetryRevision()
                     return collectorState

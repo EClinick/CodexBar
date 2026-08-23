@@ -34,6 +34,7 @@ struct CostUsageClaudeReportMemoKey: Equatable, Sendable {
     let providerFilter: String
     let attributionFilter: String
     let cliProxyAPIConfigurationGeneration: String?
+    let cliProxyAPIAttributionEnabled: Bool
     let sinceKey: String
     let untilKey: String
     let scanSinceKey: String

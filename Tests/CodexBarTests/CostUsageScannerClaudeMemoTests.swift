@@ -56,6 +56,42 @@ struct CostUsageScannerClaudeMemoTests {
     }
 
     @Test
+    func `memo hit rejects disconnect isolation after capture`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+        let day = try env.makeLocalNoon(year: 2026, month: 7, day: 1)
+        _ = try self.writeEvent(env: env, day: day, path: "project/session.jsonl", id: "first", input: 10)
+        let options = self.options(env: env)
+        _ = self.load(day: day, options: options)
+
+        #expect(throws: CancellationError.self) {
+            _ = try CostUsageScanner.withClaudeReportMemoHitObserverForTesting {
+                #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+                    true,
+                    stateRoot: env.cacheRoot))
+            } operation: {
+                try CostUsageScanner.loadDailyReportCancellable(
+                    provider: .claude,
+                    since: day,
+                    until: day,
+                    now: day,
+                    options: options,
+                    checkCancellation: nil)
+            }
+        }
+
+        let disconnected = try CostUsageScanner.loadDailyReportCancellable(
+            provider: .claude,
+            since: day,
+            until: day,
+            now: day,
+            options: options,
+            checkCancellation: nil)
+        #expect(disconnected.data.first?.totalTokens == 10)
+        #expect(disconnected.data.first?.modelBreakdowns?.first?.attribution?.route != .cliProxyAPI)
+    }
+
+    @Test
     func `telemetry appended after resolver capture is not memoized as stale attribution`() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

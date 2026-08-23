@@ -940,6 +940,53 @@ extension CLIProxyAPIUsageCacheTests {
             fileManager: fileManager))
     }
 
+    @Test @MainActor
+    func `async disconnect isolation does not block the main actor on the interprocess lock`() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-main-actor-isolation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let generation = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root, fileManager: fileManager))
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+            generation,
+            fileManager: fileManager))
+        let lockAcquired = DispatchSemaphore(value: 0)
+        let releaseLock = DispatchSemaphore(value: 0)
+        let isolationStarted = DispatchSemaphore(value: 0)
+        let mainActorAdvanced = LockIsolated(false)
+        let advancedBeforeRelease = LockIsolated(false)
+
+        let lockHolder = Task.detached {
+            try await CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root) {
+                lockAcquired.signal()
+                _ = await Self.waitForSignal(releaseLock, timeout: .distantFuture)
+            }
+        }
+        #expect(await Self.waitForSignal(lockAcquired, timeout: .now() + 1))
+        let delayedRelease = Task.detached {
+            try? await Task.sleep(for: .milliseconds(250))
+            advancedBeforeRelease.setValue(mainActorAdvanced.value)
+            releaseLock.signal()
+        }
+        let isolation = Task { @MainActor in
+            isolationStarted.signal()
+            return await CostUsageCacheLocations.publishCLIProxyAPIAttributionIsolationAsync(
+                expectedGeneration: generation.generation,
+                stateRoot: root)
+        }
+        #expect(await Self.waitForSignal(isolationStarted, timeout: .now() + 1))
+
+        await Task { @MainActor in
+            mainActorAdvanced.setValue(true)
+        }.value
+
+        #expect(await isolation.value)
+        try await lockHolder.value
+        await delayedRelease.value
+        #expect(advancedBeforeRelease.value)
+    }
+
     @Test
     func `usage retention clamps clock skew and rejects implausible future records`() throws {
         let fileManager = FileManager.default
