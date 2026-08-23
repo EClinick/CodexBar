@@ -253,6 +253,7 @@ extension UsageStore {
         let tokenSnapshotScopeSignature = self.tokenSnapshotScopeSignature(for: .codex)
         let tokenSnapshotPublicationRevision = self.tokenSnapshotPublicationRevision(for: .codex)
         let cliProxyAPIConfigurationGeneration = self.costUsageFetcher.cliProxyAPIConfigurationGeneration()
+        let cliProxyAPIUsageTelemetryRevision = self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision()
         return Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.tokenSnapshotPublicationForCurrentProviderConfig(for: .codex) == nil else { return }
@@ -289,6 +290,7 @@ extension UsageStore {
                   self.tokenSnapshotScopeSignature(for: .codex) == tokenSnapshotScopeSignature,
                   self.tokenSnapshotPublicationRevision(for: .codex) == tokenSnapshotPublicationRevision,
                   self.costUsageFetcher.cliProxyAPIConfigurationGeneration() == cliProxyAPIConfigurationGeneration,
+                  self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision() == cliProxyAPIUsageTelemetryRevision,
                   self.tokenSnapshotPublicationForCurrentProviderConfig(for: .codex) == nil
             else {
                 return

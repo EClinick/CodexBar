@@ -349,6 +349,14 @@ public struct CostUsageFetcher: Sendable {
         return CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(stateRoot: options.cacheRoot)
     }
 
+    package func cliProxyAPIUsageTelemetryRevision() -> String? {
+        let options = Self.resolvedScannerOptions(
+            self.scannerOptionsOverride(),
+            provider: .codex,
+            codexHomePath: nil)
+        return CLIProxyAPIUsageTelemetryRevision.current(cacheRoot: options.cacheRoot)
+    }
+
     package func codexScanCatchUpStatus(
         codexHomePath: String? = nil,
         calendar: Calendar? = nil) async -> CodexScanCatchUpStatus
