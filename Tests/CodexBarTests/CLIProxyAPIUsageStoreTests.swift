@@ -603,7 +603,7 @@ struct CLIProxyAPIUsageStoreTests {
     }
 
     @Test
-    func `failed generation transition stays pending until collection succeeds`() async {
+    func `failed generation transition stays pending through a later disconnect`() async {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
         settings.costUsageEnabled = true
         let store = UsageStore(
@@ -623,16 +623,19 @@ struct CLIProxyAPIUsageStoreTests {
 
         #expect(collectorState.configurationAvailability == .unavailable)
         #expect(collectorState.configurationGeneration == "new-generation")
+        #expect(collectorState.configurationTransitionPending)
 
         collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
-            .collected(0),
+            .notConfigured,
             collectorState: collectorState,
+            isExplicitlyDisconnected: { true },
             configurationGeneration: { "new-generation" },
             refresh: { provider, force in
                 refreshes.append((provider, force))
             })
 
-        #expect(collectorState.configurationAvailability == .available)
+        #expect(collectorState.configurationAvailability == .unavailable)
+        #expect(!collectorState.configurationTransitionPending)
         #expect(refreshes.map(\.0) == [.claude, .codex])
         #expect(refreshes.map(\.1) == [true, true])
     }
@@ -877,7 +880,7 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(store.tokenSnapshot(for: .codex) == nil)
     }
 
-    private static func tokenSnapshot() -> CostUsageTokenSnapshot {
+    static func tokenSnapshot() -> CostUsageTokenSnapshot {
         CostUsageTokenSnapshot(
             sessionTokens: 10,
             sessionCostUSD: 0.01,

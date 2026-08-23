@@ -11,6 +11,7 @@ struct CLIProxyAPIUsageCollectorState: Equatable {
     var configurationAvailability: ConfigurationAvailability = .unknown
     var configurationGeneration: String?
     var telemetryRevision: String?
+    var configurationTransitionPending = false
 }
 
 @MainActor
@@ -156,25 +157,44 @@ extension UsageStore {
         var collectorState = collectorState
         switch result {
         case .notConfigured:
+            let explicitlyDisconnected = isExplicitlyDisconnected()
+            let currentGeneration = configurationGeneration()
+            let configurationChanged = collectorState.configurationGeneration != nil &&
+                collectorState.configurationGeneration != currentGeneration
+            if configurationChanged, !explicitlyDisconnected {
+                if !collectorState.configurationTransitionPending {
+                    self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-configuration-changed")
+                }
+                collectorState.configurationAvailability = .unavailable
+                collectorState.configurationGeneration = currentGeneration
+                collectorState.telemetryRevision = telemetryRevision()
+                collectorState.configurationTransitionPending = true
+                return collectorState
+            }
             if collectorState.configurationAvailability == .available ||
-                (collectorState.configurationAvailability == .unknown && isExplicitlyDisconnected())
+                (collectorState.configurationAvailability == .unknown && explicitlyDisconnected) ||
+                collectorState.configurationTransitionPending
             {
                 guard publishAttributionIsolation() else {
-                    collectorState.configurationGeneration = configurationGeneration()
+                    collectorState.configurationGeneration = currentGeneration
                     collectorState.telemetryRevision = telemetryRevision()
                     return collectorState
                 }
-                self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
+                if !collectorState.configurationTransitionPending {
+                    self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
+                }
                 await self.refreshCLIProxyAPIAffectedProviders(refresh: refresh)
             }
             collectorState.configurationAvailability = .unavailable
-            collectorState.configurationGeneration = configurationGeneration()
+            collectorState.configurationGeneration = currentGeneration
             collectorState.telemetryRevision = telemetryRevision()
+            collectorState.configurationTransitionPending = false
         case let .collected(count):
             let currentGeneration = configurationGeneration()
             let currentTelemetryRevision = telemetryRevision()
             if count > 0 ||
                 collectorState.configurationAvailability == .unavailable ||
+                collectorState.configurationTransitionPending ||
                 (collectorState.configurationGeneration != nil &&
                     collectorState.configurationGeneration != currentGeneration) ||
                 collectorState.telemetryRevision != currentTelemetryRevision
@@ -184,6 +204,7 @@ extension UsageStore {
             collectorState.configurationAvailability = .available
             collectorState.configurationGeneration = currentGeneration
             collectorState.telemetryRevision = currentTelemetryRevision
+            collectorState.configurationTransitionPending = false
         case .failed:
             let currentGeneration = configurationGeneration()
             let currentTelemetryRevision = telemetryRevision()
@@ -191,12 +212,13 @@ extension UsageStore {
                 collectorState.configurationGeneration != currentGeneration
             if collectorState.telemetryRevision != currentTelemetryRevision {
                 await self.refreshCLIProxyAPICostAttribution(refresh: refresh)
-            } else if configurationChanged {
+            } else if configurationChanged, !collectorState.configurationTransitionPending {
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-configuration-changed")
             }
             if configurationChanged {
                 collectorState.configurationAvailability = .unavailable
                 collectorState.configurationGeneration = currentGeneration
+                collectorState.configurationTransitionPending = true
             }
             collectorState.telemetryRevision = currentTelemetryRevision
         case .disabled:
