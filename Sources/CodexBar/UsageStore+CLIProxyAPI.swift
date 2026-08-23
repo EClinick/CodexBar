@@ -142,6 +142,9 @@ extension UsageStore {
         isExplicitlyDisconnected: () -> Bool = {
             CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected()
         },
+        publishAttributionIsolation: () -> Bool = {
+            CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(true)
+        },
         configurationGeneration: () -> String? = {
             CostUsageCacheLocations.cliProxyAPIConfigurationGeneration()
         },
@@ -156,6 +159,11 @@ extension UsageStore {
             if collectorState.configurationAvailability == .available ||
                 (collectorState.configurationAvailability == .unknown && isExplicitlyDisconnected())
             {
+                guard publishAttributionIsolation() else {
+                    collectorState.configurationGeneration = configurationGeneration()
+                    collectorState.telemetryRevision = telemetryRevision()
+                    return collectorState
+                }
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
                 await self.refreshCLIProxyAPIAffectedProviders(refresh: refresh)
             }

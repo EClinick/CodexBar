@@ -303,7 +303,11 @@ struct CLIProxyAPIUsageStoreTests {
         let collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
             .notConfigured,
             collectorState: CLIProxyAPIUsageCollectorState(),
-            isExplicitlyDisconnected: { false })
+            isExplicitlyDisconnected: { false },
+            publishAttributionIsolation: {
+                Issue.record("Initial missing configuration must not publish disconnect isolation.")
+                return false
+            })
 
         #expect(collectorState.configurationAvailability == .unavailable)
         #expect(store.tokenSnapshot(for: .codex) == snapshot)
@@ -335,13 +339,21 @@ struct CLIProxyAPIUsageStoreTests {
         let claudePublicationRevision = store.tokenSnapshotPublicationRevision(for: .claude)
         let dashboardRevision = store.spendDashboardCodexCostCatchUpRevision
         let dashboardConfiguration = SpendDashboardSource.configuration(settings: settings, store: store)
+        var isolationPublicationCount = 0
+        var attributionIsolated = false
         var refreshes: [(UsageProvider, Bool)] = []
 
         var collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
             .notConfigured,
             collectorState: CLIProxyAPIUsageCollectorState(configurationAvailability: .available),
             isExplicitlyDisconnected: { false },
+            publishAttributionIsolation: {
+                isolationPublicationCount += 1
+                attributionIsolated = true
+                return true
+            },
             refresh: { provider, force in
+                #expect(attributionIsolated)
                 refreshes.append((provider, force))
             })
 
@@ -351,6 +363,7 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
         #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
         #expect(store.spendDashboardCodexCostCatchUpRevision == dashboardRevision + 1)
+        #expect(isolationPublicationCount == 1)
         #expect(refreshes.map(\.0) == [.claude, .codex])
         #expect(refreshes.map(\.1) == [true, true])
         #expect(
@@ -361,6 +374,10 @@ struct CLIProxyAPIUsageStoreTests {
             .notConfigured,
             collectorState: collectorState,
             isExplicitlyDisconnected: { false },
+            publishAttributionIsolation: {
+                isolationPublicationCount += 1
+                return true
+            },
             refresh: { provider, force in
                 refreshes.append((provider, force))
             })
@@ -368,6 +385,7 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
         #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
         #expect(store.spendDashboardCodexCostCatchUpRevision == dashboardRevision + 1)
+        #expect(isolationPublicationCount == 1)
         #expect(refreshes.map(\.0) == [.claude, .codex])
         refreshes.removeAll()
 
@@ -387,20 +405,58 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(refreshes.map(\.0) == [.claude, .codex])
         #expect(refreshes.map(\.1) == [true, true])
         store.publishTokenSnapshot(Self.tokenSnapshot(), for: .codex)
+        attributionIsolated = false
         refreshes.removeAll()
         collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
             .notConfigured,
             collectorState: collectorState,
             isExplicitlyDisconnected: { false },
+            publishAttributionIsolation: {
+                isolationPublicationCount += 1
+                attributionIsolated = true
+                return true
+            },
             refresh: { provider, force in
+                #expect(attributionIsolated)
                 refreshes.append((provider, force))
             })
 
         #expect(collectorState.configurationAvailability == .unavailable)
         #expect(store.tokenSnapshot(for: .codex) == nil)
         #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 4)
+        #expect(isolationPublicationCount == 2)
         #expect(refreshes.map(\.0) == [.claude, .codex])
         #expect(refreshes.map(\.1) == [true, true])
+    }
+
+    @Test
+    func `disconnect isolation failure preserves snapshots and retries on the next poll`() async {
+        let settings = testSettingsStore(suiteName: "CLIProxyAPIUsageStoreTests-\(UUID().uuidString)")
+        settings.costUsageEnabled = true
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: [:]),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let snapshot = Self.tokenSnapshot()
+        store.publishTokenSnapshot(snapshot, for: .codex)
+        store.publishTokenSnapshot(snapshot, for: .claude)
+        var refreshes: [(UsageProvider, Bool)] = []
+
+        let collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
+            .notConfigured,
+            collectorState: CLIProxyAPIUsageCollectorState(configurationAvailability: .available),
+            isExplicitlyDisconnected: { false },
+            publishAttributionIsolation: { false },
+            refresh: { provider, force in
+                refreshes.append((provider, force))
+            })
+
+        #expect(collectorState.configurationAvailability == .available)
+        #expect(store.tokenSnapshot(for: .codex) == snapshot)
+        #expect(store.tokenSnapshot(for: .claude) == snapshot)
+        #expect(refreshes.isEmpty)
     }
 
     @Test
