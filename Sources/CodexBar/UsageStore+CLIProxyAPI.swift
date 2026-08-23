@@ -157,6 +157,7 @@ extension UsageStore {
                 (collectorState.configurationAvailability == .unknown && isExplicitlyDisconnected())
             {
                 self.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-disconnected")
+                await self.refreshCLIProxyAPIAffectedProviders(refresh: refresh)
             }
             collectorState.configurationAvailability = .unavailable
             collectorState.configurationGeneration = configurationGeneration()
