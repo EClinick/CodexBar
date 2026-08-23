@@ -304,7 +304,7 @@ struct CLIProxyAPIUsageStoreTests {
             .notConfigured,
             collectorState: CLIProxyAPIUsageCollectorState(),
             isExplicitlyDisconnected: { false },
-            publishAttributionIsolation: {
+            publishAttributionIsolation: { _ in
                 Issue.record("Initial missing configuration must not publish disconnect isolation.")
                 return false
             })
@@ -347,7 +347,7 @@ struct CLIProxyAPIUsageStoreTests {
             .notConfigured,
             collectorState: CLIProxyAPIUsageCollectorState(configurationAvailability: .available),
             isExplicitlyDisconnected: { false },
-            publishAttributionIsolation: {
+            publishAttributionIsolation: { _ in
                 isolationPublicationCount += 1
                 attributionIsolated = true
                 return true
@@ -374,7 +374,7 @@ struct CLIProxyAPIUsageStoreTests {
             .notConfigured,
             collectorState: collectorState,
             isExplicitlyDisconnected: { false },
-            publishAttributionIsolation: {
+            publishAttributionIsolation: { _ in
                 isolationPublicationCount += 1
                 return true
             },
@@ -411,7 +411,7 @@ struct CLIProxyAPIUsageStoreTests {
             .notConfigured,
             collectorState: collectorState,
             isExplicitlyDisconnected: { false },
-            publishAttributionIsolation: {
+            publishAttributionIsolation: { _ in
                 isolationPublicationCount += 1
                 attributionIsolated = true
                 return true
@@ -448,7 +448,7 @@ struct CLIProxyAPIUsageStoreTests {
             .notConfigured,
             collectorState: CLIProxyAPIUsageCollectorState(configurationAvailability: .available),
             isExplicitlyDisconnected: { false },
-            publishAttributionIsolation: { false },
+            publishAttributionIsolation: { _ in false },
             refresh: { provider, force in
                 refreshes.append((provider, force))
             })
@@ -629,6 +629,10 @@ struct CLIProxyAPIUsageStoreTests {
             .notConfigured,
             collectorState: collectorState,
             isExplicitlyDisconnected: { true },
+            publishAttributionIsolation: { expectedGeneration in
+                #expect(expectedGeneration == "new-generation")
+                return true
+            },
             configurationGeneration: { "new-generation" },
             refresh: { provider, force in
                 refreshes.append((provider, force))

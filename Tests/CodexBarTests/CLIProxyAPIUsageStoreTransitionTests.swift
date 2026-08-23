@@ -24,7 +24,7 @@ extension CLIProxyAPIUsageStoreTests {
                 configurationAvailability: .available,
                 configurationGeneration: "old-generation"),
             isExplicitlyDisconnected: { false },
-            publishAttributionIsolation: {
+            publishAttributionIsolation: { _ in
                 Issue.record("A superseded collector must not disconnect the replacement configuration.")
                 return false
             },

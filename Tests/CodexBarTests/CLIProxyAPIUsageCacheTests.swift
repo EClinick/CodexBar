@@ -884,6 +884,63 @@ struct CLIProxyAPIUsageCacheTests {
 
 extension CLIProxyAPIUsageCacheTests {
     @Test
+    func `disconnect isolation does not mask a concurrent configuration save`() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-save-disconnect-race-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let initialGeneration = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root, fileManager: fileManager))
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+            initialGeneration,
+            fileManager: fileManager))
+        let settings = CLIProxyAPIConnectionSettings(managementKey: "test-management-key")
+        let saveGenerationCommitted = DispatchSemaphore(value: 0)
+        let isolationStarted = DispatchSemaphore(value: 0)
+
+        let saveTask = Task.detached {
+            CLIProxyAPIConnectionSettingsStore.saveSerialized(
+                settings,
+                stateRoot: root,
+                fileManager: .default,
+                operations: .init(
+                    isDisconnected: { false },
+                    loadStored: { .found(settings) },
+                    store: { _ in
+                        saveGenerationCommitted.signal()
+                        isolationStarted.wait()
+                        return true
+                    },
+                    setDisconnectedState: {
+                        CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+                            $0,
+                            stateRoot: root,
+                            fileManager: .default)
+                    },
+                    restore: { _ in true }))
+        }
+        #expect(await Self.waitForSignal(saveGenerationCommitted, timeout: .now() + 1))
+
+        let isolationTask = Task.detached {
+            isolationStarted.signal()
+            return CostUsageCacheLocations.publishCLIProxyAPIAttributionIsolation(
+                expectedGeneration: initialGeneration.generation,
+                stateRoot: root,
+                fileManager: .default)
+        }
+
+        #expect(await saveTask.value)
+        let isolationPublished = await isolationTask.value
+        #expect(!isolationPublished)
+        #expect(CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
+            stateRoot: root,
+            fileManager: fileManager) != initialGeneration.generation)
+        #expect(!CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+    }
+
+    @Test
     func `usage retention clamps clock skew and rejects implausible future records`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory

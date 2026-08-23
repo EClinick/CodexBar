@@ -678,6 +678,31 @@ public enum CostUsageCacheLocations {
         }
     }
 
+    @discardableResult
+    package static func publishCLIProxyAPIAttributionIsolation(
+        expectedGeneration: String?,
+        stateRoot: URL? = nil,
+        fileManager: FileManager = .default) -> Bool
+    {
+        do {
+            return try self.withCLIProxyAPIInterprocessLock(
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            {
+                guard self.cliProxyAPIConfigurationGeneration(
+                    stateRoot: stateRoot,
+                    fileManager: fileManager) == expectedGeneration
+                else { return false }
+                return self.setCLIProxyAPIExplicitlyDisconnected(
+                    true,
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+            }
+        } catch {
+            return false
+        }
+    }
+
     private static func cliProxyAPIDisconnectedURL(
         stateRoot: URL?,
         fileManager: FileManager) -> URL
