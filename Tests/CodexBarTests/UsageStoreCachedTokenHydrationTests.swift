@@ -308,6 +308,37 @@ struct UsageStoreCachedTokenHydrationTests {
     }
 
     @Test
+    func `disconnect isolation wins over in flight cached codex hydration`() async throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+        let settings = Self.makeCodexOnlySettings(historyDays: 1)
+        let options = CostUsageScanner.Options(cacheRoot: env.cacheRoot)
+        let store = UsageStore(
+            fetcher: UsageFetcher(),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            costUsageFetcher: CostUsageFetcher(scannerOptions: options),
+            settings: settings,
+            startupBehavior: .testing,
+            environmentBase: [:])
+        let gate = CachedTokenHydrationGate()
+        store._test_cachedCodexTokenSnapshotLoaderOverride = { _, _, _ in
+            await gate.enter()
+            return (Self.cachedTokenSnapshot(), Date(), nil)
+        }
+
+        let hydration = store.hydrateCachedTokenSnapshots()
+        await gate.waitForStart()
+        #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(
+            true,
+            stateRoot: env.cacheRoot))
+        await gate.release()
+        await hydration?.value
+
+        #expect(store.tokenSnapshot(for: .codex) == nil)
+        #expect(store.tokenLastAttemptAt(for: .codex) == nil)
+    }
+
+    @Test
     func `telemetry import wins over in flight cached codex hydration`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
