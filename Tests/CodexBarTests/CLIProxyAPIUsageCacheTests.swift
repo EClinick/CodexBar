@@ -388,7 +388,9 @@ struct CLIProxyAPIUsageCacheTests {
             stateRoot: root,
             fileManager: fileManager) != nil)
     }
+}
 
+extension CLIProxyAPIUsageCacheTests {
     @Test
     func `generation publication failure restores replacement credentials state and telemetry`() throws {
         let fileManager = FileManager.default
@@ -408,6 +410,7 @@ struct CLIProxyAPIUsageCacheTests {
         let storedSettings = LockIsolated(existing)
         let disconnected = LockIsolated(true)
         let didStore = LockIsolated(false)
+        let didRestore = LockIsolated(false)
 
         let saved = CLIProxyAPIConnectionSettingsStore.saveSerialized(
             replacement,
@@ -427,6 +430,7 @@ struct CLIProxyAPIUsageCacheTests {
                     return true
                 },
                 restore: { snapshot in
+                    didRestore.setValue(true)
                     guard case let .found(settings) = snapshot else { return false }
                     storedSettings.setValue(settings)
                     return true
@@ -434,6 +438,7 @@ struct CLIProxyAPIUsageCacheTests {
 
         #expect(!saved)
         #expect(!didStore.value)
+        #expect(!didRestore.value)
         #expect(storedSettings.value == existing)
         #expect(disconnected.value)
         #expect(fileManager.fileExists(atPath: usageFile.path))

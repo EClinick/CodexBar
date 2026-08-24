@@ -321,6 +321,7 @@ public enum CostUsageCacheLocations {
     @discardableResult
     static func markCLIProxyAPIArtifactsUpdateForRollback(
         _ update: CLIProxyAPIArtifactsUpdate,
+        rollbackCredentialsRestored: Bool = false,
         fileManager: FileManager) -> Bool
     {
         guard let manifestURL = update.manifestURL else { return true }
@@ -336,7 +337,7 @@ public enum CostUsageCacheLocations {
             replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: true,
-            rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
+            rollbackCredentialsRestored: rollbackCredentialsRestored || manifest.rollbackCredentialsRestored == true,
             removalIsolationPublished: manifest.removalIsolationPublished,
             removalCredentialsCleared: manifest.removalCredentialsCleared)
         do {

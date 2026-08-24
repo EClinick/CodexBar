@@ -861,19 +861,22 @@ public enum CLIProxyAPIConnectionSettingsStore {
                     artifactsUpdate = update
                 }
 
-                func rollback() {
+                func rollback(credentialsMayHaveChanged: Bool) {
                     if let artifactsUpdate {
                         guard CostUsageCacheLocations.markCLIProxyAPIArtifactsUpdateForRollback(
                             artifactsUpdate,
+                            rollbackCredentialsRestored: !credentialsMayHaveChanged,
                             fileManager: fileManager)
                         else { return }
                     }
-                    guard operations.restore(storedSettings) else { return }
-                    if let artifactsUpdate {
-                        guard CostUsageCacheLocations.markCLIProxyAPIArtifactsRollbackCredentialsRestored(
-                            artifactsUpdate,
-                            fileManager: fileManager)
-                        else { return }
+                    if credentialsMayHaveChanged {
+                        guard operations.restore(storedSettings) else { return }
+                        if let artifactsUpdate {
+                            guard CostUsageCacheLocations.markCLIProxyAPIArtifactsRollbackCredentialsRestored(
+                                artifactsUpdate,
+                                fileManager: fileManager)
+                            else { return }
+                        }
                     }
                     guard operations.setDisconnectedState(wasDisconnected) else { return }
                     if let artifactsUpdate {
@@ -887,14 +890,14 @@ public enum CLIProxyAPIConnectionSettingsStore {
                     generationUpdate,
                     fileManager: fileManager)
                 else {
-                    rollback()
+                    rollback(credentialsMayHaveChanged: false)
                     return false
                 }
                 // Publish the telemetry invalidation before replacing credentials. If the process exits
                 // during the Keychain write, recovery will discard the staged artifacts instead of exposing
                 // telemetry collected under the previous credentials with the replacement configuration.
                 guard operations.store(settings) else {
-                    rollback()
+                    rollback(credentialsMayHaveChanged: true)
                     return false
                 }
                 if let artifactsUpdate,
@@ -902,11 +905,11 @@ public enum CLIProxyAPIConnectionSettingsStore {
                        artifactsUpdate,
                        fileManager: fileManager)
                 {
-                    rollback()
+                    rollback(credentialsMayHaveChanged: true)
                     return false
                 }
                 guard operations.setDisconnectedState(false) else {
-                    rollback()
+                    rollback(credentialsMayHaveChanged: true)
                     return false
                 }
                 if let artifactsUpdate {
@@ -1011,16 +1014,20 @@ public enum CLIProxyAPIConnectionSettingsStore {
             removalCredentialsCleared: false)
         else { return .configurationRemovalFailed }
 
-        func rollback() {
+        func rollback(credentialsMayHaveChanged: Bool) {
             guard CostUsageCacheLocations.markCLIProxyAPIArtifactsUpdateForRollback(
                 artifactsUpdate,
-                fileManager: fileManager),
-                operations.restore(snapshot.storedSettings),
-                CostUsageCacheLocations.markCLIProxyAPIArtifactsRollbackCredentialsRestored(
-                    artifactsUpdate,
-                    fileManager: fileManager),
-                operations.setDisconnectedState(snapshot.wasDisconnected)
+                rollbackCredentialsRestored: !credentialsMayHaveChanged,
+                fileManager: fileManager)
             else { return }
+            if credentialsMayHaveChanged {
+                guard operations.restore(snapshot.storedSettings),
+                      CostUsageCacheLocations.markCLIProxyAPIArtifactsRollbackCredentialsRestored(
+                          artifactsUpdate,
+                          fileManager: fileManager)
+                else { return }
+            }
+            guard operations.setDisconnectedState(snapshot.wasDisconnected) else { return }
             _ = CostUsageCacheLocations.restoreCLIProxyAPIArtifactsUpdate(
                 artifactsUpdate,
                 fileManager: fileManager)
@@ -1030,7 +1037,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
             generationUpdate,
             fileManager: fileManager)
         else {
-            rollback()
+            rollback(credentialsMayHaveChanged: false)
             return .configurationRemovalFailed
         }
         guard operations.setDisconnectedState(true),
@@ -1038,20 +1045,20 @@ public enum CLIProxyAPIConnectionSettingsStore {
                   artifactsUpdate,
                   fileManager: fileManager)
         else {
-            rollback()
+            rollback(credentialsMayHaveChanged: false)
             return .configurationRemovalFailed
         }
         // Isolation is transaction-owned and durable before Keychain deletion. Recovery can now finish
         // deletion without confusing a disconnect marker that predated this removal.
         guard operations.clearConfiguration() else {
-            rollback()
+            rollback(credentialsMayHaveChanged: true)
             return .configurationRemovalFailed
         }
         guard CostUsageCacheLocations.markCLIProxyAPIArtifactsRemovalCredentialsCleared(
             artifactsUpdate,
             fileManager: fileManager)
         else {
-            rollback()
+            rollback(credentialsMayHaveChanged: true)
             return .configurationRemovalFailed
         }
         return CostUsageCacheLocations.discardCLIProxyAPIArtifactsUpdate(
