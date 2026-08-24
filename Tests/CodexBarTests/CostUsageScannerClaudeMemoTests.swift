@@ -92,7 +92,41 @@ struct CostUsageScannerClaudeMemoTests {
     }
 
     @Test
-    func `telemetry appended after resolver capture is not memoized as stale attribution`() throws {
+    func `memo hit rejects telemetry change after capture`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+        let day = try env.makeLocalNoon(year: 2026, month: 7, day: 1)
+        _ = try self.writeEvent(env: env, day: day, path: "project/session.jsonl", id: "first", input: 10)
+        let options = self.options(env: env)
+        _ = self.load(day: day, options: options)
+        let usageRecord = CLIProxyAPIUsageRecord(
+            timestamp: day,
+            provider: "codex",
+            executorType: "CodexExecutor",
+            model: "gpt-5.5",
+            alias: "gpt-5.5",
+            endpoint: "/v1/messages",
+            authType: "oauth",
+            requestID: "memo-hit-request",
+            tokens: .init(input: 10, output: 0, total: 10))
+
+        #expect(throws: CancellationError.self) {
+            _ = try CostUsageScanner.withClaudeCLIProxyAPIAttributionCaptureObserverForTesting {
+                #expect(CLIProxyAPIUsageCacheIO.merge([usageRecord], cacheRoot: env.cacheRoot, now: day) == 1)
+            } operation: {
+                try CostUsageScanner.loadDailyReportCancellable(
+                    provider: .claude,
+                    since: day,
+                    until: day,
+                    now: day,
+                    options: options,
+                    checkCancellation: nil)
+            }
+        }
+    }
+
+    @Test
+    func `telemetry appended after resolver capture rejects stale attribution`() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
         let day = try env.makeLocalNoon(year: 2026, month: 7, day: 1)
@@ -130,14 +164,21 @@ struct CostUsageScannerClaudeMemoTests {
             requestID: "proxy-request",
             tokens: .init(input: 100, output: 0, total: 100))
 
-        let stale = CostUsageScanner.withClaudeCLIProxyAPIAttributionCaptureObserverForTesting {
-            #expect(CLIProxyAPIUsageCacheIO.merge([usageRecord], cacheRoot: env.cacheRoot, now: day) == 1)
-        } operation: {
-            self.load(day: day, options: options)
+        #expect(throws: CancellationError.self) {
+            _ = try CostUsageScanner.withClaudeCLIProxyAPIAttributionCaptureObserverForTesting {
+                #expect(CLIProxyAPIUsageCacheIO.merge([usageRecord], cacheRoot: env.cacheRoot, now: day) == 1)
+            } operation: {
+                try CostUsageScanner.loadDailyReportCancellable(
+                    provider: .claude,
+                    since: day,
+                    until: day,
+                    now: day,
+                    options: options,
+                    checkCancellation: nil)
+            }
         }
         let refreshed = self.load(day: day, options: options)
 
-        #expect(stale.data.first?.modelBreakdowns?.first?.attribution?.upstream == nil)
         #expect(refreshed.data.first?.modelBreakdowns?.first?.attribution?.upstream?.provider == "codex")
     }
 

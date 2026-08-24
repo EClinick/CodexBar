@@ -985,7 +985,7 @@ extension CostUsageScanner {
         return inventory
     }
 
-    // swiftlint:disable:next function_body_length
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     static func loadClaudeDaily(
         provider: UsageProvider,
         range: CostUsageDayRange,
@@ -1042,6 +1042,8 @@ extension CostUsageScanner {
                 else { throw CancellationError() }
                 guard !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
                     stateRoot: options.cacheRoot) == cliProxyAPIAttributionEnabled
+                else { throw CancellationError() }
+                guard CostUsageClaudeFileStamp.read(at: cliProxyUsageURL) == cliProxyUsageArtifactStamp
                 else { throw CancellationError() }
                 return priorMemo.report
             }
@@ -1144,6 +1146,8 @@ extension CostUsageScanner {
         {
             guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
                 stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
+            else { throw CancellationError() }
+            guard CostUsageClaudeFileStamp.read(at: cliProxyUsageURL) == cliProxyUsageArtifactStamp
             else { throw CancellationError() }
 
             let reportAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
