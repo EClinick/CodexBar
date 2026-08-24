@@ -156,6 +156,52 @@ struct CLIProxyAPIAttributionResolverTests {
             .modelProvider,
         ])
     }
+}
+
+extension CLIProxyAPIAttributionResolverTests {
+    @Test
+    func `overflowing token totals reject telemetry instead of trapping`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let observations = [
+            CLIProxyAPIAttributionResolver.Observation(
+                sessionID: "session-1",
+                model: "gpt-5.5",
+                timestamp: timestamp),
+        ]
+        let request = CLIProxyAPIAttributionResolver.Request(
+            model: "gpt-5.5",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: .init(input: Int.max - 1, cacheRead: 0, cacheCreate: 0, output: 20))
+        let telemetryTotalOverflow = CLIProxyAPIAttributionResolver(
+            observations: observations,
+            usageRecords: [
+                CLIProxyAPIUsageRecord(
+                    timestamp: timestamp,
+                    provider: "codex",
+                    model: "gpt-5.5",
+                    alias: "gpt-5.5",
+                    endpoint: "POST /v1/messages",
+                    authType: "oauth",
+                    requestID: "request-overflow",
+                    tokens: .init(input: Int.max, output: 20, cached: 1, total: Int.max)),
+            ])
+
+        #expect(telemetryTotalOverflow.attributions(for: [request]).first?.upstream == nil)
+
+        let transcriptTotalOverflow = CLIProxyAPIAttributionResolver(
+            observations: observations,
+            usageRecords: [Self.record(timestamp: timestamp, provider: "codex", authType: "oauth")])
+        let overflowingRequest = CLIProxyAPIAttributionResolver.Request(
+            model: "gpt-5.5",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: .init(input: Int.max, cacheRead: 1, cacheCreate: 0, output: 20))
+
+        #expect(transcriptTotalOverflow.attributions(for: [overflowingRequest]).first?.upstream == nil)
+    }
 
     @Test
     func `dated request log outranks an undated log for telemetry correlation`() {

@@ -521,22 +521,6 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             model: model.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    private static func tokensMatch(
-        _ tokens: TokenSignature,
-        _ telemetry: CLIProxyAPIUsageRecord.Tokens) -> Bool
-    {
-        guard telemetry.output == tokens.output else { return false }
-        if telemetry.cacheRead != 0 || telemetry.cacheCreation != 0 {
-            return telemetry.input == tokens.input
-                && telemetry.cacheRead == tokens.cacheRead
-                && telemetry.cacheCreation == tokens.cacheCreate
-        }
-        let claudeInputTotal = tokens.input + tokens.cacheRead + tokens.cacheCreate
-        return telemetry.input == tokens.input
-            || telemetry.input == claudeInputTotal
-            || telemetry.input + telemetry.cached == claudeInputTotal
-    }
-
     private static func uniqueClosest<T>(
         _ candidates: [T],
         target: Date,
@@ -868,6 +852,27 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 }
 
 extension CLIProxyAPIAttributionResolver {
+    private static func tokensMatch(
+        _ tokens: TokenSignature,
+        _ telemetry: CLIProxyAPIUsageRecord.Tokens) -> Bool
+    {
+        guard telemetry.output == tokens.output else { return false }
+        if telemetry.cacheRead != 0 || telemetry.cacheCreation != 0 {
+            return telemetry.input == tokens.input
+                && telemetry.cacheRead == tokens.cacheRead
+                && telemetry.cacheCreation == tokens.cacheCreate
+        }
+        let (inputAndCacheRead, inputAndCacheReadOverflow) = tokens.input.addingReportingOverflow(tokens.cacheRead)
+        guard !inputAndCacheReadOverflow else { return false }
+        let (claudeInputTotal, claudeInputTotalOverflow) = inputAndCacheRead.addingReportingOverflow(tokens.cacheCreate)
+        guard !claudeInputTotalOverflow else { return false }
+        let (telemetryInputTotal, telemetryInputTotalOverflow) = telemetry.input
+            .addingReportingOverflow(telemetry.cached)
+        return telemetry.input == tokens.input
+            || telemetry.input == claudeInputTotal
+            || (!telemetryInputTotalOverflow && telemetryInputTotal == claudeInputTotal)
+    }
+
     static func inputArtifactFingerprint(
         home: URL,
         fileManager: FileManager = .default,

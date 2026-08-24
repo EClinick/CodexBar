@@ -775,6 +775,21 @@ public enum CLIProxyAPIConnectionSettingsStore {
         }
     }
 
+    static func credentialFingerprint(_ settings: CLIProxyAPIConnectionSettings) -> String? {
+        try? CanonicalSyncJSON.hash(settings)
+    }
+
+    static func replacementCredentialMatches(fingerprint: String) -> Bool? {
+        switch KeychainCacheStore.load(key: self.key, as: CLIProxyAPIConnectionSettings.self) {
+        case let .found(settings):
+            self.credentialFingerprint(settings) == fingerprint
+        case .missing:
+            false
+        case .temporarilyUnavailable, .invalid:
+            nil
+        }
+    }
+
     static func artifactDisposition(
         _ settings: CLIProxyAPIConnectionSettings,
         isDisconnected: Bool,
@@ -801,6 +816,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
         operations: SerializedSaveOperations) -> Bool
     {
         guard settings.isConfigured else { return false }
+        guard let replacementCredentialFingerprint = self.credentialFingerprint(settings) else { return false }
         do {
             return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
                 stateRoot: stateRoot,
@@ -835,6 +851,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
                         fileManager: fileManager,
                         disconnectedStateAfterCommit: false,
                         disconnectedStateAfterRollback: wasDisconnected,
+                        replacementCredentialFingerprint: replacementCredentialFingerprint,
                         replacementCredentialsStored: false,
                         prepareState: { operations.setDisconnectedState(true) })
                     else {

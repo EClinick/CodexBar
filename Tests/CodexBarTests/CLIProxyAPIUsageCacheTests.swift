@@ -1395,14 +1395,65 @@ struct CLIProxyAPITransactionRecoveryTests {
             fileManager: fileManager,
             disconnectedStateAfterCommit: false,
             disconnectedStateAfterRollback: false,
+            replacementCredentialFingerprint: "replacement-fingerprint",
             replacementCredentialsStored: false))
         #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
             generationUpdate,
             fileManager: fileManager))
 
-        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root, fileManager: fileManager) {}
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: root,
+            fileManager: fileManager,
+            recoverReplacementConfiguration: { fingerprint in
+                #expect(fingerprint == "replacement-fingerprint")
+                return false
+            },
+            operation: {})
 
         #expect(fileManager.fileExists(atPath: usageFile.path))
+        #expect(!CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: root,
+            fileManager: fileManager))
+        #expect(artifactsUpdate.moves.allSatisfy { !fileManager.fileExists(atPath: $0.stagedURL.path) })
+        #expect(artifactsUpdate.manifestURL.map { !fileManager.fileExists(atPath: $0.path) } == true)
+    }
+
+    @Test
+    func `interrupted replacement verifies stored credentials before discarding staged artifacts`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-replacement-after-store-\(UUID().uuidString)", isDirectory: true)
+        let costUsage = root.appendingPathComponent("cost-usage", isDirectory: true)
+        let usageFile = costUsage.appendingPathComponent(CostUsageCacheLocations.cliProxyAPIUsageFileName)
+        try fileManager.createDirectory(at: costUsage, withIntermediateDirectories: true)
+        try Data("telemetry".utf8).write(to: usageFile)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let generationUpdate = try #require(CostUsageCacheLocations
+            .prepareCLIProxyAPIConfigurationGenerationUpdate(stateRoot: root, fileManager: fileManager))
+        let artifactsUpdate = try #require(CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
+            in: [costUsage],
+            stateRoot: root,
+            expectedGeneration: generationUpdate.generation,
+            fileManager: fileManager,
+            disconnectedStateAfterCommit: false,
+            disconnectedStateAfterRollback: false,
+            replacementCredentialFingerprint: "replacement-fingerprint",
+            replacementCredentialsStored: false))
+        #expect(CostUsageCacheLocations.commitCLIProxyAPIConfigurationGenerationUpdate(
+            generationUpdate,
+            fileManager: fileManager))
+
+        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+            stateRoot: root,
+            fileManager: fileManager,
+            recoverReplacementConfiguration: { fingerprint in
+                #expect(fingerprint == "replacement-fingerprint")
+                return true
+            },
+            operation: {})
+
+        #expect(!fileManager.fileExists(atPath: usageFile.path))
         #expect(!CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
             stateRoot: root,
             fileManager: fileManager))

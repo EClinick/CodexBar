@@ -44,6 +44,7 @@ public enum CostUsageCacheLocations {
         let moves: [Move]
         let disconnectedStateAfterCommit: Bool?
         let disconnectedStateAfterRollback: Bool?
+        let replacementCredentialFingerprint: String?
         let replacementCredentialsStored: Bool?
         let forceRollback: Bool?
         let rollbackCredentialsRestored: Bool?
@@ -118,6 +119,7 @@ public enum CostUsageCacheLocations {
         stateRoot: URL?,
         fileManager: FileManager = .default,
         recoverRemovalConfiguration: (() -> Bool)? = nil,
+        recoverReplacementConfiguration: ((String) -> Bool?)? = nil,
         operation: () throws -> T) throws -> T
     {
         let descriptor = try self.acquireCLIProxyAPILock(stateRoot: stateRoot, fileManager: fileManager)
@@ -125,6 +127,7 @@ public enum CostUsageCacheLocations {
         guard self.recoverCLIProxyAPIArtifactsTransaction(
             stateRoot: stateRoot,
             fileManager: fileManager,
+            recoverReplacementConfiguration: recoverReplacementConfiguration,
             recoverRemovalConfiguration: recoverRemovalConfiguration ?? {
                 CLIProxyAPIConnectionSettingsStore.recoverInterruptedRemovalUnserialized(
                     stateRoot: stateRoot,
@@ -140,6 +143,7 @@ public enum CostUsageCacheLocations {
         stateRoot: URL?,
         fileManager: FileManager = .default,
         recoverRemovalConfiguration: (() -> Bool)? = nil,
+        recoverReplacementConfiguration: ((String) -> Bool?)? = nil,
         operation: () async throws -> T) async throws -> T
     {
         let descriptor = try self.acquireCLIProxyAPILock(stateRoot: stateRoot, fileManager: fileManager)
@@ -147,6 +151,7 @@ public enum CostUsageCacheLocations {
         guard self.recoverCLIProxyAPIArtifactsTransaction(
             stateRoot: stateRoot,
             fileManager: fileManager,
+            recoverReplacementConfiguration: recoverReplacementConfiguration,
             recoverRemovalConfiguration: recoverRemovalConfiguration ?? {
                 CLIProxyAPIConnectionSettingsStore.recoverInterruptedRemovalUnserialized(
                     stateRoot: stateRoot,
@@ -214,6 +219,7 @@ public enum CostUsageCacheLocations {
         fileManager: FileManager,
         disconnectedStateAfterCommit: Bool? = nil,
         disconnectedStateAfterRollback: Bool? = nil,
+        replacementCredentialFingerprint: String? = nil,
         replacementCredentialsStored: Bool? = nil,
         removalIsolationPublished: Bool? = nil,
         removalCredentialsCleared: Bool? = nil,
@@ -241,6 +247,7 @@ public enum CostUsageCacheLocations {
             },
             disconnectedStateAfterCommit: disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: disconnectedStateAfterRollback,
+            replacementCredentialFingerprint: replacementCredentialFingerprint,
             replacementCredentialsStored: replacementCredentialsStored,
             forceRollback: nil,
             rollbackCredentialsRestored: nil,
@@ -326,6 +333,7 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: true,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
@@ -355,6 +363,7 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: true,
             rollbackCredentialsRestored: true,
@@ -386,6 +395,7 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: true,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
@@ -417,6 +427,7 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
@@ -448,6 +459,7 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
@@ -504,6 +516,7 @@ public enum CostUsageCacheLocations {
     static func recoverCLIProxyAPIArtifactsTransaction(
         stateRoot: URL?,
         fileManager: FileManager = .default,
+        recoverReplacementConfiguration: ((String) -> Bool?)? = nil,
         recoverRemovalConfiguration: (() -> Bool)? = nil) -> Bool
     {
         let manifestURL = self.cliProxyAPIArtifactsTransactionURL(
@@ -531,7 +544,30 @@ public enum CostUsageCacheLocations {
         let didCommit = manifest.forceRollback != true &&
             self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
             manifest.expectedGeneration
-        if didCommit, manifest.replacementCredentialsStored == false {
+        if didCommit,
+           manifest.replacementCredentialsStored == false,
+           let fingerprint = manifest.replacementCredentialFingerprint
+        {
+            let recoverReplacementConfiguration = recoverReplacementConfiguration ?? {
+                CLIProxyAPIConnectionSettingsStore.replacementCredentialMatches(fingerprint: $0)
+            }
+            guard let replacementCredentialsStored = recoverReplacementConfiguration(fingerprint) else {
+                return false
+            }
+            if replacementCredentialsStored {
+                guard self.markCLIProxyAPIArtifactsReplacementCredentialsStored(
+                    update,
+                    fileManager: fileManager)
+                else { return false }
+            } else {
+                guard self.setCLIProxyAPIExplicitlyDisconnected(
+                    manifest.disconnectedStateAfterRollback ?? true,
+                    stateRoot: stateRoot,
+                    fileManager: fileManager)
+                else { return false }
+                return self.restoreCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+            }
+        } else if didCommit, manifest.replacementCredentialsStored == false {
             guard self.setCLIProxyAPIExplicitlyDisconnected(
                 manifest.disconnectedStateAfterRollback ?? true,
                 stateRoot: stateRoot,
@@ -818,7 +854,9 @@ public enum CostUsageCacheLocations {
         }
         return descriptor
     }
+}
 
+extension CostUsageCacheLocations {
     private static func releaseCLIProxyAPILock(_ descriptor: Int32) {
         _ = flock(descriptor, LOCK_UN)
         close(descriptor)
