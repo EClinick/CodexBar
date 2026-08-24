@@ -69,13 +69,15 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     private let authProviders: [AuthProvider]
     private let codexOAuthModelRoutes: [String: String]
     private let hasConfiguredOpenAIAPIUpstream: Bool
+    let inputArtifactFingerprint: [String: CostUsageClaudeFileStamp]
 
     init(
         observations: [Observation],
         usageRecords: [CLIProxyAPIUsageRecord] = [],
         authProviders: [AuthProvider] = [],
         codexOAuthModelAliases: [String: String] = [:],
-        hasConfiguredOpenAIAPIUpstream: Bool = false)
+        hasConfiguredOpenAIAPIUpstream: Bool = false,
+        inputArtifactFingerprint: [String: CostUsageClaudeFileStamp] = [:])
     {
         self.observationsBySessionID = Dictionary(grouping: observations, by: \.sessionID)
         self.observationsByCanonicalModel = Dictionary(
@@ -90,6 +92,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             result[Self.canonicalModel(upstreamModel)] = upstreamModel
         }
         self.hasConfiguredOpenAIAPIUpstream = hasConfiguredOpenAIAPIUpstream
+        self.inputArtifactFingerprint = inputArtifactFingerprint
     }
 
     static func load(
@@ -100,19 +103,30 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         usageRecords: [CLIProxyAPIUsageRecord]? = nil,
         checkCancellation: (() throws -> Void)? = nil) throws -> Self
     {
+        let inputArtifactFingerprint = try self.inputArtifactFingerprint(
+            home: home,
+            fileManager: fileManager,
+            checkCancellation: checkCancellation)
         let observations = try self.loadObservations(
             logDirectory: home.appendingPathComponent("logs", isDirectory: true),
             fileManager: fileManager,
             forceReload: forceReload,
             checkCancellation: checkCancellation)
-        return Self(
+        let resolver = Self(
             observations: observations,
             usageRecords: usageRecords ?? CLIProxyAPIUsageCacheIO.load(cacheRoot: cacheRoot),
             authProviders: self.loadAuthProviders(home: home, fileManager: fileManager),
             codexOAuthModelAliases: self.loadCodexOAuthModelAliases(home: home, fileManager: fileManager),
             hasConfiguredOpenAIAPIUpstream: self.hasConfiguredOpenAIAPIUpstream(
                 home: home,
-                fileManager: fileManager))
+                fileManager: fileManager),
+            inputArtifactFingerprint: inputArtifactFingerprint)
+        guard try inputArtifactFingerprint == self.inputArtifactFingerprint(
+            home: home,
+            fileManager: fileManager,
+            checkCancellation: checkCancellation)
+        else { throw CancellationError() }
+        return resolver
     }
 
     func attribution(
@@ -850,5 +864,38 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         return CostUsagePricing.normalizeClaudeModel(codexNormalized)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+    }
+}
+
+extension CLIProxyAPIAttributionResolver {
+    static func inputArtifactFingerprint(
+        home: URL,
+        fileManager: FileManager = .default,
+        checkCancellation: (() throws -> Void)? = nil) throws -> [String: CostUsageClaudeFileStamp]
+    {
+        var urls = [home.appendingPathComponent("config.yaml", isDirectory: false)]
+        if let authURLs = try? fileManager.contentsOfDirectory(
+            at: home,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
+        {
+            urls.append(contentsOf: authURLs.filter { $0.pathExtension.lowercased() == "json" })
+        }
+        let logDirectory = home.appendingPathComponent("logs", isDirectory: true)
+        if let logURLs = try? fileManager.contentsOfDirectory(
+            at: logDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
+        {
+            urls.append(contentsOf: logURLs.filter { $0.pathExtension.lowercased() == "log" })
+        }
+
+        var fingerprint: [String: CostUsageClaudeFileStamp] = [:]
+        for url in urls {
+            try checkCancellation?()
+            guard let stamp = CostUsageClaudeFileStamp.read(at: url) else { continue }
+            fingerprint[url.standardizedFileURL.path] = stamp
+        }
+        return fingerprint
     }
 }

@@ -1001,6 +1001,7 @@ extension CostUsageScanner {
         let cliProxyAPIAttributionEnabled = cliProxyAPIAttributionState.attributionEnabled
         let attributionResolver = cliProxyAPIAttributionState.resolver
         let cliProxyUsageArtifactStamp = cliProxyAPIAttributionState.usageArtifactStamp
+        let cliProxyAPIInputArtifactFingerprint = cliProxyAPIAttributionState.inputArtifactFingerprint
         let roots = self.defaultClaudeProjectsRoots(options: options)
         let inventory = try Self.inventoryClaudeRoots(roots, checkCancellation: checkCancellation)
         try checkCancellation?()
@@ -1017,6 +1018,7 @@ extension CostUsageScanner {
             attributionFilter: options.claudeAttributionFilter,
             cliProxyAPIConfigurationGeneration: cliProxyAPIConfigurationGeneration,
             cliProxyAPIAttributionEnabled: cliProxyAPIAttributionEnabled,
+            cliProxyAPIInputArtifactFingerprint: cliProxyAPIInputArtifactFingerprint,
             range: range,
             roots: roots,
             artifactStamps: (
@@ -1044,6 +1046,11 @@ extension CostUsageScanner {
                     stateRoot: options.cacheRoot) == cliProxyAPIAttributionEnabled
                 else { throw CancellationError() }
                 guard CostUsageClaudeFileStamp.read(at: cliProxyUsageURL) == cliProxyUsageArtifactStamp
+                else { throw CancellationError() }
+                guard try Self.currentClaudeCLIProxyAPIInputArtifactFingerprint(
+                    options: options,
+                    attributionEnabled: cliProxyAPIAttributionEnabled,
+                    checkCancellation: checkCancellation) == cliProxyAPIInputArtifactFingerprint
                 else { throw CancellationError() }
                 return priorMemo.report
             }
@@ -1149,6 +1156,11 @@ extension CostUsageScanner {
             else { throw CancellationError() }
             guard CostUsageClaudeFileStamp.read(at: cliProxyUsageURL) == cliProxyUsageArtifactStamp
             else { throw CancellationError() }
+            guard try Self.currentClaudeCLIProxyAPIInputArtifactFingerprint(
+                options: options,
+                attributionEnabled: cliProxyAPIAttributionEnabled,
+                checkCancellation: checkCancellation) == cliProxyAPIInputArtifactFingerprint
+            else { throw CancellationError() }
 
             let reportAttributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
                 stateRoot: options.cacheRoot)
@@ -1183,18 +1195,28 @@ extension CostUsageScanner {
             guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
                 stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
             else { throw CancellationError() }
+            guard try Self.currentClaudeCLIProxyAPIInputArtifactFingerprint(
+                options: options,
+                attributionEnabled: cliProxyAPIAttributionEnabled,
+                checkCancellation: checkCancellation) == cliProxyAPIInputArtifactFingerprint
+            else { throw CancellationError() }
             return built
         }
 
         let finalCacheArtifactStamp = CostUsageClaudeFileStamp.read(at: cacheURL)
         let finalPricingArtifactStamp = CostUsageClaudeFileStamp.read(at: pricingURL)
         let finalCLIProxyUsageArtifactStamp = CostUsageClaudeFileStamp.read(at: cliProxyUsageURL)
+        let finalCLIProxyAPIInputArtifactFingerprint = try Self.currentClaudeCLIProxyAPIInputArtifactFingerprint(
+            options: options,
+            attributionEnabled: cliProxyAPIAttributionEnabled,
+            checkCancellation: checkCancellation)
         let finalReportKey = Self.claudeReportMemoKey(
             provider: provider,
             providerFilter: providerFilter,
             attributionFilter: options.claudeAttributionFilter,
             cliProxyAPIConfigurationGeneration: cliProxyAPIConfigurationGeneration,
             cliProxyAPIAttributionEnabled: cliProxyAPIAttributionEnabled,
+            cliProxyAPIInputArtifactFingerprint: finalCLIProxyAPIInputArtifactFingerprint,
             range: range,
             roots: roots,
             artifactStamps: (
@@ -1208,7 +1230,8 @@ extension CostUsageScanner {
         }
         if cacheArtifactIsCurrent,
            finalPricingArtifactStamp == pricingArtifactStamp,
-           finalCLIProxyUsageArtifactStamp == cliProxyUsageArtifactStamp
+           finalCLIProxyUsageArtifactStamp == cliProxyUsageArtifactStamp,
+           finalCLIProxyAPIInputArtifactFingerprint == cliProxyAPIInputArtifactFingerprint
         {
             memo.store(
                 provider: provider,
@@ -1227,6 +1250,7 @@ extension CostUsageScanner {
         attributionFilter: ClaudeAttributionFilter,
         cliProxyAPIConfigurationGeneration: String?,
         cliProxyAPIAttributionEnabled: Bool,
+        cliProxyAPIInputArtifactFingerprint: [String: CostUsageClaudeFileStamp]?,
         range: CostUsageDayRange,
         roots: [URL],
         artifactStamps: (
@@ -1259,7 +1283,8 @@ extension CostUsageScanner {
             roots: roots.map { $0.standardizedFileURL.resolvingSymlinksInPath().path }.sorted(),
             cacheArtifactStamp: artifactStamps.cache,
             pricingArtifactStamp: artifactStamps.pricing,
-            cliProxyUsageArtifactStamp: artifactStamps.proxyUsage)
+            cliProxyUsageArtifactStamp: artifactStamps.proxyUsage,
+            cliProxyAPIInputArtifactFingerprint: cliProxyAPIInputArtifactFingerprint)
     }
 
     private struct ClaudeReportAggregation {

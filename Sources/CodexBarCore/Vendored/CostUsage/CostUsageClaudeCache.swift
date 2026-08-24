@@ -44,6 +44,7 @@ struct CostUsageClaudeReportMemoKey: Equatable, Sendable {
     let cacheArtifactStamp: CostUsageClaudeFileStamp?
     let pricingArtifactStamp: CostUsageClaudeFileStamp?
     let cliProxyUsageArtifactStamp: CostUsageClaudeFileStamp?
+    let cliProxyAPIInputArtifactFingerprint: [String: CostUsageClaudeFileStamp]?
 
     var scanConfiguration: ScanConfiguration {
         ScanConfiguration(

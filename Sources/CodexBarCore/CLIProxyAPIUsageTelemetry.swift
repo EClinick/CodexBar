@@ -835,6 +835,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
                         fileManager: fileManager,
                         disconnectedStateAfterCommit: false,
                         disconnectedStateAfterRollback: wasDisconnected,
+                        replacementCredentialsStored: false,
                         prepareState: { operations.setDisconnectedState(true) })
                     else {
                         _ = operations.setDisconnectedState(wasDisconnected)
@@ -876,6 +877,14 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 // during the Keychain write, recovery will discard the staged artifacts instead of exposing
                 // telemetry collected under the previous credentials with the replacement configuration.
                 guard operations.store(settings) else {
+                    rollback()
+                    return false
+                }
+                if let artifactsUpdate,
+                   !CostUsageCacheLocations.markCLIProxyAPIArtifactsReplacementCredentialsStored(
+                       artifactsUpdate,
+                       fileManager: fileManager)
+                {
                     rollback()
                     return false
                 }

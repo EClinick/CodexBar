@@ -4,6 +4,7 @@ extension CostUsageScanner {
         let attributionEnabled: Bool
         let resolver: CLIProxyAPIAttributionResolver?
         let usageArtifactStamp: CostUsageClaudeFileStamp?
+        let inputArtifactFingerprint: [String: CostUsageClaudeFileStamp]?
     }
 
     static func captureClaudeCLIProxyAPIAttributionState(
@@ -36,7 +37,19 @@ extension CostUsageScanner {
                 configurationGeneration: configurationGeneration,
                 attributionEnabled: attributionEnabled,
                 resolver: attributionResolver,
-                usageArtifactStamp: usageArtifactStamp)
+                usageArtifactStamp: usageArtifactStamp,
+                inputArtifactFingerprint: attributionResolver?.inputArtifactFingerprint)
         }
+    }
+
+    static func currentClaudeCLIProxyAPIInputArtifactFingerprint(
+        options: Options,
+        attributionEnabled: Bool,
+        checkCancellation: CancellationCheck? = nil) throws -> [String: CostUsageClaudeFileStamp]?
+    {
+        guard attributionEnabled, let home = options.cliProxyAPIHome else { return nil }
+        return try CLIProxyAPIAttributionResolver.inputArtifactFingerprint(
+            home: home,
+            checkCancellation: checkCancellation)
     }
 }

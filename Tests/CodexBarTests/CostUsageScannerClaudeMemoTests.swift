@@ -126,6 +126,35 @@ struct CostUsageScannerClaudeMemoTests {
     }
 
     @Test
+    func `memo hit rejects proxy routing input change after capture`() throws {
+        let env = try CostUsageTestEnvironment()
+        defer { env.cleanup() }
+        let day = try env.makeLocalNoon(year: 2026, month: 7, day: 1)
+        _ = try self.writeEvent(env: env, day: day, path: "project/session.jsonl", id: "first", input: 10)
+        let cliProxyHome = env.root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        try FileManager.default.createDirectory(at: cliProxyHome, withIntermediateDirectories: true)
+        let configurationURL = cliProxyHome.appendingPathComponent("config.yaml")
+        try Data("codex-api-key: []\n".utf8).write(to: configurationURL)
+        var options = self.options(env: env)
+        options.cliProxyAPIHome = cliProxyHome
+        _ = self.load(day: day, options: options)
+
+        #expect(throws: CancellationError.self) {
+            _ = try CostUsageScanner.withClaudeReportMemoHitObserverForTesting {
+                try? Data("openai-compatibility: []\n".utf8).write(to: configurationURL, options: [.atomic])
+            } operation: {
+                try CostUsageScanner.loadDailyReportCancellable(
+                    provider: .claude,
+                    since: day,
+                    until: day,
+                    now: day,
+                    options: options,
+                    checkCancellation: nil)
+            }
+        }
+    }
+
+    @Test
     func `telemetry appended after resolver capture rejects stale attribution`() throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }

@@ -44,6 +44,7 @@ public enum CostUsageCacheLocations {
         let moves: [Move]
         let disconnectedStateAfterCommit: Bool?
         let disconnectedStateAfterRollback: Bool?
+        let replacementCredentialsStored: Bool?
         let forceRollback: Bool?
         let rollbackCredentialsRestored: Bool?
         let removalIsolationPublished: Bool?
@@ -213,6 +214,7 @@ public enum CostUsageCacheLocations {
         fileManager: FileManager,
         disconnectedStateAfterCommit: Bool? = nil,
         disconnectedStateAfterRollback: Bool? = nil,
+        replacementCredentialsStored: Bool? = nil,
         removalIsolationPublished: Bool? = nil,
         removalCredentialsCleared: Bool? = nil,
         prepareState: () -> Bool = { true }) -> CLIProxyAPIArtifactsUpdate?
@@ -239,6 +241,7 @@ public enum CostUsageCacheLocations {
             },
             disconnectedStateAfterCommit: disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: disconnectedStateAfterRollback,
+            replacementCredentialsStored: replacementCredentialsStored,
             forceRollback: nil,
             rollbackCredentialsRestored: nil,
             removalIsolationPublished: removalIsolationPublished,
@@ -323,6 +326,7 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: true,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
             removalIsolationPublished: manifest.removalIsolationPublished,
@@ -351,12 +355,44 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: true,
             rollbackCredentialsRestored: true,
             removalIsolationPublished: manifest.removalIsolationPublished,
             removalCredentialsCleared: manifest.removalCredentialsCleared)
         do {
             try JSONEncoder().encode(restoredManifest).write(to: manifestURL, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    static func markCLIProxyAPIArtifactsReplacementCredentialsStored(
+        _ update: CLIProxyAPIArtifactsUpdate,
+        fileManager: FileManager) -> Bool
+    {
+        guard let manifestURL = update.manifestURL else { return true }
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(CLIProxyAPIArtifactsTransactionManifest.self, from: data)
+        else { return false }
+        guard manifest.forceRollback != true else { return false }
+        guard manifest.replacementCredentialsStored == false else {
+            return manifest.replacementCredentialsStored == true
+        }
+        let storedManifest = CLIProxyAPIArtifactsTransactionManifest(
+            expectedGeneration: manifest.expectedGeneration,
+            moves: manifest.moves,
+            disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
+            disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialsStored: true,
+            forceRollback: manifest.forceRollback,
+            rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
+            removalIsolationPublished: manifest.removalIsolationPublished,
+            removalCredentialsCleared: manifest.removalCredentialsCleared)
+        do {
+            try JSONEncoder().encode(storedManifest).write(to: manifestURL, options: [.atomic])
             return true
         } catch {
             return false
@@ -381,6 +417,7 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
             removalIsolationPublished: manifest.removalIsolationPublished,
@@ -411,6 +448,7 @@ public enum CostUsageCacheLocations {
             moves: manifest.moves,
             disconnectedStateAfterCommit: manifest.disconnectedStateAfterCommit,
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
+            replacementCredentialsStored: manifest.replacementCredentialsStored,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
             removalIsolationPublished: true,
@@ -493,6 +531,14 @@ public enum CostUsageCacheLocations {
         let didCommit = manifest.forceRollback != true &&
             self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
             manifest.expectedGeneration
+        if didCommit, manifest.replacementCredentialsStored == false {
+            guard self.setCLIProxyAPIExplicitlyDisconnected(
+                manifest.disconnectedStateAfterRollback ?? true,
+                stateRoot: stateRoot,
+                fileManager: fileManager)
+            else { return false }
+            return self.restoreCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
+        }
         if didCommit, manifest.removalIsolationPublished != nil, manifest.removalIsolationPublished != true {
             guard self.setCLIProxyAPIExplicitlyDisconnected(
                 manifest.disconnectedStateAfterRollback ?? true,
