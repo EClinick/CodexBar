@@ -1357,7 +1357,7 @@ extension CostUsageFetcherTests {
     }
 
     @Test
-    func `claude report preserves non codex proxy backend attribution`() async throws {
+    func `claude report preserves only anthropic proxy backend attribution`() async throws {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
 
@@ -1448,14 +1448,10 @@ extension CostUsageFetcherTests {
 
         let breakdowns = try #require(snapshot.daily.first?.modelBreakdowns)
         let claude = try #require(breakdowns.first { $0.modelName == "claude-sonnet-4-6" })
-        let gemini = try #require(breakdowns.first { $0.modelName == "gemini-3-pro" })
         #expect(claude.attribution?.route == .cliProxyAPI)
         #expect(claude.attribution?.upstream?.provider == "claude")
         #expect(claude.attribution?.upstream?.authType == .oauth)
-        #expect(gemini.attribution?.route == .cliProxyAPI)
-        #expect(gemini.attribution?.upstream?.provider == "gemini")
-        #expect(gemini.attribution?.upstream?.authType == .oauth)
-        #expect(gemini.costUSD == nil)
+        #expect(breakdowns.contains { $0.modelName == "gemini-3-pro" } == false)
     }
 
     @Test
