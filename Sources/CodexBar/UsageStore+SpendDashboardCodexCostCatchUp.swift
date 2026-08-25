@@ -8,6 +8,7 @@ private struct SpendDashboardCodexCostCatchUpContext {
     let scopeSignature: String
     let providerConfigRevision: UInt64
     let costUsageSettingsRevision: UInt64
+    let cliProxyAPIAttributionGuard: CLIProxyAPIAttributionPublicationGuard
 }
 
 extension UsageStore {
@@ -61,7 +62,8 @@ extension UsageStore {
             historyDays: historyDays,
             scopeSignature: scopeSignature,
             providerConfigRevision: self.settings.providerConfigRevision(for: .codex),
-            costUsageSettingsRevision: self.settings.costUsageSettingsRevision)
+            costUsageSettingsRevision: self.settings.costUsageSettingsRevision,
+            cliProxyAPIAttributionGuard: self.cliProxyAPIAttributionPublicationGuard())
         self.spendDashboardCodexCostCatchUpToken = token
         self.spendDashboardCodexCostCatchUpScopeSignature = scopeSignature
         self.spendDashboardCodexCostCatchUpMode = mode
@@ -261,6 +263,9 @@ extension UsageStore {
             && self.spendDashboardCodexCostCatchUpScopeSignature == context.scopeSignature
             && self.settings.providerConfigRevision(for: .codex) == context.providerConfigRevision
             && self.settings.costUsageSettingsRevision == context.costUsageSettingsRevision
+            && self.cliProxyAPIAttributionPublicationIsCurrent(
+                context.cliProxyAPIAttributionGuard,
+                for: .codex)
             && max(SpendDashboardSource.scanDays, self.settings.costUsageHistoryDays) == context.historyDays
             && self.settings.isCostUsageEffectivelyEnabled(for: .codex)
             && self.isEnabled(.codex)

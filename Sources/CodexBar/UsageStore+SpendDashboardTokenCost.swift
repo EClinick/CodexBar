@@ -71,6 +71,7 @@ extension UsageStore {
         let costScopeSignature = self.spendDashboardTokenSnapshotScopeSignature(for: provider)
         let publicationRevision = self.providerPublicationRevision(for: provider)
         let providerConfigRevision = self.settings.providerConfigRevision(for: provider)
+        let cliProxyAPIAttributionGuard = self.cliProxyAPIAttributionPublicationGuard()
         self.lastSpendDashboardTokenFetchAt[provider.instanceID] = now
         self.lastSpendDashboardTokenFetchScope[provider.instanceID] = costScopeSignature
         self.spendDashboardTokenRefreshInFlight.insert(provider.instanceID)
@@ -104,6 +105,7 @@ extension UsageStore {
                 provider: provider,
                 publicationRevision: publicationRevision,
                 providerConfigRevision: providerConfigRevision,
+                cliProxyAPIAttributionGuard: cliProxyAPIAttributionGuard,
                 costScopeSignature: costScopeSignature,
                 fetchedCredentialScopeFingerprint: snapshot.credentialScopeFingerprint)
             else {
@@ -125,6 +127,7 @@ extension UsageStore {
                 provider: provider,
                 publicationRevision: publicationRevision,
                 providerConfigRevision: providerConfigRevision,
+                cliProxyAPIAttributionGuard: cliProxyAPIAttributionGuard,
                 costScopeSignature: costScopeSignature)
             else {
                 self.clearSpendDashboardTokenFetchMetadataIfMatching(
@@ -185,11 +188,13 @@ extension UsageStore {
         provider: UsageProvider,
         publicationRevision: ProviderPublicationRevision,
         providerConfigRevision: UInt64,
+        cliProxyAPIAttributionGuard: CLIProxyAPIAttributionPublicationGuard,
         costScopeSignature: String,
         fetchedCredentialScopeFingerprint: String? = nil) -> Bool
     {
         guard self.providerPublicationRevisionIsCurrent(publicationRevision, for: provider),
               self.settings.providerConfigRevision(for: provider) == providerConfigRevision,
+              self.cliProxyAPIAttributionPublicationIsCurrent(cliProxyAPIAttributionGuard, for: provider),
               self.settings.costUsageEnabled,
               self.isEnabled(provider)
         else {

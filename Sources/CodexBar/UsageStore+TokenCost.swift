@@ -15,6 +15,13 @@ struct TokenRefreshPublicationGuard {
     let provider: UsageStore.ProviderPublicationRevision
     let tokenSnapshot: UInt64
     let providerConfig: UInt64
+    let cliProxyAPIAttribution: CLIProxyAPIAttributionPublicationGuard
+}
+
+struct CLIProxyAPIAttributionPublicationGuard: Sendable, Equatable {
+    let configurationGeneration: String?
+    let telemetryRevision: String?
+    let isIsolated: Bool
 }
 
 struct TokenSnapshotPublication: Sendable, Equatable {
@@ -128,7 +135,25 @@ extension UsageStore {
         TokenRefreshPublicationGuard(
             provider: self.providerPublicationRevision(for: provider),
             tokenSnapshot: self.tokenSnapshotPublicationRevision(for: provider),
-            providerConfig: self.settings.providerConfigRevision(for: provider))
+            providerConfig: self.settings.providerConfigRevision(for: provider),
+            cliProxyAPIAttribution: self.cliProxyAPIAttributionPublicationGuard())
+    }
+
+    func cliProxyAPIAttributionPublicationGuard() -> CLIProxyAPIAttributionPublicationGuard {
+        CLIProxyAPIAttributionPublicationGuard(
+            configurationGeneration: self.costUsageFetcher.cliProxyAPIConfigurationGeneration(),
+            telemetryRevision: self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision(),
+            isIsolated: self.costUsageFetcher.cliProxyAPIAttributionIsIsolated())
+    }
+
+    func cliProxyAPIAttributionPublicationIsCurrent(
+        _ guardValue: CLIProxyAPIAttributionPublicationGuard,
+        for provider: UsageProvider) -> Bool
+    {
+        guard provider == .codex || provider == .claude else { return true }
+        return self.costUsageFetcher.cliProxyAPIConfigurationGeneration() == guardValue.configurationGeneration
+            && self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision() == guardValue.telemetryRevision
+            && self.costUsageFetcher.cliProxyAPIAttributionIsIsolated() == guardValue.isIsolated
     }
 
     func publishTokenSnapshot(_ snapshot: CostUsageTokenSnapshot, for provider: UsageProvider) {
@@ -445,6 +470,9 @@ extension UsageStore {
         guard self.providerPublicationRevisionIsCurrent(publicationGuard.provider, for: provider),
               self.tokenSnapshotPublicationRevision(for: provider) == publicationGuard.tokenSnapshot,
               self.settings.providerConfigRevision(for: provider) == publicationGuard.providerConfig,
+              self.cliProxyAPIAttributionPublicationIsCurrent(
+                  publicationGuard.cliProxyAPIAttribution,
+                  for: provider),
               self.settings.costUsageEnabled,
               self.isEnabled(provider),
               self.settings.costUsageHistoryDays == historyDays
