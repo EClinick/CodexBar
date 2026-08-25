@@ -53,6 +53,27 @@ struct ModelsDevPricingTests {
     }
 
     @Test
+    func `classifies google catalog aliases before claude pricing`() throws {
+        let catalog = try Self.catalog("""
+        {
+          "google": {
+            "id": "google",
+            "models": {
+              "proxy-gemini-alias": {
+                "id": "proxy-gemini-alias",
+                "cost": { "input": 2, "output": 10 }
+              }
+            }
+          }
+        }
+        """)
+
+        #expect(CostUsagePricing.modelProvider(
+            for: "proxy-gemini-alias",
+            modelsDevCatalog: catalog) == .google)
+    }
+
+    @Test
     func `converts models dev per million token prices to per token prices`() throws {
         let pricing = try #require(try Self.fixtureCatalog().pricing(
             providerID: "anthropic",

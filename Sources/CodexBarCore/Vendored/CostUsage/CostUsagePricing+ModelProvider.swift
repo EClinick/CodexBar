@@ -14,6 +14,17 @@ extension CostUsagePricing {
             return .openAI
         }
 
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("gemini-")
+            || modelsDevCatalog?.pricing(providerID: "google", modelID: trimmed) != nil
+            || ModelsDevPricingPipeline.lookup(
+                providerID: "google",
+                modelID: trimmed,
+                cacheRoot: modelsDevCacheRoot) != nil
+        {
+            return .google
+        }
+
         if self.claudeCostUSD(
             model: model,
             inputTokens: 0,
@@ -24,17 +35,6 @@ extension CostUsagePricing {
             modelsDevCacheRoot: modelsDevCacheRoot) != nil
         {
             return .anthropic
-        }
-
-        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.lowercased().hasPrefix("gemini-")
-            || modelsDevCatalog?.pricing(providerID: "google", modelID: trimmed) != nil
-            || ModelsDevPricingPipeline.lookup(
-                providerID: "google",
-                modelID: trimmed,
-                cacheRoot: modelsDevCacheRoot) != nil
-        {
-            return .google
         }
 
         return .unknown
