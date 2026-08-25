@@ -201,6 +201,7 @@ struct SpendDashboardPane: View {
     @State private var cliProxyAPIStatus: String?
     @State private var cliProxyAPIIsSaving = false
     @State private var isVisible = false
+    @State private var userSelectedBackground = false
 
     init(settings: SettingsStore, store: UsageStore) {
         self.settings = settings
@@ -248,6 +249,7 @@ struct SpendDashboardPane: View {
         }
         .onDisappear {
             self.isVisible = false
+            self.synchronizeCodexCostCatchUp()
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             self.controller.refreshDateWindow()
@@ -355,6 +357,7 @@ struct SpendDashboardPane: View {
                             }
                         } else {
                             Button(L("Continue in background")) {
+                                self.userSelectedBackground = true
                                 self.startCodexCostCatchUp(mode: .automatic)
                             }
                         }
@@ -382,11 +385,23 @@ struct SpendDashboardPane: View {
     }
 
     private func synchronizeCodexCostCatchUp() {
+        guard self.isVisible else {
+            self.userSelectedBackground = false
+            self.store.synchronizeSpendDashboardCodexCostCatchUp(
+                accounts: self.codexSpendScanRequests,
+                preferredMode: .automatic)
+            return
+        }
+        let preferredMode: CodexCostCatchUpMode? = self.userSelectedBackground ? nil : .accelerated
         self.store.synchronizeSpendDashboardCodexCostCatchUp(
-            accounts: self.codexSpendScanRequests)
+            accounts: self.codexSpendScanRequests,
+            preferredMode: preferredMode)
     }
 
     private func startCodexCostCatchUp(mode: CodexCostCatchUpMode) {
+        if mode == .accelerated {
+            self.userSelectedBackground = false
+        }
         self.store.startSpendDashboardCodexCostCatchUpIfNeeded(
             accounts: self.codexSpendScanRequests,
             mode: mode)
