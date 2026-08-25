@@ -81,6 +81,67 @@ struct SpendDashboardCodexProxySourceTests {
     }
 
     @Test
+    func `proxy usage is invalidated when attribution boundaries change during load`() async {
+        let now = Date(timeIntervalSince1970: 1_784_179_200)
+        let proxySnapshot = Self.snapshot(cost: 2, now: now)
+        let staleProxyInput = SpendDashboardModel.ProviderInput(
+            id: SpendDashboardSource.codexProxySourceID,
+            provider: .codex,
+            displayName: "Codex · CLIProxyAPI",
+            modelProviderName: "Codex",
+            snapshot: proxySnapshot)
+        let request = SpendDashboardLoadRequest(
+            configuration: SpendDashboardConfiguration(
+                costUsageEnabled: true,
+                providerIDs: [UsageProvider.claude.rawValue],
+                codexAccountIdentities: []),
+            capturedInputs: [staleProxyInput],
+            unavailableSourceIDs: [],
+            codexRequests: [],
+            now: now,
+            force: false)
+        let initialGuard = CLIProxyAPIAttributionPublicationGuard(
+            configurationGeneration: "generation-a",
+            telemetryRevision: "telemetry-a",
+            isIsolated: false)
+        let changedGuards = [
+            CLIProxyAPIAttributionPublicationGuard(
+                configurationGeneration: "generation-b",
+                telemetryRevision: "telemetry-a",
+                isIsolated: false),
+            CLIProxyAPIAttributionPublicationGuard(
+                configurationGeneration: "generation-a",
+                telemetryRevision: "telemetry-b",
+                isIsolated: false),
+            CLIProxyAPIAttributionPublicationGuard(
+                configurationGeneration: "generation-a",
+                telemetryRevision: "telemetry-a",
+                isIsolated: true),
+        ]
+
+        for changedGuard in changedGuards {
+            let guardLoadCount = LockIsolated(0)
+            let result = await SpendDashboardSource.load(
+                request,
+                codexSnapshotLoader: { _ in
+                    Issue.record("No account-scoped Codex snapshot should be requested.")
+                    return proxySnapshot
+                },
+                codexProxySnapshotLoader: { _ in proxySnapshot },
+                codexProxyAttributionGuardLoader: {
+                    let loadCount = guardLoadCount.value
+                    guardLoadCount.setValue(loadCount + 1)
+                    return loadCount == 0 ? initialGuard : changedGuard
+                })
+
+            #expect(result.inputs.isEmpty)
+            #expect(result.failedSourceIDs == [SpendDashboardSource.codexProxySourceID])
+            #expect(result.invalidatedSourceIDs == [SpendDashboardSource.codexProxySourceID])
+            #expect(guardLoadCount.value == 2)
+        }
+    }
+
+    @Test
     func `cancelled proxy load preserves direct account and invalidates retained proxy source`() async {
         let now = Date(timeIntervalSince1970: 1_784_179_200)
         let account = CodexSpendScanRequest(

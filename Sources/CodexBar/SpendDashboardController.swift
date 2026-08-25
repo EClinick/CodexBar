@@ -173,6 +173,7 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
         -> CostUsageTokenActivityCache?
     typealias CodexProxySnapshotLoader = @Sendable (CodexProxySpendSnapshotLoadContext) async throws
         -> CostUsageTokenSnapshot
+    typealias CodexProxyAttributionGuardLoader = @Sendable () -> CLIProxyAPIAttributionPublicationGuard
     typealias CachedCodexSnapshotLoader = @Sendable (CodexSpendSnapshotLoadContext) async
         -> CostUsageTokenSnapshot?
     typealias CodexCacheRootResolver = @Sendable (CodexSpendScanRequest) -> URL
@@ -377,7 +378,8 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
             cacheRootResolver: { self.codexCacheRoot(for: $0) },
             codexSnapshotLoader: { context in try await self.loadCodexSnapshot(context) },
             codexActivityLoader: { context in await self.loadCodexActivity(context) },
-            codexProxySnapshotLoader: codexProxySnapshotLoader)
+            codexProxySnapshotLoader: codexProxySnapshotLoader,
+            codexProxyAttributionGuardLoader: self.loadCodexProxyAttributionGuard)
     }
 
     static func load(
@@ -488,14 +490,21 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
     static func load(
         _ request: SpendDashboardLoadRequest,
         codexSnapshotLoader: @escaping CodexSnapshotLoader,
-        codexProxySnapshotLoader: CodexProxySnapshotLoader?) async -> SpendDashboardLoadResult
+        codexProxySnapshotLoader: CodexProxySnapshotLoader?,
+        codexProxyAttributionGuardLoader: @escaping CodexProxyAttributionGuardLoader = {
+            CLIProxyAPIAttributionPublicationGuard(
+                configurationGeneration: nil,
+                telemetryRevision: nil,
+                isIsolated: false)
+        }) async -> SpendDashboardLoadResult
     {
         await self.load(
             request,
             cacheRootResolver: { self.codexCacheRoot(for: $0) },
             codexSnapshotLoader: codexSnapshotLoader,
             codexActivityLoader: { _ in nil },
-            codexProxySnapshotLoader: codexProxySnapshotLoader)
+            codexProxySnapshotLoader: codexProxySnapshotLoader,
+            codexProxyAttributionGuardLoader: codexProxyAttributionGuardLoader)
     }
 
     private static func load(
@@ -503,7 +512,13 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
         cacheRootResolver: @escaping CodexCacheRootResolver,
         codexSnapshotLoader: @escaping CodexSnapshotLoader,
         codexActivityLoader: @escaping CodexActivityLoader,
-        codexProxySnapshotLoader: CodexProxySnapshotLoader?) async -> SpendDashboardLoadResult
+        codexProxySnapshotLoader: CodexProxySnapshotLoader?,
+        codexProxyAttributionGuardLoader: @escaping CodexProxyAttributionGuardLoader = {
+            CLIProxyAPIAttributionPublicationGuard(
+                configurationGeneration: nil,
+                telemetryRevision: nil,
+                isIsolated: false)
+        }) async -> SpendDashboardLoadResult
     {
         var inputs = request.capturedInputs
         var failedSourceIDs = request.unavailableSourceIDs
@@ -601,6 +616,7 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
            let codexProxySnapshotLoader
         {
             do {
+                let attributionGuard = codexProxyAttributionGuardLoader()
                 let snapshot = try await codexProxySnapshotLoader(CodexProxySpendSnapshotLoadContext(
                     now: request.now,
                     force: request.force,
@@ -608,7 +624,11 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
                     refreshPricingInBackground: false,
                     calendar: request.configuration.bucketCalendar))
                 try Task.checkCancellation()
-                if !snapshot.daily.isEmpty {
+                if codexProxyAttributionGuardLoader() != attributionGuard {
+                    inputs.removeAll { $0.id == Self.codexProxySourceID }
+                    failedSourceIDs.insert(Self.codexProxySourceID)
+                    invalidatedSourceIDs.insert(Self.codexProxySourceID)
+                } else if !snapshot.daily.isEmpty {
                     // Provider-specific by design: proxy-attributed Claude rows are published in the Codex family.
                     let providerName = ProviderDescriptorRegistry.descriptor(for: .codex).metadata.displayName
                     inputs.append(SpendDashboardModel.ProviderInput(
@@ -688,6 +708,14 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
             forceRefresh: context.force,
             historyDays: context.historyDays,
             refreshPricingInBackground: context.refreshPricingInBackground)
+    }
+
+    private static func loadCodexProxyAttributionGuard() -> CLIProxyAPIAttributionPublicationGuard {
+        let fetcher = CostUsageFetcher()
+        return CLIProxyAPIAttributionPublicationGuard(
+            configurationGeneration: fetcher.cliProxyAPIConfigurationGeneration(),
+            telemetryRevision: fetcher.cliProxyAPIUsageTelemetryRevision(),
+            isIsolated: fetcher.cliProxyAPIAttributionIsIsolated())
     }
 
     static func shouldLoadCodexProxy(providerIDs: [String]) -> Bool {
