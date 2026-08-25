@@ -601,9 +601,9 @@ public struct CostUsageFetcher: Sendable {
             allowVertexClaudeFallback: allowVertexClaudeFallback,
             forceRefresh: forceRefresh,
             bypassScannerDebounce: bypassScannerDebounce)
-        // Provider-specific by design: Claude's view excludes rows reassigned to the Codex proxy source.
+        // Provider-specific by design: Claude's view retains only Anthropic-owned rows, even after disconnect.
         if provider == .claude {
-            options.claudeAttributionFilter = cliProxyAPIAttributionEnabled ? .excludeCodexBackend : .all
+            options.claudeAttributionFilter = .excludeCodexBackend
         }
         var resolvedPiOptions = overridePiScannerOptions ?? PiSessionCostScanner.Options()
         if resolvedPiOptions.cacheRoot == nil {

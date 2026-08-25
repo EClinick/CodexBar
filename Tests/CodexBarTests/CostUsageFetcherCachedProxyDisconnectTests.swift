@@ -194,8 +194,14 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
         #expect(claudeReport.data.first?.modelBreakdowns?.first?.attribution == nil)
     }
 
-    @Test(arguments: ["claude-sonnet-4-6", "gpt-5.5"])
-    func `disconnect strips surviving cached proxy attribution`(model: String) async throws {
+    @Test(arguments: [
+        ("claude-sonnet-4-6", true),
+        ("gpt-5.5", false),
+    ])
+    func `disconnect strips cached attribution and retains only Claude models`(
+        model: String,
+        shouldRemainInClaude: Bool) async throws
+    {
         let env = try CostUsageTestEnvironment()
         defer { env.cleanup() }
 
@@ -272,7 +278,7 @@ struct CostUsageFetcherCachedProxyDisconnectTests {
             allowPricingRefresh: false,
             includePiSessions: false,
             scannerOptions: options)
-        #expect(disconnectedClaude.daily.first?.totalTokens == 105)
+        #expect(disconnectedClaude.daily.first?.totalTokens == (shouldRemainInClaude ? 105 : nil))
         #expect(disconnectedClaude.daily.first?.modelBreakdowns?.first?.attribution?.route != .cliProxyAPI)
         let cachedCodex = await CostUsageFetcher.loadCachedCodexTokenSnapshot(
             now: day,

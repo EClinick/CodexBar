@@ -1175,18 +1175,10 @@ extension CostUsageScanner {
                     calendar: range.calendar,
                     checkCancellation: checkCancellation)
             }
-            let reportAttributionFilter: ClaudeAttributionFilter = if reportAttributionEnabled {
-                options.claudeAttributionFilter
-            } else {
-                switch options.claudeAttributionFilter {
-                case .all, .excludeCodexBackend: .all
-                case .codexBackendOnly: .codexBackendOnly
-                }
-            }
             let built = Self.buildClaudeReportFromCache(
                 cache: cache,
                 range: range,
-                attributionFilter: reportAttributionFilter,
+                attributionFilter: options.claudeAttributionFilter,
                 attributionResolver: reportAttributionEnabled ? attributionResolver : nil,
                 allowCachedCLIProxyAPIAttribution: reportAttributionEnabled,
                 modelsDevCatalog: modelsDevCatalogResolver.resolve(),
