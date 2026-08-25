@@ -137,6 +137,48 @@ struct CostUsageDailyReportMergeTests {
     }
 
     @Test
+    func `merged report preserves native request and coverage metadata with proxy usage`() throws {
+        let native = CostUsageDailyReport(
+            data: [
+                CostUsageDailyReport.Entry(
+                    date: "2026-04-04",
+                    inputTokens: 100,
+                    outputTokens: 20,
+                    reasoningTokens: 12,
+                    totalTokens: 120,
+                    requestCount: 7,
+                    costUSD: 1.25,
+                    modelsUsed: ["gpt-5.4"],
+                    modelBreakdowns: nil,
+                    unpricedRequestCount: 2,
+                    unmeteredRequestCount: 1,
+                    estimatedRequestCount: 3),
+            ],
+            summary: nil)
+        let proxy = CostUsageDailyReport(
+            data: [
+                CostUsageDailyReport.Entry(
+                    date: "2026-04-04",
+                    inputTokens: 50,
+                    outputTokens: 10,
+                    totalTokens: 60,
+                    costUSD: 0.75,
+                    modelsUsed: ["gpt-5.4"],
+                    modelBreakdowns: nil),
+            ],
+            summary: nil)
+
+        let merged = native.merged(with: proxy)
+        let entry = try #require(merged.data.first)
+        #expect(entry.requestCount == 7)
+        #expect(entry.reasoningTokens == 12)
+        #expect(entry.unpricedRequestCount == 2)
+        #expect(entry.unmeteredRequestCount == 1)
+        #expect(entry.estimatedRequestCount == 3)
+        #expect(merged.summary?.reasoningTokens == 12)
+    }
+
+    @Test
     func `merged report unions days and orders model breakdowns deterministically`() {
         let first = CostUsageDailyReport(
             data: [

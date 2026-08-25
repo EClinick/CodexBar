@@ -880,11 +880,21 @@ extension CostUsageDailyReport {
         var sawCacheCreationTokens = false
         var outputTokens: Int = 0
         var sawOutputTokens = false
+        var reasoningTokens: Int = 0
+        var sawReasoningTokens = false
         var totalTokens: Int = 0
         var sawTotalTokens = false
         var derivedTotalTokensWithoutExplicitTotal: Int = 0
+        var requestCount: Int = 0
+        var sawRequestCount = false
         var costUSD: Double = 0
         var sawCost = false
+        var unpricedRequestCount: Int = 0
+        var sawUnpricedRequestCount = false
+        var unmeteredRequestCount: Int = 0
+        var sawUnmeteredRequestCount = false
+        var estimatedRequestCount: Int = 0
+        var sawEstimatedRequestCount = false
         var modelsUsed: Set<String> = []
         var breakdowns: [BreakdownKey: BreakdownAccumulator] = [:]
 
@@ -909,15 +919,35 @@ extension CostUsageDailyReport {
                 self.outputTokens += outputTokens
                 self.sawOutputTokens = true
             }
+            if let reasoningTokens = entry.reasoningTokens {
+                self.reasoningTokens += reasoningTokens
+                self.sawReasoningTokens = true
+            }
             if let totalTokens = entry.totalTokens {
                 self.totalTokens += totalTokens
                 self.sawTotalTokens = true
             } else if entryDerivedTotalTokens > 0 {
                 self.derivedTotalTokensWithoutExplicitTotal += entryDerivedTotalTokens
             }
+            if let requestCount = entry.requestCount {
+                self.requestCount += requestCount
+                self.sawRequestCount = true
+            }
             if let costUSD = entry.costUSD {
                 self.costUSD += costUSD
                 self.sawCost = true
+            }
+            if let unpricedRequestCount = entry.unpricedRequestCount {
+                self.unpricedRequestCount += unpricedRequestCount
+                self.sawUnpricedRequestCount = true
+            }
+            if let unmeteredRequestCount = entry.unmeteredRequestCount {
+                self.unmeteredRequestCount += unmeteredRequestCount
+                self.sawUnmeteredRequestCount = true
+            }
+            if let estimatedRequestCount = entry.estimatedRequestCount {
+                self.estimatedRequestCount += estimatedRequestCount
+                self.sawEstimatedRequestCount = true
             }
             if let modelsUsed = entry.modelsUsed {
                 self.modelsUsed.formUnion(modelsUsed)
@@ -962,10 +992,15 @@ extension CostUsageDailyReport {
                 outputTokens: self.sawOutputTokens ? self.outputTokens : nil,
                 cacheReadTokens: self.sawCacheReadTokens ? self.cacheReadTokens : nil,
                 cacheCreationTokens: self.sawCacheCreationTokens ? self.cacheCreationTokens : nil,
+                reasoningTokens: self.sawReasoningTokens ? self.reasoningTokens : nil,
                 totalTokens: totalTokens,
+                requestCount: self.sawRequestCount ? self.requestCount : nil,
                 costUSD: self.sawCost ? self.costUSD : nil,
                 modelsUsed: modelsUsed,
-                modelBreakdowns: modelBreakdowns)
+                modelBreakdowns: modelBreakdowns,
+                unpricedRequestCount: self.sawUnpricedRequestCount ? self.unpricedRequestCount : nil,
+                unmeteredRequestCount: self.sawUnmeteredRequestCount ? self.unmeteredRequestCount : nil,
+                estimatedRequestCount: self.sawEstimatedRequestCount ? self.estimatedRequestCount : nil)
         }
     }
 
@@ -1006,6 +1041,8 @@ extension CostUsageDailyReport {
         var sawTotalCacheReadTokens = false
         var totalCacheCreationTokens = 0
         var sawTotalCacheCreationTokens = false
+        var totalReasoningTokens = 0
+        var sawTotalReasoningTokens = false
         var totalTokens = 0
         var sawTotalTokens = false
         var totalCostUSD = 0.0
@@ -1028,6 +1065,10 @@ extension CostUsageDailyReport {
                 totalCacheCreationTokens += cacheCreationTokens
                 sawTotalCacheCreationTokens = true
             }
+            if let reasoningTokens = entry.reasoningTokens {
+                totalReasoningTokens += reasoningTokens
+                sawTotalReasoningTokens = true
+            }
             if let entryTotalTokens = entry.totalTokens {
                 totalTokens += entryTotalTokens
                 sawTotalTokens = true
@@ -1043,6 +1084,7 @@ extension CostUsageDailyReport {
             totalOutputTokens: sawTotalOutputTokens ? totalOutputTokens : nil,
             cacheReadTokens: sawTotalCacheReadTokens ? totalCacheReadTokens : nil,
             cacheCreationTokens: sawTotalCacheCreationTokens ? totalCacheCreationTokens : nil,
+            reasoningTokens: sawTotalReasoningTokens ? totalReasoningTokens : nil,
             totalTokens: sawTotalTokens ? totalTokens : nil,
             totalCostUSD: sawTotalCostUSD ? totalCostUSD : nil)
     }
