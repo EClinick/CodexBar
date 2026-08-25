@@ -627,6 +627,7 @@ struct SpendDashboardPane: View {
 
         self.cliProxyAPIManagementKey = ""
         self.cliProxyAPIHasSavedConfiguration = true
+        self.store.invalidateCLIProxyAPICostAttribution(widgetReason: "cliproxyapi-configuration-changed")
         switch await self.store.collectCLIProxyAPIUsageNow() {
         case .disabled:
             self.cliProxyAPIStatus = "Enable Track costs to test."
