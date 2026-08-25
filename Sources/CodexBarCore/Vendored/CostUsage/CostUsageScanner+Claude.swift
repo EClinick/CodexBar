@@ -1363,6 +1363,8 @@ extension CostUsageScanner {
                 nil
             }
             let isCodexBackend = attribution?.route == .cliProxyAPI && attribution?.upstream?.isCodex == true
+            let isNonClaudeProxyBackend = attribution?.route == .cliProxyAPI &&
+                attribution?.upstream?.isAnthropic != true
             let isUnresolvedAttribution = if attribution?.route == .cliProxyAPI {
                 attribution?.upstream == nil
             } else {
@@ -1371,7 +1373,7 @@ extension CostUsageScanner {
             let includeRow = switch attributionContext.filter {
             case .all: true
             case .codexBackendOnly: isCodexBackend
-            case .excludeCodexBackend: !isCodexBackend && !isUnresolvedAttribution
+            case .excludeCodexBackend: !isCodexBackend && !isNonClaudeProxyBackend && !isUnresolvedAttribution
             }
             guard includeRow else { continue }
 

@@ -386,6 +386,14 @@ public struct CostUsageAttribution: Sendable, Codable, Equatable, Hashable {
                 .caseInsensitiveCompare("codex") == .orderedSame
         }
 
+        public var isAnthropic: Bool {
+            // Provider-specific by design: CLIProxyAPI may identify Anthropic with either external raw name.
+            switch self.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "anthropic", "claude": true
+            default: false
+            }
+        }
+
         public var providerDisplayName: String {
             // Provider-specific by design: external CLIProxyAPI provider IDs map to stable user-facing names.
             switch self.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {

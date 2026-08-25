@@ -379,15 +379,16 @@ struct CostUsageFetcherUnknownModelPricingTests {
     }
 
     @Test(arguments: [
-        ("gpt-new", "openrouter", "OpenAICompatExecutor", 0.00028),
-        ("claude-new", "openrouter", "OpenAICompatExecutor", 0.00045),
-        ("gemma-new", "gemini", nil, 0.00036),
+        ("claude-new", "claude", "ClaudeExecutor", 0.00045, true),
+        ("gpt-new", "openrouter", "OpenAICompatExecutor", 0.00028, false),
+        ("gemma-new", "gemini", nil, 0.00036, false),
     ])
-    func `claude fetch resolves proxy pricing across upstream providers`(
+    func `claude fetch retains only anthropic proxy upstreams`(
         upstreamModel: String,
         upstreamProvider: String,
         executorType: String?,
-        expectedCost: Double) async throws
+        expectedCost: Double,
+        shouldInclude: Bool) async throws
     {
         let environment = try CostUsageTestEnvironment()
         defer { environment.cleanup() }
@@ -482,6 +483,10 @@ struct CostUsageFetcherUnknownModelPricingTests {
             modelsDevClient: ModelsDevClient(transport: CostUsageFetcherModelsDevTransport(
                 data: refreshedCatalog)))
 
+        guard shouldInclude else {
+            #expect(snapshot.daily.isEmpty)
+            return
+        }
         let breakdown = try #require(snapshot.daily.first?.modelBreakdowns?.first)
         #expect(breakdown.modelName == alias)
         #expect(breakdown.attribution?.upstream?.provider == upstreamProvider)
