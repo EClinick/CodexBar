@@ -638,7 +638,8 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
                         provider: .codex,
                         displayName: "\(providerName) · CLIProxyAPI",
                         modelProviderName: providerName,
-                        snapshot: snapshot))
+                        snapshot: snapshot,
+                        sourceKind: .cliProxyAPI))
                 }
             } catch is CancellationError {
                 inputs.removeAll { $0.id == Self.codexProxySourceID }

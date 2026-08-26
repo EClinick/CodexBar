@@ -49,6 +49,7 @@ struct SpendDashboardCodexProxySourceTests {
         #expect(result.inputs.count { $0.id == SpendDashboardSource.codexProxySourceID } == 1)
         #expect(result.inputs.first { $0.id == SpendDashboardSource.codexProxySourceID }?.displayName ==
             "Codex · CLIProxyAPI")
+        #expect(result.inputs.first { $0.id == SpendDashboardSource.codexProxySourceID }?.sourceKind == .cliProxyAPI)
         #expect(proxyContexts.count == 1)
         #expect(proxyContexts.first?.now == now)
     }
@@ -78,6 +79,38 @@ struct SpendDashboardCodexProxySourceTests {
             codexProxySnapshotLoader: { _ in proxySnapshot })
 
         #expect(result.inputs.map(\.id) == [SpendDashboardSource.codexProxySourceID])
+    }
+
+    @Test
+    func `proxy usage stays visible when OpenCodex hides native Codex`() {
+        let now = Date(timeIntervalSince1970: 1_784_179_200)
+        let inputs = [
+            SpendDashboardModel.ProviderInput(
+                id: "codex:main", provider: .codex, displayName: "Codex", snapshot: Self.snapshot(cost: 1, now: now)),
+            SpendDashboardModel.ProviderInput(
+                id: SpendDashboardModel.openCodexSourceID,
+                provider: .codex,
+                displayName: "OpenCodex",
+                snapshot: Self.snapshot(cost: 2, now: now),
+                sourceKind: .openCodex),
+            SpendDashboardModel.ProviderInput(
+                id: SpendDashboardSource.codexProxySourceID,
+                provider: .codex,
+                displayName: "Codex · CLIProxyAPI",
+                snapshot: Self.snapshot(cost: 3, now: now),
+                sourceKind: .cliProxyAPI),
+        ]
+
+        let model = SpendDashboardModel.build(
+            inputs: inputs,
+            requestedDays: 7,
+            now: now,
+            hideNativeCodexWhenOpenCodexPresent: true)
+
+        #expect(Set(model.groups.flatMap(\.providers).map(\.id)) == [
+            SpendDashboardModel.openCodexSourceID,
+            SpendDashboardSource.codexProxySourceID,
+        ])
     }
 
     @Test

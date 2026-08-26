@@ -6,6 +6,7 @@ struct SpendDashboardModel: Equatable, Sendable {
     enum SourceKind: String, Sendable, Equatable {
         case native
         case openCodex
+        case cliProxyAPI
     }
 
     static let openCodexSourceID = "opencodex"
