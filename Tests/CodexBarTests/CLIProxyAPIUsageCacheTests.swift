@@ -668,7 +668,7 @@ extension CLIProxyAPIUsageCacheTests {
         let loadStarted = DispatchSemaphore(value: 0)
         let loadFinished = DispatchSemaphore(value: 0)
         let lockHolder = Task.detached {
-            try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: root) {
+            try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(stateRoot: durableRoot) {
                 lockAcquired.signal()
                 releaseLock.wait()
                 #expect(CLIProxyAPIUsageCacheIO.merge(
@@ -993,7 +993,7 @@ extension CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `usage retention clamps clock skew and rejects implausible future records`() throws {
+    func `usage retention preserves tolerated clock skew and rejects implausible future records`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-future-retention-\(UUID().uuidString)", isDirectory: true)
@@ -1008,12 +1008,12 @@ extension CLIProxyAPIUsageCacheTests {
         #expect(CLIProxyAPIUsageCacheIO.merge(records, cacheRoot: root, now: now) == 2)
         let cached = CLIProxyAPIUsageCacheIO.load(cacheRoot: root, now: now)
         #expect(cached.map(\.requestID) == ["retained", "clock-skew"])
-        #expect(cached.last?.timestamp == now)
+        #expect(cached.last?.timestamp == now.addingTimeInterval(60))
 
         #expect(CLIProxyAPIUsagePendingIO.save(records, pendingRoot: root))
         let pending = try #require(CLIProxyAPIUsagePendingIO.load(pendingRoot: root, now: now))
         #expect(pending.map(\.requestID) == ["retained", "clock-skew"])
-        #expect(pending.last?.timestamp == now)
+        #expect(pending.last?.timestamp == now.addingTimeInterval(60))
         #expect(CLIProxyAPIUsagePendingIO.load(pendingRoot: root, now: now) == pending)
     }
 

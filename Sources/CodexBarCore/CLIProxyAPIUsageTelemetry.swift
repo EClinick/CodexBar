@@ -142,22 +142,6 @@ struct CLIProxyAPIUsageRecord: Codable, Equatable, Sendable {
             generate: self.generate,
             tokens: self.tokens)
     }
-
-    func replacingTimestamp(_ timestamp: Date) -> Self {
-        Self(
-            timestamp: timestamp,
-            provider: self.provider,
-            executorType: self.executorType,
-            model: self.model,
-            alias: self.alias,
-            endpoint: self.endpoint,
-            authType: self.authType,
-            requestID: self.requestID,
-            localOccurrenceID: self.localOccurrenceID,
-            failed: self.failed,
-            generate: self.generate,
-            tokens: self.tokens)
-    }
 }
 
 private enum CLIProxyAPIUsageRetention {
@@ -172,7 +156,7 @@ private enum CLIProxyAPIUsageRetention {
         let futureCutoff = now.addingTimeInterval(self.maximumFutureClockSkew)
         return records.compactMap { record in
             guard record.timestamp >= cutoff, record.timestamp <= futureCutoff else { return nil }
-            return record.timestamp > now ? record.replacingTimestamp(now) : record
+            return record
         }
     }
 }
@@ -252,7 +236,7 @@ enum CLIProxyAPIUsageCacheIO {
         {
             do {
                 return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
-                    stateRoot: cacheRoot?.deletingLastPathComponent())
+                    stateRoot: cacheRoot)
                 {
                     self.withExclusiveAccess {
                         guard let currentCache = self.loadCache(
@@ -288,7 +272,7 @@ enum CLIProxyAPIUsageCacheIO {
 
         do {
             return try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
-                stateRoot: cacheRoot?.deletingLastPathComponent())
+                stateRoot: cacheRoot)
             {
                 self.withExclusiveAccess {
                     guard let currentCache = self.loadCache(
