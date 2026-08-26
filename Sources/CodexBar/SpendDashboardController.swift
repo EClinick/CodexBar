@@ -495,6 +495,7 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
             CLIProxyAPIAttributionPublicationGuard(
                 configurationGeneration: nil,
                 telemetryRevision: nil,
+                inputArtifactFingerprint: nil,
                 isIsolated: false)
         }) async -> SpendDashboardLoadResult
     {
@@ -517,6 +518,7 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
             CLIProxyAPIAttributionPublicationGuard(
                 configurationGeneration: nil,
                 telemetryRevision: nil,
+                inputArtifactFingerprint: nil,
                 isIsolated: false)
         }) async -> SpendDashboardLoadResult
     {
@@ -715,6 +717,7 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
         return CLIProxyAPIAttributionPublicationGuard(
             configurationGeneration: fetcher.cliProxyAPIConfigurationGeneration(),
             telemetryRevision: fetcher.cliProxyAPIUsageTelemetryRevision(),
+            inputArtifactFingerprint: fetcher.cliProxyAPIInputArtifactFingerprint(),
             isIsolated: fetcher.cliProxyAPIAttributionIsIsolated())
     }
 

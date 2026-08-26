@@ -103,19 +103,28 @@ struct SpendDashboardCodexProxySourceTests {
         let initialGuard = CLIProxyAPIAttributionPublicationGuard(
             configurationGeneration: "generation-a",
             telemetryRevision: "telemetry-a",
+            inputArtifactFingerprint: "artifact-a",
             isIsolated: false)
         let changedGuards = [
             CLIProxyAPIAttributionPublicationGuard(
                 configurationGeneration: "generation-b",
                 telemetryRevision: "telemetry-a",
+                inputArtifactFingerprint: "artifact-a",
                 isIsolated: false),
             CLIProxyAPIAttributionPublicationGuard(
                 configurationGeneration: "generation-a",
                 telemetryRevision: "telemetry-b",
+                inputArtifactFingerprint: "artifact-a",
                 isIsolated: false),
             CLIProxyAPIAttributionPublicationGuard(
                 configurationGeneration: "generation-a",
                 telemetryRevision: "telemetry-a",
+                inputArtifactFingerprint: "artifact-b",
+                isIsolated: false),
+            CLIProxyAPIAttributionPublicationGuard(
+                configurationGeneration: "generation-a",
+                telemetryRevision: "telemetry-a",
+                inputArtifactFingerprint: "artifact-a",
                 isIsolated: true),
         ]
 

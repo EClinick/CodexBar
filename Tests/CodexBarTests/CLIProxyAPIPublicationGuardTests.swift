@@ -14,10 +14,14 @@ struct CLIProxyAPIPublicationGuardTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("cliproxy-live-publication-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        let proxyHome = root.appendingPathComponent("cli-proxy-api", isDirectory: true)
+        var scannerOptions = CostUsageScanner.Options()
+        scannerOptions.cacheRoot = root
+        scannerOptions.cliProxyAPIHome = proxyHome
         let store = UsageStore(
             fetcher: UsageFetcher(environment: [:]),
             browserDetection: BrowserDetection(cacheTTL: 0),
-            costUsageFetcher: CostUsageFetcher(cacheRoot: root),
+            costUsageFetcher: CostUsageFetcher(scannerOptions: scannerOptions),
             settings: settings,
             startupBehavior: .testing,
             environmentBase: [:])
@@ -57,6 +61,16 @@ struct CLIProxyAPIPublicationGuardTests {
         #expect(!store.tokenRefreshPublicationIsCurrent(
             provider: .codex,
             publicationGuard: telemetryGuard,
+            historyDays: historyDays,
+            costScopeSignature: scopeSignature))
+
+        let artifactGuard = store.tokenRefreshPublicationGuard(for: .codex)
+        let logDirectory = proxyHome.appendingPathComponent("logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+        try Data("request".utf8).write(to: logDirectory.appendingPathComponent("request.log"))
+        #expect(!store.tokenRefreshPublicationIsCurrent(
+            provider: .codex,
+            publicationGuard: artifactGuard,
             historyDays: historyDays,
             costScopeSignature: scopeSignature))
 

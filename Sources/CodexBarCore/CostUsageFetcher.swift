@@ -358,6 +358,22 @@ public struct CostUsageFetcher: Sendable {
         return CLIProxyAPIUsageTelemetryRevision.current(cacheRoot: options.cacheRoot)
     }
 
+    package func cliProxyAPIInputArtifactFingerprint() -> String? {
+        let options = Self.resolvedScannerOptions(
+            self.scannerOptionsOverride(),
+            provider: .codex,
+            codexHomePath: nil)
+        let attributionEnabled = !CostUsageCacheLocations.isCLIProxyAPIExplicitlyDisconnected(
+            stateRoot: options.cacheRoot)
+        guard let fingerprint = try? CostUsageScanner.currentClaudeCLIProxyAPIInputArtifactFingerprint(
+            options: options,
+            attributionEnabled: attributionEnabled)
+        else { return nil }
+        return fingerprint.sorted { $0.key < $1.key }.map { path, stamp in
+            "\(path)|\(stamp.fileID)|\(stamp.size)|\(stamp.modifiedSeconds)|\(stamp.modifiedNanoseconds)"
+        }.joined(separator: "\n")
+    }
+
     package func cliProxyAPIAttributionIsIsolated() -> Bool {
         let options = Self.resolvedScannerOptions(
             self.scannerOptionsOverride(),

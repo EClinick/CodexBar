@@ -21,6 +21,7 @@ struct TokenRefreshPublicationGuard {
 struct CLIProxyAPIAttributionPublicationGuard: Sendable, Equatable {
     let configurationGeneration: String?
     let telemetryRevision: String?
+    let inputArtifactFingerprint: String?
     let isIsolated: Bool
 }
 
@@ -143,6 +144,7 @@ extension UsageStore {
         CLIProxyAPIAttributionPublicationGuard(
             configurationGeneration: self.costUsageFetcher.cliProxyAPIConfigurationGeneration(),
             telemetryRevision: self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision(),
+            inputArtifactFingerprint: self.costUsageFetcher.cliProxyAPIInputArtifactFingerprint(),
             isIsolated: self.costUsageFetcher.cliProxyAPIAttributionIsIsolated())
     }
 
@@ -153,6 +155,7 @@ extension UsageStore {
         guard provider == .codex || provider == .claude else { return true }
         return self.costUsageFetcher.cliProxyAPIConfigurationGeneration() == guardValue.configurationGeneration
             && self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision() == guardValue.telemetryRevision
+            && self.costUsageFetcher.cliProxyAPIInputArtifactFingerprint() == guardValue.inputArtifactFingerprint
             && self.costUsageFetcher.cliProxyAPIAttributionIsIsolated() == guardValue.isIsolated
     }
 
@@ -287,9 +290,7 @@ extension UsageStore {
         let costUsageSettingsRevision = self.settings.costUsageSettingsRevision
         let tokenSnapshotScopeSignature = self.tokenSnapshotScopeSignature(for: .codex)
         let tokenSnapshotPublicationRevision = self.tokenSnapshotPublicationRevision(for: .codex)
-        let cliProxyAPIConfigurationGeneration = self.costUsageFetcher.cliProxyAPIConfigurationGeneration()
-        let cliProxyAPIUsageTelemetryRevision = self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision()
-        let cliProxyAPIAttributionIsIsolated = self.costUsageFetcher.cliProxyAPIAttributionIsIsolated()
+        let cliProxyAPIAttributionGuard = self.cliProxyAPIAttributionPublicationGuard()
         return Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.tokenSnapshotPublicationForCurrentProviderConfig(for: .codex) == nil else { return }
@@ -325,9 +326,7 @@ extension UsageStore {
                   self.settings.costUsageHistoryDays == historyDays,
                   self.tokenSnapshotScopeSignature(for: .codex) == tokenSnapshotScopeSignature,
                   self.tokenSnapshotPublicationRevision(for: .codex) == tokenSnapshotPublicationRevision,
-                  self.costUsageFetcher.cliProxyAPIConfigurationGeneration() == cliProxyAPIConfigurationGeneration,
-                  self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision() == cliProxyAPIUsageTelemetryRevision,
-                  self.costUsageFetcher.cliProxyAPIAttributionIsIsolated() == cliProxyAPIAttributionIsIsolated,
+                  self.cliProxyAPIAttributionPublicationIsCurrent(cliProxyAPIAttributionGuard, for: .codex),
                   self.tokenSnapshotPublicationForCurrentProviderConfig(for: .codex) == nil
             else {
                 return
