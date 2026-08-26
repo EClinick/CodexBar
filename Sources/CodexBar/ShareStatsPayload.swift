@@ -278,7 +278,7 @@ enum ShareStatsBuilder {
         }.flatMap { group in
             group.models.compactMap { row -> ShareStatsModelPayload? in
                 let estimatedCost = self.finiteCost(row.totalCost)
-                guard let modelName = ShareStatsSanitizer.modelName(row.modelName),
+                guard let modelName = self.sharedModelName(for: row),
                       let sharedProvider = self.sharedModelProvider(for: row),
                       row.totalTokens != nil
                 else { return nil }
@@ -336,6 +336,14 @@ enum ShareStatsBuilder {
             totalTokens: totalTokens,
             hasPartialTokens: hasPartialTokens)
         return payload.hasShareableData ? payload : nil
+    }
+
+    private static func sharedModelName(for row: SpendDashboardModel.ModelRow) -> String? {
+        guard row.attribution?.route == .cliProxyAPI else {
+            return ShareStatsSanitizer.modelName(row.modelName)
+        }
+        guard let upstreamModel = row.attribution?.upstream?.model else { return nil }
+        return ShareStatsSanitizer.modelName(upstreamModel)
     }
 
     private static func sharedModelProvider(
