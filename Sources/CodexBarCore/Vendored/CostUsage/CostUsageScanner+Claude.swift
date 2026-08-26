@@ -1584,6 +1584,11 @@ extension CostUsageScanner {
                         modelName: model,
                         costUSD: cost,
                         totalTokens: totalTokens,
+                        requestCount: sampleCount,
+                        inputTokens: input,
+                        outputTokens: output,
+                        cacheReadTokens: cacheRead,
+                        cacheCreationTokens: cacheCreate,
                         attribution: modelKey.attribution))
                 if let cost {
                     dayCost += cost

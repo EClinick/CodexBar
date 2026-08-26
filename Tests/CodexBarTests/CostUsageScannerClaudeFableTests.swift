@@ -171,6 +171,12 @@ struct CostUsageScannerClaudeFableTests {
         #expect(breakdown.attribution?.upstream?.provider == "google")
         #expect(breakdown.attribution?.upstream?.model == "gemini-test-pro")
         #expect(abs((breakdown.costUSD ?? 0) - expected) < 0.000000001)
+        #expect(breakdown.totalTokens == 135)
+        #expect(breakdown.requestCount == 1)
+        #expect(breakdown.inputTokens == 100)
+        #expect(breakdown.outputTokens == 5)
+        #expect(breakdown.cacheReadTokens == 20)
+        #expect(breakdown.cacheCreationTokens == 10)
     }
 
     @Test
