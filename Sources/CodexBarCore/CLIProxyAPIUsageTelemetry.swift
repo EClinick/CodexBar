@@ -1246,7 +1246,7 @@ public enum CLIProxyAPIUsageCollector {
         -> CLIProxyAPIUsageCollectionResult
     {
         guard let settings, settings.isConfigured else { return .notConfigured }
-        let stateRoot = cacheRoot?.deletingLastPathComponent()
+        let stateRoot = cacheRoot
         let configurationGeneration = CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot)
         return await self.collect(
             cacheRoot: cacheRoot,
@@ -1276,7 +1276,7 @@ public enum CLIProxyAPIUsageCollector {
         return await self.collectionGate.perform {
             do {
                 return try await CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
-                    stateRoot: cacheRoot?.deletingLastPathComponent())
+                    stateRoot: cacheRoot)
                 {
                     guard configurationIsCurrent() else { return .notConfigured }
                     return await self.collectUnserialized(
