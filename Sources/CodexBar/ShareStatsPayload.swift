@@ -255,9 +255,14 @@ enum ShareStatsBuilder {
         model: SpendDashboardModel,
         subscriptionNames: [String: ShareStatsSubscriptionName] = [:]) -> ShareStatsPayload?
     {
+        let hasNonProxyProvider = model.groups.contains { group in
+            group.providers.contains { $0.id != SpendDashboardSource.codexProxySourceID }
+        }
         let providers = model.groups.flatMap { group in
             group.providers.compactMap { row -> ShareStatsProviderPayload? in
-                guard row.id != SpendDashboardSource.codexProxySourceID else { return nil }
+                // The proxy source is not an account or subscription. Keep excluding it beside native
+                // providers, but retain it when it is the only provider so proxy-only usage stays shareable.
+                guard row.id != SpendDashboardSource.codexProxySourceID || !hasNonProxyProvider else { return nil }
                 return ShareStatsProviderPayload(
                     provider: row.provider,
                     providerName: row.displayName,

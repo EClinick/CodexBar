@@ -207,6 +207,38 @@ struct ShareStatsTests {
     }
 
     @Test
+    func `proxy only dashboard remains shareable without presenting proxy as a subscription`() throws {
+        let group = SpendDashboardModel.CurrencyGroup(
+            currencyCode: "USD",
+            providers: [
+                SpendDashboardModel.ProviderRow(
+                    id: SpendDashboardSource.codexProxySourceID,
+                    rank: 1,
+                    provider: .codex,
+                    displayName: "Codex · CLIProxyAPI",
+                    totalTokens: 30,
+                    totalCost: 1.5,
+                    coveredDayCount: 1),
+            ],
+            models: [],
+            projects: [],
+            dailyPoints: [],
+            totalTokens: 30,
+            totalCost: 1.5,
+            coveredDayCount: 1,
+            chartDomain: Self.date...Self.date,
+            modelHistoryCompleteness: .complete)
+
+        let payload = try #require(ShareStatsBuilder.make(
+            model: SpendDashboardModel(requestedDays: 1, groups: [group])))
+
+        #expect(payload.providers.count == 1)
+        #expect(payload.providers.first?.providerName == "Codex · CLIProxyAPI")
+        #expect(payload.providers.first?.subscriptionName == nil)
+        #expect(payload.providers.first?.estimatedCost == 1.5)
+    }
+
+    @Test
     func `cost only models do not enter token usage rankings`() throws {
         let model = SpendDashboardModel(requestedDays: 7, groups: [
             SpendDashboardModel.CurrencyGroup(
