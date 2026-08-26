@@ -828,6 +828,18 @@ extension CostUsageDailyReport {
     private struct BreakdownAccumulator {
         var totalTokens: Int = 0
         var sawTotalTokens = false
+        var requestCount: Int = 0
+        var sawRequestCount = false
+        var inputTokens: Int = 0
+        var sawInputTokens = false
+        var outputTokens: Int = 0
+        var sawOutputTokens = false
+        var cacheReadTokens: Int = 0
+        var sawCacheReadTokens = false
+        var cacheCreationTokens: Int = 0
+        var sawCacheCreationTokens = false
+        var reasoningTokens: Int = 0
+        var sawReasoningTokens = false
         var costUSD: Double = 0
         var sawCost = false
         var standardCostUSD: Double = 0
@@ -843,6 +855,30 @@ extension CostUsageDailyReport {
             if let totalTokens = breakdown.totalTokens {
                 self.totalTokens += totalTokens
                 self.sawTotalTokens = true
+            }
+            if let requestCount = breakdown.requestCount {
+                self.requestCount += requestCount
+                self.sawRequestCount = true
+            }
+            if let inputTokens = breakdown.inputTokens {
+                self.inputTokens += inputTokens
+                self.sawInputTokens = true
+            }
+            if let outputTokens = breakdown.outputTokens {
+                self.outputTokens += outputTokens
+                self.sawOutputTokens = true
+            }
+            if let cacheReadTokens = breakdown.cacheReadTokens {
+                self.cacheReadTokens += cacheReadTokens
+                self.sawCacheReadTokens = true
+            }
+            if let cacheCreationTokens = breakdown.cacheCreationTokens {
+                self.cacheCreationTokens += cacheCreationTokens
+                self.sawCacheCreationTokens = true
+            }
+            if let reasoningTokens = breakdown.reasoningTokens {
+                self.reasoningTokens += reasoningTokens
+                self.sawReasoningTokens = true
             }
             if let costUSD = breakdown.costUSD {
                 self.costUSD += costUSD
@@ -871,6 +907,12 @@ extension CostUsageDailyReport {
                 modelName: key.modelName,
                 costUSD: self.sawCost ? self.costUSD : nil,
                 totalTokens: self.sawTotalTokens ? self.totalTokens : nil,
+                requestCount: self.sawRequestCount ? self.requestCount : nil,
+                inputTokens: self.sawInputTokens ? self.inputTokens : nil,
+                outputTokens: self.sawOutputTokens ? self.outputTokens : nil,
+                cacheReadTokens: self.sawCacheReadTokens ? self.cacheReadTokens : nil,
+                cacheCreationTokens: self.sawCacheCreationTokens ? self.cacheCreationTokens : nil,
+                reasoningTokens: self.sawReasoningTokens ? self.reasoningTokens : nil,
                 standardCostUSD: self.sawStandardCost ? self.standardCostUSD : nil,
                 priorityCostUSD: self.sawPriorityCost ? self.priorityCostUSD : nil,
                 standardTokens: self.sawStandardTokens ? self.standardTokens : nil,
