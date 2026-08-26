@@ -79,6 +79,23 @@ struct CLIProxyAPIAliasRegressionTests {
     }
 
     @Test
+    func `codex oauth alias parser accepts alias before name`() {
+        let configuration = """
+        oauth-model-alias:
+          codex:
+            - alias: 'proxy-codex-alias'
+              name: 'gpt-5.5'
+            - name: 'gpt-5.6'
+              alias: 'proxy-codex-second'
+        """
+
+        #expect(CLIProxyAPIAttributionResolver.parseCodexOAuthModelAliases(configuration) == [
+            "proxy-codex-alias": "gpt-5.5",
+            "proxy-codex-second": "gpt-5.6",
+        ])
+    }
+
+    @Test
     func `weaker live route evidence preserves cached telemetry upstream`() {
         let cached = CostUsageAttribution(
             client: .claudeCode,

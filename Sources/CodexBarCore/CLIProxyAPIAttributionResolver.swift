@@ -670,6 +670,8 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         var rootIndent: Int?
         var codexIndent: Int?
         var currentName: String?
+        var currentAlias: String?
+        var currentItemIndent: Int?
 
         for rawLine in text.split(whereSeparator: \.isNewline) {
             let line = String(rawLine)
@@ -699,14 +701,28 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             if indent <= codexIndent {
                 break
             }
-            if trimmed.hasPrefix("- name:") {
-                currentName = self.simpleYAMLScalar(String(trimmed.dropFirst("- name:".count)))
-            } else if trimmed.hasPrefix("alias:"), let currentName {
-                let alias = self.simpleYAMLScalar(String(trimmed.dropFirst("alias:".count)))
-                if !alias.isEmpty, !currentName.isEmpty {
-                    aliases[alias] = currentName
+
+            let startsItem = trimmed.hasPrefix("- ")
+            if startsItem {
+                if let currentName, let currentAlias, !currentName.isEmpty, !currentAlias.isEmpty {
+                    aliases[currentAlias] = currentName
                 }
+                (currentName, currentAlias) = (nil, nil)
+                currentItemIndent = indent
             }
+            guard startsItem || currentItemIndent.map({ indent > $0 }) == true else {
+                (currentName, currentAlias, currentItemIndent) = (nil, nil, nil)
+                continue
+            }
+            let field = startsItem ? String(trimmed.dropFirst(2)) : trimmed
+            if field.hasPrefix("name:") {
+                currentName = self.simpleYAMLScalar(String(field.dropFirst("name:".count)))
+            } else if field.hasPrefix("alias:") {
+                currentAlias = self.simpleYAMLScalar(String(field.dropFirst("alias:".count)))
+            }
+        }
+        if let currentName, let currentAlias, !currentName.isEmpty, !currentAlias.isEmpty {
+            aliases[currentAlias] = currentName
         }
         return aliases
     }
