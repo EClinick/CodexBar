@@ -15,7 +15,7 @@ struct TokenRefreshPublicationGuard {
     let provider: UsageStore.ProviderPublicationRevision
     let tokenSnapshot: UInt64
     let providerConfig: UInt64
-    let cliProxyAPIAttribution: CLIProxyAPIAttributionPublicationGuard
+    let cliProxyAPIAttribution: CLIProxyAPIAttributionPublicationGuard?
 }
 
 struct CLIProxyAPIAttributionPublicationGuard: Sendable, Equatable {
@@ -133,11 +133,16 @@ extension UsageStore {
     }
 
     func tokenRefreshPublicationGuard(for provider: UsageProvider) -> TokenRefreshPublicationGuard {
-        TokenRefreshPublicationGuard(
+        // Provider-specific by design: only Claude and Codex snapshots can contain CLIProxyAPI attribution.
+        let cliProxyAPIAttribution: CLIProxyAPIAttributionPublicationGuard? = switch provider {
+        case .claude, .codex: self.cliProxyAPIAttributionPublicationGuard()
+        default: nil
+        }
+        return TokenRefreshPublicationGuard(
             provider: self.providerPublicationRevision(for: provider),
             tokenSnapshot: self.tokenSnapshotPublicationRevision(for: provider),
             providerConfig: self.settings.providerConfigRevision(for: provider),
-            cliProxyAPIAttribution: self.cliProxyAPIAttributionPublicationGuard())
+            cliProxyAPIAttribution: cliProxyAPIAttribution)
     }
 
     func cliProxyAPIAttributionPublicationGuard() -> CLIProxyAPIAttributionPublicationGuard {
@@ -476,12 +481,13 @@ extension UsageStore {
         costScopeSignature: String,
         fetchedCredentialScopeFingerprint: String? = nil) -> Bool
     {
+        let cliProxyAPIAttributionIsCurrent = publicationGuard.cliProxyAPIAttribution.map {
+            self.cliProxyAPIAttributionPublicationIsCurrent($0, for: provider)
+        } ?? true
         guard self.providerPublicationRevisionIsCurrent(publicationGuard.provider, for: provider),
               self.tokenSnapshotPublicationRevision(for: provider) == publicationGuard.tokenSnapshot,
               self.settings.providerConfigRevision(for: provider) == publicationGuard.providerConfig,
-              self.cliProxyAPIAttributionPublicationIsCurrent(
-                  publicationGuard.cliProxyAPIAttribution,
-                  for: provider),
+              cliProxyAPIAttributionIsCurrent,
               self.settings.costUsageEnabled,
               self.isEnabled(provider),
               self.settings.costUsageHistoryDays == historyDays

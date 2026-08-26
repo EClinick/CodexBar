@@ -28,6 +28,11 @@ struct CLIProxyAPIPublicationGuardTests {
         let historyDays = settings.costUsageHistoryDays
         let scopeSignature = store.tokenSnapshotScopeSignature(for: .codex)
 
+        #expect(store.tokenRefreshPublicationGuard(for: .claude).cliProxyAPIAttribution != nil)
+        #expect(store.tokenRefreshPublicationGuard(for: .codex).cliProxyAPIAttribution != nil)
+        #expect(store.tokenRefreshPublicationGuard(for: .cursor).cliProxyAPIAttribution == nil)
+        #expect(store.tokenRefreshPublicationGuard(for: .gemini).cliProxyAPIAttribution == nil)
+
         let generationGuard = store.tokenRefreshPublicationGuard(for: .codex)
         let artifactDirectory = root.appendingPathComponent("cost-usage", isDirectory: true)
         try FileManager.default.createDirectory(at: artifactDirectory, withIntermediateDirectories: true)
