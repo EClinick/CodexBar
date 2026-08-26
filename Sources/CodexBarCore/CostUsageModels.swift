@@ -820,66 +820,63 @@ public struct CostUsageDailyReport: Sendable, Decodable {
 }
 
 extension CostUsageDailyReport {
+    private struct IntegerAccumulator {
+        private(set) var value = 0
+        private(set) var sawValue = false
+        private(set) var overflowed = false
+
+        mutating func add(_ value: Int?) {
+            guard let value else { return }
+            self.sawValue = true
+            guard !self.overflowed else { return }
+            let result = self.value.addingReportingOverflow(value)
+            if result.overflow {
+                self.overflowed = true
+            } else {
+                self.value = result.partialValue
+            }
+        }
+
+        mutating func markOverflow() {
+            self.sawValue = true
+            self.overflowed = true
+        }
+
+        var result: Int? {
+            self.sawValue && !self.overflowed ? self.value : nil
+        }
+    }
+
     private struct BreakdownKey: Hashable {
         let modelName: String
         let attribution: CostUsageAttribution?
     }
 
     private struct BreakdownAccumulator {
-        var totalTokens: Int = 0
-        var sawTotalTokens = false
-        var requestCount: Int = 0
-        var sawRequestCount = false
-        var inputTokens: Int = 0
-        var sawInputTokens = false
-        var outputTokens: Int = 0
-        var sawOutputTokens = false
-        var cacheReadTokens: Int = 0
-        var sawCacheReadTokens = false
-        var cacheCreationTokens: Int = 0
-        var sawCacheCreationTokens = false
-        var reasoningTokens: Int = 0
-        var sawReasoningTokens = false
+        var totalTokens = IntegerAccumulator()
+        var requestCount = IntegerAccumulator()
+        var inputTokens = IntegerAccumulator()
+        var outputTokens = IntegerAccumulator()
+        var cacheReadTokens = IntegerAccumulator()
+        var cacheCreationTokens = IntegerAccumulator()
+        var reasoningTokens = IntegerAccumulator()
         var costUSD: Double = 0
         var sawCost = false
         var standardCostUSD: Double = 0
         var sawStandardCost = false
         var priorityCostUSD: Double = 0
         var sawPriorityCost = false
-        var standardTokens: Int = 0
-        var sawStandardTokens = false
-        var priorityTokens: Int = 0
-        var sawPriorityTokens = false
+        var standardTokens = IntegerAccumulator()
+        var priorityTokens = IntegerAccumulator()
 
         mutating func add(_ breakdown: ModelBreakdown) {
-            if let totalTokens = breakdown.totalTokens {
-                self.totalTokens += totalTokens
-                self.sawTotalTokens = true
-            }
-            if let requestCount = breakdown.requestCount {
-                self.requestCount += requestCount
-                self.sawRequestCount = true
-            }
-            if let inputTokens = breakdown.inputTokens {
-                self.inputTokens += inputTokens
-                self.sawInputTokens = true
-            }
-            if let outputTokens = breakdown.outputTokens {
-                self.outputTokens += outputTokens
-                self.sawOutputTokens = true
-            }
-            if let cacheReadTokens = breakdown.cacheReadTokens {
-                self.cacheReadTokens += cacheReadTokens
-                self.sawCacheReadTokens = true
-            }
-            if let cacheCreationTokens = breakdown.cacheCreationTokens {
-                self.cacheCreationTokens += cacheCreationTokens
-                self.sawCacheCreationTokens = true
-            }
-            if let reasoningTokens = breakdown.reasoningTokens {
-                self.reasoningTokens += reasoningTokens
-                self.sawReasoningTokens = true
-            }
+            self.totalTokens.add(breakdown.totalTokens)
+            self.requestCount.add(breakdown.requestCount)
+            self.inputTokens.add(breakdown.inputTokens)
+            self.outputTokens.add(breakdown.outputTokens)
+            self.cacheReadTokens.add(breakdown.cacheReadTokens)
+            self.cacheCreationTokens.add(breakdown.cacheCreationTokens)
+            self.reasoningTokens.add(breakdown.reasoningTokens)
             if let costUSD = breakdown.costUSD {
                 self.costUSD += costUSD
                 self.sawCost = true
@@ -892,113 +889,74 @@ extension CostUsageDailyReport {
                 self.priorityCostUSD += priorityCostUSD
                 self.sawPriorityCost = true
             }
-            if let standardTokens = breakdown.standardTokens {
-                self.standardTokens += standardTokens
-                self.sawStandardTokens = true
-            }
-            if let priorityTokens = breakdown.priorityTokens {
-                self.priorityTokens += priorityTokens
-                self.sawPriorityTokens = true
-            }
+            self.standardTokens.add(breakdown.standardTokens)
+            self.priorityTokens.add(breakdown.priorityTokens)
         }
 
         func build(key: BreakdownKey) -> ModelBreakdown {
             ModelBreakdown(
                 modelName: key.modelName,
                 costUSD: self.sawCost ? self.costUSD : nil,
-                totalTokens: self.sawTotalTokens ? self.totalTokens : nil,
-                requestCount: self.sawRequestCount ? self.requestCount : nil,
-                inputTokens: self.sawInputTokens ? self.inputTokens : nil,
-                outputTokens: self.sawOutputTokens ? self.outputTokens : nil,
-                cacheReadTokens: self.sawCacheReadTokens ? self.cacheReadTokens : nil,
-                cacheCreationTokens: self.sawCacheCreationTokens ? self.cacheCreationTokens : nil,
-                reasoningTokens: self.sawReasoningTokens ? self.reasoningTokens : nil,
+                totalTokens: self.totalTokens.result,
+                requestCount: self.requestCount.result,
+                inputTokens: self.inputTokens.result,
+                outputTokens: self.outputTokens.result,
+                cacheReadTokens: self.cacheReadTokens.result,
+                cacheCreationTokens: self.cacheCreationTokens.result,
+                reasoningTokens: self.reasoningTokens.result,
                 standardCostUSD: self.sawStandardCost ? self.standardCostUSD : nil,
                 priorityCostUSD: self.sawPriorityCost ? self.priorityCostUSD : nil,
-                standardTokens: self.sawStandardTokens ? self.standardTokens : nil,
-                priorityTokens: self.sawPriorityTokens ? self.priorityTokens : nil,
+                standardTokens: self.standardTokens.result,
+                priorityTokens: self.priorityTokens.result,
                 attribution: key.attribution)
         }
     }
 
     private struct EntryAccumulator {
-        var inputTokens: Int = 0
-        var sawInputTokens = false
-        var cacheReadTokens: Int = 0
-        var sawCacheReadTokens = false
-        var cacheCreationTokens: Int = 0
-        var sawCacheCreationTokens = false
-        var outputTokens: Int = 0
-        var sawOutputTokens = false
-        var reasoningTokens: Int = 0
-        var sawReasoningTokens = false
-        var totalTokens: Int = 0
-        var sawTotalTokens = false
-        var derivedTotalTokensWithoutExplicitTotal: Int = 0
-        var requestCount: Int = 0
-        var sawRequestCount = false
+        var inputTokens = IntegerAccumulator()
+        var cacheReadTokens = IntegerAccumulator()
+        var cacheCreationTokens = IntegerAccumulator()
+        var outputTokens = IntegerAccumulator()
+        var reasoningTokens = IntegerAccumulator()
+        var totalTokens = IntegerAccumulator()
+        var derivedTotalTokensWithoutExplicitTotal = IntegerAccumulator()
+        var requestCount = IntegerAccumulator()
         var costUSD: Double = 0
         var sawCost = false
-        var unpricedRequestCount: Int = 0
-        var sawUnpricedRequestCount = false
-        var unmeteredRequestCount: Int = 0
-        var sawUnmeteredRequestCount = false
-        var estimatedRequestCount: Int = 0
-        var sawEstimatedRequestCount = false
+        var unpricedRequestCount = IntegerAccumulator()
+        var unmeteredRequestCount = IntegerAccumulator()
+        var estimatedRequestCount = IntegerAccumulator()
         var modelsUsed: Set<String> = []
         var breakdowns: [BreakdownKey: BreakdownAccumulator] = [:]
 
         mutating func add(_ entry: Entry) {
-            let entryDerivedTotalTokens = (entry.inputTokens ?? 0)
-                + (entry.cacheReadTokens ?? 0)
-                + (entry.cacheCreationTokens ?? 0)
-                + (entry.outputTokens ?? 0)
-            if let inputTokens = entry.inputTokens {
-                self.inputTokens += inputTokens
-                self.sawInputTokens = true
-            }
-            if let cacheReadTokens = entry.cacheReadTokens {
-                self.cacheReadTokens += cacheReadTokens
-                self.sawCacheReadTokens = true
-            }
-            if let cacheCreationTokens = entry.cacheCreationTokens {
-                self.cacheCreationTokens += cacheCreationTokens
-                self.sawCacheCreationTokens = true
-            }
-            if let outputTokens = entry.outputTokens {
-                self.outputTokens += outputTokens
-                self.sawOutputTokens = true
-            }
-            if let reasoningTokens = entry.reasoningTokens {
-                self.reasoningTokens += reasoningTokens
-                self.sawReasoningTokens = true
-            }
+            self.inputTokens.add(entry.inputTokens)
+            self.cacheReadTokens.add(entry.cacheReadTokens)
+            self.cacheCreationTokens.add(entry.cacheCreationTokens)
+            self.outputTokens.add(entry.outputTokens)
+            self.reasoningTokens.add(entry.reasoningTokens)
             if let totalTokens = entry.totalTokens {
-                self.totalTokens += totalTokens
-                self.sawTotalTokens = true
-            } else if entryDerivedTotalTokens > 0 {
-                self.derivedTotalTokensWithoutExplicitTotal += entryDerivedTotalTokens
+                self.totalTokens.add(totalTokens)
+            } else {
+                var derivedTotalTokens = IntegerAccumulator()
+                derivedTotalTokens.add(entry.inputTokens)
+                derivedTotalTokens.add(entry.cacheReadTokens)
+                derivedTotalTokens.add(entry.cacheCreationTokens)
+                derivedTotalTokens.add(entry.outputTokens)
+                if derivedTotalTokens.overflowed {
+                    self.derivedTotalTokensWithoutExplicitTotal.markOverflow()
+                } else if let value = derivedTotalTokens.result, value > 0 {
+                    self.derivedTotalTokensWithoutExplicitTotal.add(value)
+                }
             }
-            if let requestCount = entry.requestCount {
-                self.requestCount += requestCount
-                self.sawRequestCount = true
-            }
+            self.requestCount.add(entry.requestCount)
             if let costUSD = entry.costUSD {
                 self.costUSD += costUSD
                 self.sawCost = true
             }
-            if let unpricedRequestCount = entry.unpricedRequestCount {
-                self.unpricedRequestCount += unpricedRequestCount
-                self.sawUnpricedRequestCount = true
-            }
-            if let unmeteredRequestCount = entry.unmeteredRequestCount {
-                self.unmeteredRequestCount += unmeteredRequestCount
-                self.sawUnmeteredRequestCount = true
-            }
-            if let estimatedRequestCount = entry.estimatedRequestCount {
-                self.estimatedRequestCount += estimatedRequestCount
-                self.sawEstimatedRequestCount = true
-            }
+            self.unpricedRequestCount.add(entry.unpricedRequestCount)
+            self.unmeteredRequestCount.add(entry.unmeteredRequestCount)
+            self.estimatedRequestCount.add(entry.estimatedRequestCount)
             if let modelsUsed = entry.modelsUsed {
                 self.modelsUsed.formUnion(modelsUsed)
             }
@@ -1016,13 +974,11 @@ extension CostUsageDailyReport {
         }
 
         func build(date: String) -> Entry {
-            let derivedTotalTokens = self.inputTokens
-                + self.cacheReadTokens
-                + self.cacheCreationTokens
-                + self.outputTokens
-            let totalTokens: Int? = if self.sawTotalTokens {
-                self.totalTokens + self.derivedTotalTokensWithoutExplicitTotal
-            } else if derivedTotalTokens > 0 {
+            let totalTokens: Int? = if self.totalTokens.sawValue {
+                Self.combinedResult(self.totalTokens, self.derivedTotalTokensWithoutExplicitTotal)
+            } else if let derivedTotalTokens = self.derivedTotalTokensWithoutExplicitTotal.result,
+                      derivedTotalTokens > 0
+            {
                 derivedTotalTokens
             } else {
                 nil
@@ -1038,19 +994,30 @@ extension CostUsageDailyReport {
             let modelsUsed = self.modelsUsed.isEmpty ? nil : self.modelsUsed.sorted()
             return Entry(
                 date: date,
-                inputTokens: self.sawInputTokens ? self.inputTokens : nil,
-                outputTokens: self.sawOutputTokens ? self.outputTokens : nil,
-                cacheReadTokens: self.sawCacheReadTokens ? self.cacheReadTokens : nil,
-                cacheCreationTokens: self.sawCacheCreationTokens ? self.cacheCreationTokens : nil,
-                reasoningTokens: self.sawReasoningTokens ? self.reasoningTokens : nil,
+                inputTokens: self.inputTokens.result,
+                outputTokens: self.outputTokens.result,
+                cacheReadTokens: self.cacheReadTokens.result,
+                cacheCreationTokens: self.cacheCreationTokens.result,
+                reasoningTokens: self.reasoningTokens.result,
                 totalTokens: totalTokens,
-                requestCount: self.sawRequestCount ? self.requestCount : nil,
+                requestCount: self.requestCount.result,
                 costUSD: self.sawCost ? self.costUSD : nil,
                 modelsUsed: modelsUsed,
                 modelBreakdowns: modelBreakdowns,
-                unpricedRequestCount: self.sawUnpricedRequestCount ? self.unpricedRequestCount : nil,
-                unmeteredRequestCount: self.sawUnmeteredRequestCount ? self.unmeteredRequestCount : nil,
-                estimatedRequestCount: self.sawEstimatedRequestCount ? self.estimatedRequestCount : nil)
+                unpricedRequestCount: self.unpricedRequestCount.result,
+                unmeteredRequestCount: self.unmeteredRequestCount.result,
+                estimatedRequestCount: self.estimatedRequestCount.result)
+        }
+
+        private static func combinedResult(
+            _ lhs: IntegerAccumulator,
+            _ rhs: IntegerAccumulator) -> Int?
+        {
+            guard !lhs.overflowed, !rhs.overflowed else { return nil }
+            var combined = IntegerAccumulator()
+            combined.add(lhs.result)
+            combined.add(rhs.result)
+            return combined.result
         }
     }
 
@@ -1083,46 +1050,22 @@ extension CostUsageDailyReport {
     }
 
     private static func mergedSummary(from entries: [Entry]) -> Summary {
-        var totalInputTokens = 0
-        var sawTotalInputTokens = false
-        var totalOutputTokens = 0
-        var sawTotalOutputTokens = false
-        var totalCacheReadTokens = 0
-        var sawTotalCacheReadTokens = false
-        var totalCacheCreationTokens = 0
-        var sawTotalCacheCreationTokens = false
-        var totalReasoningTokens = 0
-        var sawTotalReasoningTokens = false
-        var totalTokens = 0
-        var sawTotalTokens = false
+        var totalInputTokens = IntegerAccumulator()
+        var totalOutputTokens = IntegerAccumulator()
+        var totalCacheReadTokens = IntegerAccumulator()
+        var totalCacheCreationTokens = IntegerAccumulator()
+        var totalReasoningTokens = IntegerAccumulator()
+        var totalTokens = IntegerAccumulator()
         var totalCostUSD = 0.0
         var sawTotalCostUSD = false
 
         for entry in entries {
-            if let inputTokens = entry.inputTokens {
-                totalInputTokens += inputTokens
-                sawTotalInputTokens = true
-            }
-            if let outputTokens = entry.outputTokens {
-                totalOutputTokens += outputTokens
-                sawTotalOutputTokens = true
-            }
-            if let cacheReadTokens = entry.cacheReadTokens {
-                totalCacheReadTokens += cacheReadTokens
-                sawTotalCacheReadTokens = true
-            }
-            if let cacheCreationTokens = entry.cacheCreationTokens {
-                totalCacheCreationTokens += cacheCreationTokens
-                sawTotalCacheCreationTokens = true
-            }
-            if let reasoningTokens = entry.reasoningTokens {
-                totalReasoningTokens += reasoningTokens
-                sawTotalReasoningTokens = true
-            }
-            if let entryTotalTokens = entry.totalTokens {
-                totalTokens += entryTotalTokens
-                sawTotalTokens = true
-            }
+            totalInputTokens.add(entry.inputTokens)
+            totalOutputTokens.add(entry.outputTokens)
+            totalCacheReadTokens.add(entry.cacheReadTokens)
+            totalCacheCreationTokens.add(entry.cacheCreationTokens)
+            totalReasoningTokens.add(entry.reasoningTokens)
+            totalTokens.add(entry.totalTokens)
             if let costUSD = entry.costUSD {
                 totalCostUSD += costUSD
                 sawTotalCostUSD = true
@@ -1130,12 +1073,12 @@ extension CostUsageDailyReport {
         }
 
         return Summary(
-            totalInputTokens: sawTotalInputTokens ? totalInputTokens : nil,
-            totalOutputTokens: sawTotalOutputTokens ? totalOutputTokens : nil,
-            cacheReadTokens: sawTotalCacheReadTokens ? totalCacheReadTokens : nil,
-            cacheCreationTokens: sawTotalCacheCreationTokens ? totalCacheCreationTokens : nil,
-            reasoningTokens: sawTotalReasoningTokens ? totalReasoningTokens : nil,
-            totalTokens: sawTotalTokens ? totalTokens : nil,
+            totalInputTokens: totalInputTokens.result,
+            totalOutputTokens: totalOutputTokens.result,
+            cacheReadTokens: totalCacheReadTokens.result,
+            cacheCreationTokens: totalCacheCreationTokens.result,
+            reasoningTokens: totalReasoningTokens.result,
+            totalTokens: totalTokens.result,
             totalCostUSD: sawTotalCostUSD ? totalCostUSD : nil)
     }
 

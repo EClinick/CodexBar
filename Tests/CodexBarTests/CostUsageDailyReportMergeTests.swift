@@ -502,4 +502,65 @@ struct CostUsageDailyReportMergeTests {
         #expect(merged.summary?.totalTokens == 120)
         #expect(abs((merged.data.first?.costUSD ?? 0) - 1.25) < 0.000001)
     }
+
+    @Test
+    func `merged report rejects overflowing integer totals instead of trapping`() throws {
+        let first = CostUsageDailyReport(
+            data: [
+                CostUsageDailyReport.Entry(
+                    date: "2026-04-04",
+                    inputTokens: Int.max,
+                    outputTokens: Int.max,
+                    totalTokens: Int.max,
+                    requestCount: Int.max,
+                    costUSD: 1,
+                    modelsUsed: ["gpt-5.4"],
+                    modelBreakdowns: [
+                        CostUsageDailyReport.ModelBreakdown(
+                            modelName: "gpt-5.4",
+                            costUSD: 1,
+                            totalTokens: Int.max,
+                            requestCount: Int.max,
+                            inputTokens: Int.max,
+                            outputTokens: Int.max),
+                    ]),
+            ],
+            summary: nil)
+        let second = CostUsageDailyReport(
+            data: [
+                CostUsageDailyReport.Entry(
+                    date: "2026-04-04",
+                    inputTokens: 1,
+                    outputTokens: 1,
+                    totalTokens: 1,
+                    requestCount: 1,
+                    costUSD: 1,
+                    modelsUsed: ["gpt-5.4"],
+                    modelBreakdowns: [
+                        CostUsageDailyReport.ModelBreakdown(
+                            modelName: "gpt-5.4",
+                            costUSD: 1,
+                            totalTokens: 1,
+                            requestCount: 1,
+                            inputTokens: 1,
+                            outputTokens: 1),
+                    ]),
+            ],
+            summary: nil)
+
+        let merged = CostUsageDailyReport.merged([first, second])
+        let entry = try #require(merged.data.first)
+        let breakdown = try #require(entry.modelBreakdowns?.first)
+        #expect(entry.inputTokens == nil)
+        #expect(entry.outputTokens == nil)
+        #expect(entry.totalTokens == nil)
+        #expect(entry.requestCount == nil)
+        #expect(breakdown.inputTokens == nil)
+        #expect(breakdown.outputTokens == nil)
+        #expect(breakdown.totalTokens == nil)
+        #expect(breakdown.requestCount == nil)
+        #expect(merged.summary?.totalInputTokens == nil)
+        #expect(merged.summary?.totalOutputTokens == nil)
+        #expect(merged.summary?.totalTokens == nil)
+    }
 }
