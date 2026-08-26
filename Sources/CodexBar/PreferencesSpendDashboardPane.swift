@@ -1379,6 +1379,7 @@ struct SpendDashboardExportPayload: Encodable, Sendable {
         let modelName: String
         let totalTokens: Int?
         let totalCost: Double?
+        let attribution: CostUsageAttribution?
     }
 
     static func make(model: SpendDashboardModel, hiddenSourceIDs: [String]) -> Self {
@@ -1402,15 +1403,37 @@ struct SpendDashboardExportPayload: Encodable, Sendable {
                             totalTokens: $0.totalTokens,
                             totalCost: $0.totalCost)
                     },
-                    models: group.models.map {
-                        Model(
-                            provider: $0.provider.rawValue,
-                            modelName: $0.modelName,
-                            totalTokens: $0.totalTokens,
-                            totalCost: $0.totalCost)
+                    models: group.models.map { row in
+                        let identity = self.exportedModelIdentity(for: row)
+                        return Model(
+                            provider: identity.provider,
+                            modelName: identity.modelName,
+                            totalTokens: row.totalTokens,
+                            totalCost: row.totalCost,
+                            attribution: row.attribution)
                     })
             },
             hiddenSourceIDs: hiddenSourceIDs)
+    }
+
+    private static func exportedModelIdentity(
+        for row: SpendDashboardModel.ModelRow) -> (provider: String, modelName: String)
+    {
+        guard row.attribution?.route == .cliProxyAPI,
+              let upstream = row.attribution?.upstream
+        else {
+            return (row.provider.rawValue, row.modelName)
+        }
+        let provider = upstream.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let modelName = upstream.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let exportedModelName = if let modelName, !modelName.isEmpty {
+            modelName
+        } else {
+            row.modelName
+        }
+        return (
+            provider.isEmpty ? row.provider.rawValue : provider,
+            exportedModelName)
     }
 }
 
