@@ -18,6 +18,22 @@ private actor CLIProxyAPICollectionContinuationProbe {
 
 struct CLIProxyAPIUsageCollectorTests {
     @Test
+    func `queue client live session rejects hostile redirects carrying the management key`() throws {
+        let session = CLIProxyAPIUsageQueueClient.liveURLSession()
+        defer { session.invalidateAndCancel() }
+        #expect(session.delegate is ProviderHTTPRedirectGuardDelegate)
+
+        var redirectRequest = try URLRequest(url: #require(URL(string: "http://127.0.0.1:9999/capture")))
+        redirectRequest.setValue("Bearer management-secret", forHTTPHeaderField: "Authorization")
+
+        let guarded = ProviderHTTPRedirectGuardDelegate.guardedRedirectRequest(
+            originalURL: URL(string: "http://127.0.0.1:8317/v0/management/usage-queue"),
+            redirectRequest: redirectRequest)
+
+        #expect(guarded == nil)
+    }
+
+    @Test
     func `queue client preserves valid records around a malformed entry`() async throws {
         let timestamp = try #require(CostUsageDateParser.parse("2026-07-16T12:00:00Z"))
         let records = ["request-before", "request-after"].map { requestID in

@@ -574,18 +574,44 @@ public struct CostUsageFetcher: Sendable {
             overrideScannerOptions,
             provider: provider,
             codexHomePath: codexHomePath).calendar
-        if provider == .cursor, let local = await self.loadCursorLocalSnapshot(
-            now: now, historyDays: clampedHistoryDays, calendar: fallbackCalendar)
-        {
-            return local
+        if provider == .cursor {
+            if let local = await self.loadCursorLocalSnapshot(
+                now: now, historyDays: clampedHistoryDays, calendar: fallbackCalendar)
+            {
+                return local
+            }
+            if let remoteError {
+                throw remoteError
+            }
+            return Self.tokenSnapshot(
+                from: CostUsageDailyReport(data: [], summary: nil),
+                now: now,
+                historyDays: clampedHistoryDays,
+                calendar: fallbackCalendar,
+                historyCoverageIsEstablished: false)
+        }
+        // Provider-specific by design: Antigravity uses recognized local stores without generic pricing or cache scans.
+        if provider == .antigravity {
+            if let local = try await self.loadAntigravityLocalSnapshot(
+                context: AntigravityLocalReader.Context(environment: environment),
+                now: now,
+                historyDays: clampedHistoryDays,
+                calendar: fallbackCalendar)
+            {
+                return local
+            }
+            if let remoteError {
+                throw remoteError
+            }
+            return Self.tokenSnapshot(
+                from: CostUsageDailyReport(data: [], summary: nil),
+                now: now,
+                historyDays: clampedHistoryDays,
+                calendar: fallbackCalendar,
+                historyCoverageIsEstablished: false)
         }
         if let remoteError {
             throw remoteError
-        }
-        if provider == .antigravity, let local = await self.loadAntigravityLocalSnapshot(
-            now: now, historyDays: clampedHistoryDays, calendar: fallbackCalendar)
-        {
-            return local
         }
 
         var options = Self.resolvedScannerOptions(
@@ -675,15 +701,10 @@ public struct CostUsageFetcher: Sendable {
         }
 
         return Self.tokenSnapshot(
-            from: scanResult.daily,
+            from: scanResult,
             now: now,
             historyDays: clampedHistoryDays,
-            calendar: scanOptions.calendar,
-            historyCoverageIsEstablished: scanResult.historyCoverageIsEstablished,
-            costProvenance: .listPriceEstimate,
-            projects: scanResult.projects,
-            sessions: scanResult.sessions,
-            updatedAt: scanResult.staleSnapshotUpdatedAt)
+            calendar: scanOptions.calendar)
     }
 
     private struct LocalTokenScanResult: Sendable {
@@ -692,6 +713,24 @@ public struct CostUsageFetcher: Sendable {
         let sessions: [CostUsageSessionBreakdown]
         let staleSnapshotUpdatedAt: Date?
         let historyCoverageIsEstablished: Bool
+    }
+
+    private static func tokenSnapshot(
+        from result: LocalTokenScanResult,
+        now: Date,
+        historyDays: Int,
+        calendar: Calendar) -> CostUsageTokenSnapshot
+    {
+        self.tokenSnapshot(
+            from: result.daily,
+            now: now,
+            historyDays: historyDays,
+            calendar: calendar,
+            historyCoverageIsEstablished: result.historyCoverageIsEstablished,
+            costProvenance: .listPriceEstimate,
+            projects: result.projects,
+            sessions: result.sessions,
+            updatedAt: result.staleSnapshotUpdatedAt)
     }
 
     private struct LocalTokenScanOptions: Sendable {
@@ -1401,7 +1440,17 @@ public struct CostUsageFetcher: Sendable {
         guard !filtered.isEmpty else { return nil }
         let costValues = filtered.compactMap(\.costUSD)
         let totalCost: Double? = costValues.isEmpty ? nil : costValues.reduce(0, +)
-        let totalTokens = filtered.compactMap(\.totalTokens).reduce(0, +)
+        var sum = 0
+        var overflowed = false
+        for t in filtered.compactMap(\.totalTokens) {
+            let (res, of) = sum.addingReportingOverflow(t)
+            if of {
+                overflowed = true
+                break
+            }
+            sum = res
+        }
+        let totalTokens: Int? = overflowed ? nil : sum
         let filteredSummary: CostUsageDailyReport.Summary = .init(
             totalInputTokens: nil,
             totalOutputTokens: nil,
@@ -1418,22 +1467,47 @@ public struct CostUsageFetcher: Sendable {
     }
 
     private static func loadAntigravityLocalSnapshot(
+        context: AntigravityLocalReader.Context,
         now: Date,
         historyDays: Int,
-        calendar: Calendar = .current) async -> CostUsageTokenSnapshot?
+        calendar: Calendar = .current) async throws -> CostUsageTokenSnapshot?
     {
         let cal = calendar
-        let report = AntigravityLocalReader.makeDailyReport(calendar: cal)
-        guard !report.data.isEmpty else { return nil }
+        let reportResult = try await CostUsageScanExecutor.run { checkCancellation in
+            try AntigravityLocalReader.makeDailyReportWithStatus(
+                context: context, calendar: cal, checkCancellation: checkCancellation)
+        }
+        guard reportResult.isAvailable else { return nil }
+        let report = reportResult.report
+        if report.data.isEmpty {
+            guard reportResult.isComplete else { return nil }
+            return Self.tokenSnapshot(
+                from: CostUsageDailyReport(data: [], summary: nil),
+                now: now,
+                historyDays: historyDays,
+                useCurrentLocalDayForSession: true,
+                calendar: cal,
+                historyCoverageIsEstablished: true,
+                costProvenance: .unknown)
+        }
         let since = cal.date(byAdding: .day, value: -(historyDays - 1), to: cal.startOfDay(for: now)) ?? now
         let sinceKey = CostUsageLocalDay.key(from: since, calendar: cal)
         let nowKey = CostUsageLocalDay.key(from: now, calendar: cal)
         let filtered = report.data.filter { $0.date >= sinceKey && $0.date <= nowKey }
-        guard !filtered.isEmpty else { return nil }
         let costValues = filtered.compactMap(\.costUSD)
         let totalCost: Double? = costValues.isEmpty ? nil : costValues.reduce(0, +)
-        let totalTokens = filtered.compactMap(\.totalTokens).reduce(0, +)
-        let filteredSummary: CostUsageDailyReport.Summary = .init(
+        var sum = 0
+        var overflowed = false
+        for t in filtered.compactMap(\.totalTokens) {
+            let (res, of) = sum.addingReportingOverflow(t)
+            if of {
+                overflowed = true
+                break
+            }
+            sum = res
+        }
+        let totalTokens: Int? = overflowed ? nil : sum
+        let filteredSummary: CostUsageDailyReport.Summary? = filtered.isEmpty ? nil : .init(
             totalInputTokens: nil,
             totalOutputTokens: nil,
             totalTokens: totalTokens,
@@ -1445,6 +1519,7 @@ public struct CostUsageFetcher: Sendable {
             historyDays: historyDays,
             useCurrentLocalDayForSession: true,
             calendar: cal,
+            historyCoverageIsEstablished: reportResult.isComplete,
             costProvenance: .unknown)
     }
 
@@ -1497,7 +1572,15 @@ public struct CostUsageFetcher: Sendable {
                 ? totalFromEntries
                 : establishedEmptyHistory ? 0 : nil)
         let totalTokensFromSummary = daily.summary?.totalTokens
-        let totalTokensFromEntries = daily.data.compactMap(\.totalTokens).reduce(0, +)
+        let totalTokensFromEntries: Int? = {
+            var sum = 0
+            for t in daily.data.compactMap(\.totalTokens) {
+                let (res, overflow) = sum.addingReportingOverflow(t)
+                if overflow { return nil }
+                sum = res
+            }
+            return sum
+        }()
         let allEntriesCarryTokens = !daily.data.isEmpty && daily.data.allSatisfy { $0.totalTokens != nil }
         let last30DaysTokens = totalTokensFromSummary
             ?? (allEntriesCarryTokens

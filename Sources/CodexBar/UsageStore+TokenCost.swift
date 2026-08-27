@@ -151,6 +151,14 @@ extension UsageStore {
         self.tokenSnapshotPublicationRevisions[provider.instanceID] ?? 0
     }
 
+    enum TokenSnapshotError: LocalizedError {
+        case historyUnavailable
+
+        var errorDescription: String? {
+            "Local token history is unavailable or incomplete."
+        }
+    }
+
     func tokenRefreshPublicationGuard(for provider: UsageProvider) -> TokenRefreshPublicationGuard {
         // Provider-specific by design: only Claude and Codex snapshots can contain CLIProxyAPI attribution.
         let cliProxyAPIAttribution: CLIProxyAPIAttributionPublicationGuard? = switch provider {
@@ -183,7 +191,7 @@ extension UsageStore {
             && self.costUsageFetcher.cliProxyAPIAttributionIsIsolated() == guardValue.isIsolated
     }
 
-    func publishTokenSnapshot(_ snapshot: CostUsageTokenSnapshot, for provider: UsageProvider) {
+    func retainsEstablishedTokenHistory(_ snapshot: CostUsageTokenSnapshot, for provider: UsageProvider) -> Bool {
         // A bounded Codex refresh can succeed with partial rows while catch-up remains pending.
         // Account and history-window changes fail the current-publication lookup below.
         // Provider-specific by design: only Codex retains established history during bounded catch-up.
@@ -192,8 +200,13 @@ extension UsageStore {
            self.tokenSnapshotPublicationForCurrentProviderConfig(for: provider)?
                .snapshot?.historyCoverageIsEstablished == true
         {
-            return
+            return true
         }
+        return false
+    }
+
+    func publishTokenSnapshot(_ snapshot: CostUsageTokenSnapshot, for provider: UsageProvider) {
+        if self.retainsEstablishedTokenHistory(snapshot, for: provider) { return }
         self.tokenSnapshots[provider.instanceID] = snapshot
         self.publishTokenSnapshotState(snapshot, for: provider)
     }
@@ -657,5 +670,17 @@ extension UsageStore {
 
     nonisolated static func tokenCostNoDataMessage(for provider: UsageProvider) -> String {
         ProviderDescriptorRegistry.descriptor(for: provider).tokenCost.noDataMessage()
+    }
+
+    func regularTokenSnapshotIsConfirmedEmpty(
+        _ snapshot: CostUsageTokenSnapshot,
+        for provider: UsageProvider) throws -> Bool
+    {
+        guard snapshot.daily.isEmpty, snapshot.meteredCostUSD == nil else { return false }
+        if snapshot.historyCoverageIsEstablished { return true }
+        guard self.retainsEstablishedTokenHistory(snapshot, for: provider) else {
+            throw TokenSnapshotError.historyUnavailable
+        }
+        return false
     }
 }

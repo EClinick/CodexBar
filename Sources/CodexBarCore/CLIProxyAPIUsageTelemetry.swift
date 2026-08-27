@@ -1427,9 +1427,13 @@ struct CLIProxyAPIUsageQueueClient: Sendable {
     }
 
     private static func liveDataLoader(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        try await self.liveURLSession().data(for: request)
+    }
+
+    static func liveURLSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 5
         configuration.timeoutIntervalForResource = 10
-        return try await URLSession(configuration: configuration).data(for: request)
+        return ProviderHTTPClient.redirectGuardedSession(configuration: configuration)
     }
 }
