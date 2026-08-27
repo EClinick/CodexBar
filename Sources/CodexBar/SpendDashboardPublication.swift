@@ -55,6 +55,7 @@ struct SpendDashboardPublication: Sendable {
             source.state == .staleLastKnown ? source.id : nil
         })
         let inputs = self.inputs.filter { input in
+            // Provider-specific by design: CLIProxyAPI attribution supplements Claude usage scopes.
             let isInProviderScope = providerScope.map { scope in
                 scope.contains(input.provider) ||
                     (input.sourceKind == .cliProxyAPI && scope.contains(.claude))
