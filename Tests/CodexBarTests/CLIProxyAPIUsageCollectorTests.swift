@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import CodexBarCLI
 @testable import CodexBarCore
 
 private actor CLIProxyAPICollectionContinuationProbe {
@@ -16,21 +17,147 @@ private actor CLIProxyAPICollectionContinuationProbe {
     }
 }
 
+private final class CLIProxyAPIRedirectProofRecorder: @unchecked Sendable {
+    struct Snapshot: Sendable {
+        let originRequests: Int
+        let originAuthorizations: Int
+        let targetRequests: Int
+        let targetAuthorizations: Int
+    }
+
+    private let lock = NSLock()
+    private var originRequests = 0
+    private var originAuthorizations = 0
+    private var targetRequests = 0
+    private var targetAuthorizations = 0
+
+    func recordOrigin(authorization: String?) {
+        self.lock.withLock {
+            self.originRequests += 1
+            if authorization != nil {
+                self.originAuthorizations += 1
+            }
+        }
+    }
+
+    func recordTarget(authorization: String?) {
+        self.lock.withLock {
+            self.targetRequests += 1
+            if authorization != nil {
+                self.targetAuthorizations += 1
+            }
+        }
+    }
+
+    func snapshot() -> Snapshot {
+        self.lock.withLock {
+            Snapshot(
+                originRequests: self.originRequests,
+                originAuthorizations: self.originAuthorizations,
+                targetRequests: self.targetRequests,
+                targetAuthorizations: self.targetAuthorizations)
+        }
+    }
+}
+
+private final class CLIProxyAPIRedirectListeningSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isSignaled = false
+
+    func signal() {
+        let continuation = self.lock.withLock {
+            self.isSignaled = true
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume()
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let shouldResume = self.lock.withLock {
+                guard !self.isSignaled else { return true }
+                self.continuation = continuation
+                return false
+            }
+            if shouldResume {
+                continuation.resume()
+            }
+        }
+    }
+}
+
 struct CLIProxyAPIUsageCollectorTests {
-    @Test
-    func `queue client live session rejects hostile redirects carrying the management key`() throws {
-        let session = CLIProxyAPIUsageQueueClient.liveURLSession()
-        defer { session.invalidateAndCancel() }
-        #expect(session.delegate is ProviderHTTPRedirectGuardDelegate)
+    @Test(.serialized)
+    func `queue client blocks hostile redirects before redirected IO`() async throws {
+        let recorder = CLIProxyAPIRedirectProofRecorder()
+        let targetListening = CLIProxyAPIRedirectListeningSignal()
+        let targetServer = CLILocalHTTPServer(host: "127.0.0.1", port: 0) { request in
+            recorder.recordTarget(authorization: request.authorization)
+            return CLILocalHTTPResponse(status: .ok, body: Data("[]".utf8))
+        }
+        let targetTask = Task {
+            try await targetServer.run {
+                targetListening.signal()
+            }
+        }
+        await targetListening.wait()
+        let targetPort = try #require(targetServer.listeningPort)
 
-        var redirectRequest = try URLRequest(url: #require(URL(string: "http://127.0.0.1:9999/capture")))
-        redirectRequest.setValue("Bearer management-secret", forHTTPHeaderField: "Authorization")
+        let originListening = CLIProxyAPIRedirectListeningSignal()
+        let originServer = CLILocalHTTPServer(host: "127.0.0.1", port: 0) { request in
+            recorder.recordOrigin(authorization: request.authorization)
+            return CLILocalHTTPResponse(
+                status: .temporaryRedirect,
+                body: Data(),
+                extraHeaders: [("Location", "http://127.0.0.1:\(targetPort)/capture")])
+        }
+        let originTask = Task {
+            try await originServer.run {
+                originListening.signal()
+            }
+        }
+        await originListening.wait()
+        defer {
+            originServer.stop()
+            targetServer.stop()
+        }
+        let originPort = try #require(originServer.listeningPort)
+        let client = CLIProxyAPIUsageQueueClient(settings: .init(
+            baseURL: "http://127.0.0.1:\(originPort)",
+            managementKey: "redacted-proof-token"))
 
-        let guarded = ProviderHTTPRedirectGuardDelegate.guardedRedirectRequest(
-            originalURL: URL(string: "http://127.0.0.1:8317/v0/management/usage-queue"),
-            redirectRequest: redirectRequest)
+        do {
+            _ = try await client.pop(count: 1)
+            Issue.record("The hostile redirect unexpectedly returned a queue response.")
+        } catch {
+            // A 307 response is the expected final response when the redirect delegate refuses to follow it.
+        }
+        try await Task.sleep(for: .milliseconds(250))
 
-        #expect(guarded == nil)
+        let snapshot = recorder.snapshot()
+        print("""
+
+        CLIProxyAPI redirect final-effect proof
+        original loopback request received: \(snapshot.originRequests == 1 ? "yes" : "no")
+        original bearer header present: \(snapshot.originAuthorizations == 1 ? "yes (redacted)" : "no")
+        hostile redirect response issued: \(snapshot.originRequests == 1 ? "yes" : "no")
+        redirected endpoint requests: \(snapshot.targetRequests)
+        redirected bearer headers received: \(snapshot.targetAuthorizations)
+        result: \(snapshot.targetRequests == 0 ? "PASS - blocked before redirected I/O" : "FAIL")
+
+        """)
+
+        #expect(snapshot.originRequests == 1)
+        #expect(snapshot.originAuthorizations == 1)
+        #expect(snapshot.targetRequests == 0)
+        #expect(snapshot.targetAuthorizations == 0)
+
+        originServer.stop()
+        targetServer.stop()
+        try await originTask.value
+        try await targetTask.value
     }
 
     @Test
