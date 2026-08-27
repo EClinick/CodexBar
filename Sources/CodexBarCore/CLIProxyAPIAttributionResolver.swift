@@ -33,6 +33,23 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         let sessionID: String?
         let timestampUnixMs: Int64?
         let tokens: TokenSignature?
+        let occurrenceID: String?
+
+        init(
+            model: String,
+            modelProvider: CostUsageAttribution.ModelProvider,
+            sessionID: String?,
+            timestampUnixMs: Int64?,
+            tokens: TokenSignature?,
+            occurrenceID: String? = nil)
+        {
+            self.model = model
+            self.modelProvider = modelProvider
+            self.sessionID = sessionID
+            self.timestampUnixMs = timestampUnixMs
+            self.tokens = tokens
+            self.occurrenceID = occurrenceID
+        }
     }
 
     private struct ObservationKey: Hashable {
@@ -61,6 +78,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
     private static let maxLogPrefixBytes = 2 * 1024 * 1024
     private static let maximumRouteMatchDistance: TimeInterval = 60 * 60
     private static let maximumTelemetryMatchDistance: TimeInterval = 5
+    private static let maximumTelemetryOnlyMatchDistance: TimeInterval = 30
     private static let observationCache = ObservationCache()
 
     private let observationsBySessionID: [String: [Observation]]
@@ -175,9 +193,12 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                     tokens: request.tokens)
             }
             let matchKeys = Set(observationMatches.map(\.key))
-            let usageRecordMatch = observationMatches.count == observationCandidates.count && matchKeys.count == 1
+            let observationUsageRecordMatch = observationMatches.count == observationCandidates.count
+                && matchKeys.count == 1
                 ? observationMatches.first
                 : nil
+            let usageRecordMatch = observationUsageRecordMatch
+                ?? (observationCandidates.isEmpty ? self.closestUsageRecordMatch(request: request) : nil)
             let observation = observationCandidates.count == 1 ? observationCandidates[0] : nil
             return (
                 request: request,
@@ -207,9 +228,13 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             routeCandidatesByObservation[Self.observationKey(observation), default: []].append(
                 (index: index, request: item.request, observation: observation))
         }
-        let matchCounts = Dictionary(
-            grouping: prepared.compactMap(\.usageRecordMatch?.key),
-            by: { $0 }).mapValues(\.count)
+        var matchClaimers: [UsageRecordKey: Set<String>] = [:]
+        for (index, item) in prepared.enumerated() {
+            guard let key = item.usageRecordMatch?.key else { continue }
+            let claimer = item.request.occurrenceID.map { "occurrence:\($0)" } ?? "index:\(index)"
+            matchClaimers[key, default: []].insert(claimer)
+        }
+        let matchCounts = matchClaimers.mapValues(\.count)
         var routeOwnerByObservation: [ObservationKey: Int] = [:]
         for (key, candidates) in routeCandidatesByObservation {
             if candidates.count == 1,
@@ -376,47 +401,6 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             : nil
     }
 
-    private func closestUsageRecordMatch(
-        observation: Observation,
-        model: String,
-        tokens: TokenSignature?) -> UsageRecordMatch?
-    {
-        guard let observationTimestamp = observation.timestamp else { return nil }
-        let candidates = self.usageRecordMatches(
-            observation: observation,
-            model: model,
-            tokens: tokens)
-        return Self.uniqueClosest(
-            candidates,
-            target: observationTimestamp,
-            timestamp: { $0.record.timestamp })
-    }
-
-    private func usageRecordMatches(
-        observation: Observation,
-        model: String,
-        tokens: TokenSignature?) -> [UsageRecordMatch]
-    {
-        guard let observationTimestamp = observation.timestamp else { return [] }
-        let canonicalModel = Self.canonicalModel(model)
-        guard let records = self.usageRecordsByCanonicalModel[canonicalModel] else { return [] }
-        let earliest = observationTimestamp.addingTimeInterval(-Self.maximumTelemetryMatchDistance)
-        let latest = observationTimestamp.addingTimeInterval(Self.maximumTelemetryMatchDistance)
-        let startIndex = Self.firstRecordIndex(atOrAfter: earliest, in: records)
-        var candidates: [UsageRecordMatch] = []
-        for index in startIndex..<records.endIndex {
-            let indexedRecord = records[index]
-            let record = indexedRecord.record
-            guard record.timestamp <= latest else { break }
-            if tokens.map({ Self.tokensMatch($0, record.tokens) }) ?? true {
-                candidates.append(UsageRecordMatch(
-                    key: UsageRecordKey(sourceID: indexedRecord.sourceID),
-                    record: record))
-            }
-        }
-        return candidates
-    }
-
     private func plausibleObservations(
         for record: CLIProxyAPIUsageRecord,
         model: String) -> [Observation]
@@ -434,8 +418,8 @@ struct CLIProxyAPIAttributionResolver: Sendable {
         representedObservations: Set<ObservationKey>) -> Bool
     {
         let plausibleKeys = self.plausibleObservations(for: record, model: model).map(Self.observationKey)
-        return !plausibleKeys.isEmpty
-            && Set(plausibleKeys).count == plausibleKeys.count
+        guard !plausibleKeys.isEmpty else { return true }
+        return Set(plausibleKeys).count == plausibleKeys.count
             && plausibleKeys.allSatisfy(representedObservations.contains)
     }
 
@@ -868,20 +852,87 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 }
 
 extension CLIProxyAPIAttributionResolver {
+    private func closestUsageRecordMatch(
+        observation: Observation,
+        model: String,
+        tokens: TokenSignature?) -> UsageRecordMatch?
+    {
+        guard let observationTimestamp = observation.timestamp else { return nil }
+        let candidates = self.usageRecordMatches(
+            observation: observation,
+            model: model,
+            tokens: tokens)
+        return Self.uniqueClosest(
+            candidates,
+            target: observationTimestamp,
+            timestamp: { $0.record.timestamp })
+    }
+
+    private func closestUsageRecordMatch(request: Request) -> UsageRecordMatch? {
+        guard let timestamp = Self.timestamp(for: request), let tokens = request.tokens else { return nil }
+        let candidates = self.usageRecordMatches(
+            model: request.model,
+            timestamp: timestamp,
+            tokens: tokens,
+            maximumDistance: Self.maximumTelemetryOnlyMatchDistance)
+        return Self.uniqueClosest(
+            candidates,
+            target: timestamp,
+            timestamp: { $0.record.timestamp })
+    }
+
+    private func usageRecordMatches(
+        observation: Observation,
+        model: String,
+        tokens: TokenSignature?) -> [UsageRecordMatch]
+    {
+        guard let observationTimestamp = observation.timestamp else { return [] }
+        return self.usageRecordMatches(
+            model: model,
+            timestamp: observationTimestamp,
+            tokens: tokens,
+            maximumDistance: Self.maximumTelemetryMatchDistance)
+    }
+
+    private func usageRecordMatches(
+        model: String,
+        timestamp: Date,
+        tokens: TokenSignature?,
+        maximumDistance: TimeInterval) -> [UsageRecordMatch]
+    {
+        let canonicalModel = Self.canonicalModel(model)
+        guard let records = self.usageRecordsByCanonicalModel[canonicalModel] else { return [] }
+        let earliest = timestamp.addingTimeInterval(-maximumDistance)
+        let latest = timestamp.addingTimeInterval(maximumDistance)
+        let startIndex = Self.firstRecordIndex(atOrAfter: earliest, in: records)
+        var candidates: [UsageRecordMatch] = []
+        for index in startIndex..<records.endIndex {
+            let indexedRecord = records[index]
+            let record = indexedRecord.record
+            guard record.timestamp <= latest else { break }
+            if tokens.map({ Self.tokensMatch($0, record.tokens) }) ?? true {
+                candidates.append(UsageRecordMatch(
+                    key: UsageRecordKey(sourceID: indexedRecord.sourceID),
+                    record: record))
+            }
+        }
+        return candidates
+    }
+
     private static func tokensMatch(
         _ tokens: TokenSignature,
         _ telemetry: CLIProxyAPIUsageRecord.Tokens) -> Bool
     {
         guard telemetry.output == tokens.output else { return false }
-        if telemetry.cacheRead != 0 || telemetry.cacheCreation != 0 {
-            return telemetry.input == tokens.input
-                && telemetry.cacheRead == tokens.cacheRead
-                && telemetry.cacheCreation == tokens.cacheCreate
-        }
         let (inputAndCacheRead, inputAndCacheReadOverflow) = tokens.input.addingReportingOverflow(tokens.cacheRead)
         guard !inputAndCacheReadOverflow else { return false }
         let (claudeInputTotal, claudeInputTotalOverflow) = inputAndCacheRead.addingReportingOverflow(tokens.cacheCreate)
         guard !claudeInputTotalOverflow else { return false }
+        if telemetry.cacheRead != 0 || telemetry.cacheCreation != 0 {
+            return telemetry.cacheRead == tokens.cacheRead
+                && telemetry.cacheCreation == tokens.cacheCreate
+                && (telemetry.input == tokens.input || telemetry.input == claudeInputTotal)
+        }
         let (telemetryInputTotal, telemetryInputTotalOverflow) = telemetry.input
             .addingReportingOverflow(telemetry.cached)
         return telemetry.input == tokens.input

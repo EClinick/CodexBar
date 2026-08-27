@@ -255,6 +255,142 @@ extension CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `unique telemetry identifies routed request without request file logging`() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [],
+            usageRecords: [
+                Self.record(
+                    timestamp: timestamp.addingTimeInterval(-12),
+                    provider: "codex",
+                    authType: "oauth"),
+            ])
+        let request = CLIProxyAPIAttributionResolver.Request(
+            model: "gpt-5.5",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: Self.tokens)
+
+        let attribution = try #require(resolver.attributions(for: [request]).first)
+
+        #expect(attribution.route == .cliProxyAPI)
+        #expect(attribution.upstream?.provider == "codex")
+        #expect(attribution.upstream?.authType == .oauth)
+        #expect(attribution.evidence == [.cliProxyUsageTelemetry, .modelProvider])
+    }
+
+    @Test
+    func `codex telemetry total input matches Claude Code cache split`() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [],
+            usageRecords: [
+                CLIProxyAPIUsageRecord(
+                    timestamp: timestamp,
+                    provider: "codex",
+                    executorType: "CodexExecutor",
+                    model: "gpt-5.5",
+                    alias: "gpt-5.5",
+                    endpoint: "POST /v1/messages",
+                    authType: "oauth",
+                    requestID: "request-1",
+                    failed: false,
+                    tokens: .init(
+                        input: 80,
+                        output: 20,
+                        cached: 30,
+                        cacheRead: 30,
+                        cacheCreation: 40,
+                        total: 100)),
+            ])
+        let request = CLIProxyAPIAttributionResolver.Request(
+            model: "gpt-5.5",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: Self.tokens)
+
+        let attribution = try #require(resolver.attributions(for: [request]).first)
+
+        #expect(attribution.route == .cliProxyAPI)
+        #expect(attribution.upstream?.provider == "codex")
+        #expect(attribution.upstream?.authType == .oauth)
+    }
+
+    @Test
+    func `duplicate transcript copies share telemetry only proof by occurrence`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [],
+            usageRecords: [
+                Self.record(timestamp: timestamp, provider: "codex", authType: "oauth"),
+            ])
+        let requests = [0, 1].map { offset in
+            CLIProxyAPIAttributionResolver.Request(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "session-1",
+                timestampUnixMs: Int64(timestamp.addingTimeInterval(Double(offset)).timeIntervalSince1970 * 1000),
+                tokens: Self.tokens,
+                occurrenceID: "response-1")
+        }
+
+        let attributions = resolver.attributions(for: requests)
+
+        #expect(attributions.map(\.route) == [.cliProxyAPI, .cliProxyAPI])
+        #expect(attributions.allSatisfy { $0.upstream?.provider == "codex" })
+    }
+
+    @Test
+    func `telemetry only match stays unclaimed when two transcript requests share it`() {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [],
+            usageRecords: [
+                Self.record(timestamp: timestamp, provider: "codex", authType: "oauth"),
+            ])
+        let requests = ["session-1", "session-2"].map { sessionID in
+            CLIProxyAPIAttributionResolver.Request(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: sessionID,
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: Self.tokens)
+        }
+
+        let attributions = resolver.attributions(for: requests)
+
+        #expect(attributions.map(\.route) == [.unknown, .unknown])
+        #expect(attributions.allSatisfy { $0.upstream == nil })
+        #expect(attributions.allSatisfy { !$0.evidence.contains(.cliProxyUsageTelemetry) })
+    }
+
+    @Test
+    func `telemetry only match rejects a distant record`() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        let resolver = CLIProxyAPIAttributionResolver(
+            observations: [],
+            usageRecords: [
+                Self.record(
+                    timestamp: timestamp.addingTimeInterval(-31),
+                    provider: "codex",
+                    authType: "oauth"),
+            ])
+        let request = CLIProxyAPIAttributionResolver.Request(
+            model: "gpt-5.5",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: Self.tokens)
+
+        let attribution = try #require(resolver.attributions(for: [request]).first)
+
+        #expect(attribution.route == .unknown)
+        #expect(attribution.upstream == nil)
+    }
+
+    @Test
     func `ambiguous telemetry does not claim an upstream`() {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(

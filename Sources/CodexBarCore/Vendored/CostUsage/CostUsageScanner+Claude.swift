@@ -567,7 +567,8 @@ extension CostUsageScanner {
                         input: row.input,
                         cacheRead: row.cacheRead,
                         cacheCreate: row.cacheCreate,
-                        output: row.output)),
+                        output: row.output),
+                    occurrenceID: row.messageId),
                 modelProvider: modelProvider,
                 cachedAttribution: row.attribution)
         }
@@ -575,11 +576,12 @@ extension CostUsageScanner {
         let liveAttributions = attributionResolver.attributions(for: requests)
         var replacementKeys: Set<ClaudeAttributionReconciliationKey> = []
         var replacements: [ClaudeAttributionReconciliationKey: CostUsageAttribution] = [:]
-        for (index, item) in items.enumerated()
-            where attributionResolver.hasMatchingObservation(for: item.request)
-        {
-            replacementKeys.insert(item.key)
+        for (index, item) in items.enumerated() {
             let liveAttribution = liveAttributions[index]
+            guard liveAttribution.route == .cliProxyAPI
+                || attributionResolver.hasMatchingObservation(for: item.request)
+            else { continue }
+            replacementKeys.insert(item.key)
             let replacement: CostUsageAttribution? = if liveAttribution.route == .cliProxyAPI {
                 Self.preferredCLIProxyAPIAttribution(
                     live: liveAttribution,
@@ -1320,7 +1322,8 @@ extension CostUsageScanner {
                     input: item.row.input,
                     cacheRead: item.row.cacheRead,
                     cacheCreate: item.row.cacheCreate,
-                    output: item.row.output))
+                    output: item.row.output),
+                occurrenceID: item.row.messageId)
         }
         let liveAttributions: [CostUsageAttribution?] = if let resolver = attributionContext.resolver {
             resolver.attributions(for: requests).map(Optional.some)
