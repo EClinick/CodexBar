@@ -113,6 +113,24 @@ struct CLIProxyAPIAliasRegressionTests {
     }
 
     @Test
+    func `matching live telemetry preserves cached request log evidence`() {
+        let cached = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(provider: "codex", authType: .oauth, model: "gpt-5.5"),
+            evidence: [.cliProxyRequestLog, .cliProxyUsageTelemetry, .modelProvider])
+        let live = CostUsageAttribution(
+            client: .claudeCode,
+            route: .cliProxyAPI,
+            modelProvider: .openAI,
+            upstream: .init(provider: "codex", authType: .oauth, model: "gpt-5.5"),
+            evidence: [.cliProxyUsageTelemetry, .modelProvider])
+
+        #expect(CostUsageScanner.preferredCLIProxyAPIAttribution(live: live, cached: cached) == cached)
+    }
+
+    @Test
     func `ambiguous live batch match preserves durable cached telemetry`() {
         let telemetry = CostUsageAttribution(
             client: .claudeCode,
