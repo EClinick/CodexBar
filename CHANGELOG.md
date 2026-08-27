@@ -4,9 +4,17 @@
 
 ### Fixed
 - CLIProxyAPI attribution: identify Claude Code requests from uniquely matching management-queue telemetry even when CLIProxyAPI request-file logging is disabled, so routed Codex models display their upstream and `CLIProxyAPI via Claude Code` provenance.
+- Usage & Spend: refresh outdated independent 365-day histories after regular token publications, preserving older rows and coalescing updates during scans (investigated alongside #3209, #3176). Thanks @vinschger!
+- Grok: keep OAuth usage, identity, and plan bound to the same credentials when a native login changes during billing, while keeping successful cookie usage separate from auth-file metadata.
+- Cursor: estimate omitted API-rate costs from cached or bundled pricing, preserve invalid-cost coverage and compatible history caches, and separate Overview history coverage from missing subscriptions (#3129). Thanks @Yuxin-Qiao!
+- OpenRouter: label the API key spending limit consistently and clarify that it is a cap, not the separate account balance (#3158). Thanks @vinschger!
+- Codex: refresh local session cost estimates when global cost tracking is off, without repeatedly rejecting successful scans as stale. Thanks @vinschger!
+- Codex: fairly resume older partial session files during busy local cost scans without increasing scan limits or rebuilding compatible caches (#3207). Thanks @IchenDEV!
+- Menu bar: label the All providers preview as the default and disclose enabled providers with saved overrides, with a targeted “Use all-providers layout” action (#3210). Thanks @Sedrak-Hovhannisyan!
 - Claude: respect the used/remaining fill preference for capped Extra Usage, so an exhausted cap is empty in remaining mode (#3213). Thanks @vinschger!
 - Codex: clear stale connectivity errors after an authorized successful fetch even when weekly usage is withheld, including persisted and stacked-account errors (#3214). Thanks @olddonkey!
 - Antigravity: select the most constrained known quota independently for session and weekly menu-bar layout tokens, so unused model families no longer mask consumed quota (#3206). Thanks @foobra!
+- Codex: honor native access-token JWT expiry before the eight-day refresh age so valid OAuth usage keeps model-specific limits, while preserving CLI-owned refresh and external-source behavior (#3221, #3222). Thanks @anagnorisis2peripeteia!
 - OpenCode Go: preserve API percentage units so 1% usage no longer appears as 100%, including local-history overlays (#3216). Thanks @rodrigoalma!
 - CLI install: block inherited shell functions and startup hooks before helper validation and failure handling, and use absolute tools and a clean administrator-command environment while retaining approval and both existing symlink destinations (#3205, #3217).
 

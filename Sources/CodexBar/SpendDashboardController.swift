@@ -97,6 +97,7 @@ struct SpendDashboardLoadRequest: Sendable {
     let codexRequests: [CodexSpendScanRequest]
     let now: Date
     let force: Bool
+    let independentRefreshPending: Bool
 
     init(
         configuration: SpendDashboardConfiguration,
@@ -105,7 +106,8 @@ struct SpendDashboardLoadRequest: Sendable {
         confirmedEmptySourceIDs: Set<String> = [],
         codexRequests: [CodexSpendScanRequest],
         now: Date,
-        force: Bool)
+        force: Bool,
+        independentRefreshPending: Bool = false)
     {
         self.configuration = configuration
         self.capturedInputs = capturedInputs
@@ -114,6 +116,7 @@ struct SpendDashboardLoadRequest: Sendable {
         self.codexRequests = codexRequests
         self.now = now
         self.force = force
+        self.independentRefreshPending = independentRefreshPending
     }
 }
 
@@ -263,12 +266,20 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
 
         let providerBaselines = initialProviders.filter { $0 != .codex }.map { provider in
             let captured = self.capturedTokenPublication(store: store, provider: provider)
+            let shouldRefresh: Bool = if mode == .refreshMissing,
+                                         UsageStore.usesSpendDashboardIndependentTokenSnapshot(provider)
+            {
+                store.spendDashboardTokenRefreshNeeded(for: provider)
+            } else {
+                mode.shouldRefresh(hasPublication: captured.publication != nil)
+            }
             return (
                 provider: provider,
-                publication: captured.publication,
-                publicationRevision: captured.revision)
+                publicationRevision: captured.revision,
+                trigger: store.spendDashboardTokenRefreshTrigger(for: provider),
+                shouldRefresh: shouldRefresh)
         }
-        let baselinesToRefresh = providerBaselines.filter { mode.shouldRefresh(hasPublication: $0.publication != nil) }
+        let baselinesToRefresh = providerBaselines.filter(\.shouldRefresh)
         if !baselinesToRefresh.isEmpty {
             await withTaskGroup(of: Void.self) { group in
                 for baseline in baselinesToRefresh {
@@ -334,7 +345,7 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
                 unavailableSourceIDs.insert(provider.rawValue)
                 continue
             }
-            let shouldRefresh = mode.shouldRefresh(hasPublication: baseline.publication != nil)
+            let shouldRefresh = baseline.shouldRefresh
             let current = self.capturedTokenPublication(store: store, provider: provider)
             guard let currentPublication = current.publication else {
                 unavailableSourceIDs.insert(provider.rawValue)
@@ -364,7 +375,17 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
             confirmedEmptySourceIDs: confirmedEmptySourceIDs,
             codexRequests: codexRequests,
             now: captureNow,
-            force: mode.forcesLoader)
+            force: mode.forcesLoader,
+            independentRefreshPending: providers.contains { provider in
+                guard UsageStore.usesSpendDashboardIndependentTokenSnapshot(provider),
+                      !store.spendDashboardTokenRefreshInFlight.contains(provider.instanceID),
+                      store.spendDashboardTokenRefreshNeeded(for: provider)
+                else { return false }
+                // Capture barriers may discover pending work; refresh passes repeat only for triggers
+                // that changed while suspended, never merely because a source remained unavailable.
+                return mode == .captureOnly || providerBaselines.first { $0.provider == provider }?.trigger !=
+                    store.spendDashboardTokenRefreshTrigger(for: provider)
+            })
     }
 
     static func load(_ request: SpendDashboardLoadRequest) async -> SpendDashboardLoadResult {
@@ -863,6 +884,13 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
             }
             return "\(provider.rawValue):snapshot:\(current.publicationRevision):\(self.snapshotRevision(snapshot))"
         }
+        for provider in providers where UsageStore.usesSpendDashboardIndependentTokenSnapshot(provider) {
+            let trigger = store.spendDashboardTokenRefreshTrigger(for: provider)
+            let inFlight = store.spendDashboardTokenRefreshInFlight.contains(provider.instanceID)
+            // Keep refresh triggers outside the source's data-revision prefix used by forced reconciliation.
+            revisions
+                .append("independent-trigger-\(provider.rawValue):\(trigger.regularPublicationRevision):\(inFlight)")
+        }
         return revisions
     }
 
@@ -1018,12 +1046,7 @@ enum SpendDashboardSource { // swiftlint:disable:this type_body_length
     {
         if UsageStore.usesSpendDashboardIndependentTokenSnapshot(provider) {
             let revision = store.spendDashboardTokenSnapshotPublicationRevision(for: provider)
-            if let spend = store.spendDashboardTokenSnapshotPublicationForCurrentConfig(for: provider) {
-                return (spend, revision)
-            }
-            return (
-                store.tokenSnapshotPublicationForCurrentProviderConfig(for: provider),
-                revision)
+            return (store.spendDashboardTokenSnapshotPublicationForCurrentConfig(for: provider), revision)
         }
         return (
             store.tokenSnapshotPublicationForCurrentProviderConfig(for: provider),
@@ -1549,6 +1572,7 @@ final class SpendDashboardController {
                     ($0, ReconciliationObservation.confirmedEmpty)
                 }))
             self.startLoad(configuration: latestConfiguration, phase: .reconciling(outcome))
+            return
 
         case let .reconciling(outcome):
             let reconciled = Self.merge(outcome: outcome, capture: request)
@@ -1557,6 +1581,11 @@ final class SpendDashboardController {
                 result: reconciled.result,
                 invalidatedSourceIDs: outcome.invalidatedSourceIDs,
                 confirmedEmptySourceIDs: reconciled.confirmedEmptySourceIDs)
+        }
+        // Configuration is captured after suspended scans. A newer regular publication in that
+        // capture still needs one ordinary follow-up; it was not incorporated by the completed scan.
+        if request.independentRefreshPending, let configuration = self.configuration {
+            self.startLoad(configuration: configuration, phase: .ordinary)
         }
     }
 
