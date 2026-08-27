@@ -3,7 +3,6 @@
 ## 0.55.2 — Unreleased
 
 ### Fixed
-- CLIProxyAPI attribution: identify Claude Code requests from uniquely matching management-queue telemetry even when CLIProxyAPI request-file logging is disabled, so routed Codex models display their upstream and `CLIProxyAPI via Claude Code` provenance.
 - Codex: clear stale connectivity errors after an authorized successful fetch even when weekly usage is withheld, including persisted and stacked-account errors (#3214). Thanks @olddonkey!
 - Antigravity: select the most constrained known quota independently for session and weekly menu-bar layout tokens, so unused model families no longer mask consumed quota (#3206). Thanks @foobra!
 - OpenCode Go: preserve API percentage units so 1% usage no longer appears as 100%, including local-history overlays (#3216). Thanks @rodrigoalma!
