@@ -694,7 +694,8 @@ struct CLIProxyAPIUsageStoreTests {
             .failed("replacement endpoint unavailable"),
             collectorState: CLIProxyAPIUsageCollectorState(
                 configurationGeneration: "before-replacement"),
-            configurationGeneration: { "after-replacement" })
+            configurationGeneration: { "after-replacement" },
+            telemetryRevision: { nil })
 
         #expect(collectorState.configurationAvailability == .unavailable)
         #expect(collectorState.configurationGeneration == "after-replacement")
@@ -705,7 +706,8 @@ struct CLIProxyAPIUsageStoreTests {
         collectorState = await store.handleCLIProxyAPIUsageCollectionResult(
             .failed("still unavailable"),
             collectorState: collectorState,
-            configurationGeneration: { "after-replacement" })
+            configurationGeneration: { "after-replacement" },
+            telemetryRevision: { nil })
 
         #expect(store.tokenSnapshot(for: .codex) == snapshot)
     }
