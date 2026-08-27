@@ -82,6 +82,60 @@ struct SpendDashboardCodexProxySourceTests {
     }
 
     @Test
+    func `proxy usage supplements claude overview without adding a subscription`() async throws {
+        let now = Date(timeIntervalSince1970: 1_784_179_200)
+        let configuration = SpendDashboardConfiguration(
+            costUsageEnabled: true,
+            providerIDs: [UsageProvider.claude.rawValue],
+            codexAccountIdentities: [])
+        let request = SpendDashboardLoadRequest(
+            configuration: configuration,
+            capturedInputs: [],
+            unavailableSourceIDs: [],
+            codexRequests: [],
+            now: now,
+            force: false)
+        let proxyInput = SpendDashboardModel.ProviderInput(
+            id: SpendDashboardSource.codexProxySourceID,
+            provider: .codex,
+            displayName: "Codex · CLIProxyAPI",
+            snapshot: Self.snapshot(cost: 2, now: now),
+            sourceKind: .cliProxyAPI)
+        let controller = SpendDashboardController(
+            requestBuilder: { _ in request },
+            loader: { _ in SpendDashboardLoadResult(inputs: [proxyInput], failedSourceIDs: []) })
+
+        controller.update(configuration: configuration)
+        let deadline = Date().addingTimeInterval(2)
+        while controller.isRefreshing, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+
+        let publication = controller.publication
+        let proxySource = try #require(publication.sources.first {
+            $0.id == SpendDashboardSource.codexProxySourceID
+        })
+        let claudeOnly = publication.model(
+            requestedDays: 7,
+            now: now,
+            calendar: .current,
+            preferredCurrencyCode: "USD",
+            providerScope: [.claude])
+        let combined = publication.model(
+            requestedDays: 7,
+            now: now,
+            calendar: .current,
+            preferredCurrencyCode: "USD",
+            providerScope: [.claude, .codex])
+
+        #expect(!controller.isRefreshing)
+        #expect(proxySource.role == .supplemental)
+        #expect(claudeOnly.groups.flatMap(\.providers).map(\.id) == [SpendDashboardSource.codexProxySourceID])
+        #expect(combined.groups.flatMap(\.providers).count { $0.id == SpendDashboardSource.codexProxySourceID } == 1)
+        #expect(publication.subscriptionCount(providerScope: [.claude]) == 1)
+    }
+
+    @Test
     func `proxy usage stays visible when OpenCodex hides native Codex`() {
         let now = Date(timeIntervalSince1970: 1_784_179_200)
         let inputs = [
