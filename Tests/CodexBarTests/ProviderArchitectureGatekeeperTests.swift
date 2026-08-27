@@ -932,24 +932,6 @@ struct ProviderArchitectureGatekeeperTests {
             expectedProviderIDs: ["codex"],
             reason: "This Codex account projection passes its fixed provider identity to shared spend infrastructure."),
         SuppressedProviderReference(
-            path: "Sources/CodexBar/SpendDashboardController.swift",
-            line: 1823,
-            anchor: "provider: .codex,",
-            expectedProviderIDs: ["codex"],
-            reason: "This OpenCodex enrichment descriptor maps the canonical source back to the Codex family."),
-        SuppressedProviderReference(
-            path: "Sources/CodexBar/SpendDashboardController.swift",
-            line: 1852,
-            anchor: "if providerID == UsageProvider.codex.rawValue {",
-            expectedProviderIDs: ["codex"],
-            reason: "This publication projection expands the fixed Codex provider family into its account sources."),
-        SuppressedProviderReference(
-            path: "Sources/CodexBar/SpendDashboardController.swift",
-            line: 1869,
-            anchor: "if sourceID.hasPrefix(\"codex:\") { return .codex }",
-            expectedProviderIDs: ["codex"],
-            reason: "This publication projection maps stable Codex account source IDs back to their provider family."),
-        SuppressedProviderReference(
             path: "Sources/CodexBar/StatusItemController+CodexStackedMenu.swift",
             line: 26,
             anchor: "for: .codex,",
@@ -2396,14 +2378,6 @@ struct ProviderArchitectureGatekeeperTests {
             expectedProviderIDs: ["codex"],
             expectedReferenceCount: 3,
             expectedReferenceFingerprint: ["codex@0", "codex@2", "codex@9"],
-            reason: "This exact shared construct dispatches a provider-owned capability at the generic integration boundary."),
-        AllowedProviderConstruct(
-            path: "Sources/CodexBar/SpendDashboardController.swift",
-            line: 1896,
-            anchor: "guard input.provider == .codex,",
-            expectedProviderIDs: ["codex"],
-            expectedReferenceCount: 1,
-            expectedReferenceFingerprint: ["codex@0"],
             reason: "This exact shared construct dispatches a provider-owned capability at the generic integration boundary."),
         AllowedProviderConstruct(
             path: "Sources/CodexBar/SpendDashboardModel+ModelBreakdown.swift",

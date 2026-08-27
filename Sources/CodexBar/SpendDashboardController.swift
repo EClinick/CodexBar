@@ -1849,6 +1849,7 @@ final class SpendDashboardController {
     {
         var ids: [String] = []
         for providerID in self.configuration?.providerIDs ?? [] {
+            // Provider-specific by design: Codex account sources use stable identity-derived IDs.
             if providerID == UsageProvider.codex.rawValue {
                 ids.append(contentsOf: (self.configuration?.codexAccountIdentities ?? []).compactMap { identity in
                     guard let separator = identity.lastIndex(of: "|") else { return nil }
@@ -1866,6 +1867,7 @@ final class SpendDashboardController {
     }
 
     private func provider(for sourceID: String) -> UsageProvider? {
+        // Provider-specific by design: Codex account source IDs map back to their provider family.
         if sourceID.hasPrefix("codex:") { return .codex }
         return UsageProvider(rawValue: sourceID)
     }
