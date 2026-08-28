@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct CLIProxyAPIPublicationGuardTests {
     @Test
-    func `live refresh guard rejects cross process proxy state changes`() throws {
+    func `live refresh guard rejects cross process proxy state changes`() async throws {
         let settings = testSettingsStore(suiteName: "CLIProxyAPIPublicationGuardTests-\(UUID().uuidString)")
         settings.costUsageEnabled = true
         let metadata = try #require(ProviderRegistry.shared.metadata[.codex])
@@ -28,12 +28,12 @@ struct CLIProxyAPIPublicationGuardTests {
         let historyDays = settings.costUsageHistoryDays
         let scopeSignature = store.tokenSnapshotScopeSignature(for: .codex)
 
-        #expect(store.tokenRefreshPublicationGuard(for: .claude).cliProxyAPIAttribution != nil)
-        #expect(store.tokenRefreshPublicationGuard(for: .codex).cliProxyAPIAttribution != nil)
-        #expect(store.tokenRefreshPublicationGuard(for: .cursor).cliProxyAPIAttribution == nil)
-        #expect(store.tokenRefreshPublicationGuard(for: .gemini).cliProxyAPIAttribution == nil)
+        #expect(await store.tokenRefreshPublicationGuard(for: .claude).cliProxyAPIAttribution != nil)
+        #expect(await store.tokenRefreshPublicationGuard(for: .codex).cliProxyAPIAttribution != nil)
+        #expect(await store.tokenRefreshPublicationGuard(for: .cursor).cliProxyAPIAttribution == nil)
+        #expect(await store.tokenRefreshPublicationGuard(for: .gemini).cliProxyAPIAttribution == nil)
 
-        let generationGuard = store.tokenRefreshPublicationGuard(for: .codex)
+        let generationGuard = await store.tokenRefreshPublicationGuard(for: .codex)
         let artifactDirectory = root.appendingPathComponent("cost-usage", isDirectory: true)
         try FileManager.default.createDirectory(at: artifactDirectory, withIntermediateDirectories: true)
         try Data("cache".utf8).write(to: artifactDirectory.appendingPathComponent("codex-v11.json"))
@@ -41,13 +41,14 @@ struct CLIProxyAPIPublicationGuardTests {
             in: [artifactDirectory],
             stateRoot: root)
         #expect(clearResult.errorDescription == nil)
-        #expect(!store.tokenRefreshPublicationIsCurrent(
+        let generationIsCurrent = await store.tokenRefreshPublicationIsCurrent(
             provider: .codex,
             publicationGuard: generationGuard,
             historyDays: historyDays,
-            costScopeSignature: scopeSignature))
+            costScopeSignature: scopeSignature)
+        #expect(!generationIsCurrent)
 
-        let telemetryGuard = store.tokenRefreshPublicationGuard(for: .codex)
+        let telemetryGuard = await store.tokenRefreshPublicationGuard(for: .codex)
         let now = Date(timeIntervalSince1970: 1_775_000_000)
         #expect(CLIProxyAPIUsageCacheIO.merge(
             [
@@ -63,28 +64,31 @@ struct CLIProxyAPIPublicationGuardTests {
             ],
             cacheRoot: root,
             now: now) == 1)
-        #expect(!store.tokenRefreshPublicationIsCurrent(
+        let telemetryIsCurrent = await store.tokenRefreshPublicationIsCurrent(
             provider: .codex,
             publicationGuard: telemetryGuard,
             historyDays: historyDays,
-            costScopeSignature: scopeSignature))
+            costScopeSignature: scopeSignature)
+        #expect(!telemetryIsCurrent)
 
-        let artifactGuard = store.tokenRefreshPublicationGuard(for: .codex)
+        let artifactGuard = await store.tokenRefreshPublicationGuard(for: .codex)
         let logDirectory = proxyHome.appendingPathComponent("logs", isDirectory: true)
         try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
         try Data("request".utf8).write(to: logDirectory.appendingPathComponent("request.log"))
-        #expect(!store.tokenRefreshPublicationIsCurrent(
+        let artifactIsCurrent = await store.tokenRefreshPublicationIsCurrent(
             provider: .codex,
             publicationGuard: artifactGuard,
             historyDays: historyDays,
-            costScopeSignature: scopeSignature))
+            costScopeSignature: scopeSignature)
+        #expect(!artifactIsCurrent)
 
-        let isolationGuard = store.tokenRefreshPublicationGuard(for: .codex)
+        let isolationGuard = await store.tokenRefreshPublicationGuard(for: .codex)
         #expect(CostUsageCacheLocations.setCLIProxyAPIExplicitlyDisconnected(true, stateRoot: root))
-        #expect(!store.tokenRefreshPublicationIsCurrent(
+        let isolationIsCurrent = await store.tokenRefreshPublicationIsCurrent(
             provider: .codex,
             publicationGuard: isolationGuard,
             historyDays: historyDays,
-            costScopeSignature: scopeSignature))
+            costScopeSignature: scopeSignature)
+        #expect(!isolationIsCurrent)
     }
 }

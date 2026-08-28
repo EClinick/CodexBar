@@ -110,7 +110,7 @@ struct CLIProxyAPIUsageStoreTests {
         store.publishTokenSnapshot(Self.tokenSnapshot(), for: .claude)
         let codexPublicationRevision = store.tokenSnapshotPublicationRevision(for: .codex)
         let claudePublicationRevision = store.tokenSnapshotPublicationRevision(for: .claude)
-        let claudePublicationGuard = store.tokenRefreshPublicationGuard(for: .claude)
+        let claudePublicationGuard = await store.tokenRefreshPublicationGuard(for: .claude)
         let claudeScopeSignature = store.tokenSnapshotScopeSignature(for: .claude)
         var refreshes: [(UsageProvider, Bool)] = []
 
@@ -131,11 +131,12 @@ struct CLIProxyAPIUsageStoreTests {
         #expect(store.tokenSnapshotPublicationRevision(for: .codex) == codexPublicationRevision + 1)
         #expect(store.tokenSnapshot(for: .claude) == nil)
         #expect(store.tokenSnapshotPublicationRevision(for: .claude) == claudePublicationRevision + 1)
-        #expect(!store.tokenRefreshPublicationIsCurrent(
+        let claudePublicationIsCurrent = await store.tokenRefreshPublicationIsCurrent(
             provider: .claude,
             publicationGuard: claudePublicationGuard,
             historyDays: settings.costUsageHistoryDays,
-            costScopeSignature: claudeScopeSignature))
+            costScopeSignature: claudeScopeSignature)
+        #expect(!claudePublicationIsCurrent)
         #expect(refreshes.map(\.0) == [.claude, .codex])
         #expect(refreshes.map(\.1) == [true, true])
         #expect(await recorder.wasCancelled)

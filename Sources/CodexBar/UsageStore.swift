@@ -1503,7 +1503,7 @@ extension UsageStore {
         }
         let costScope = self.tokenCostScope(for: provider)
         let costScopeSignature = self.tokenSnapshotScopeSignature(for: provider)
-        let publicationGuard = self.tokenRefreshPublicationGuard(for: provider)
+        let publicationGuard = await self.tokenRefreshPublicationGuard(for: provider)
         if !force, self.tokenRefreshCanReuseCurrentSnapshot(
             provider: provider,
             now: now,
@@ -1545,7 +1545,7 @@ extension UsageStore {
                 historyDays: historyDays,
                 initialSignature: costScopeSignature,
                 snapshot: snapshot)
-            guard self.tokenRefreshPublicationIsCurrent(
+            guard await self.tokenRefreshPublicationIsCurrent(
                 provider: provider,
                 publicationGuard: publicationGuard,
                 historyDays: historyDays,
@@ -1578,7 +1578,7 @@ extension UsageStore {
             self.tokenFailureGates[provider.instanceID]?.recordSuccess()
             self.persistWidgetSnapshot(reason: "token-usage")
         } catch {
-            guard self.tokenRefreshPublicationIsCurrent(
+            guard await self.tokenRefreshPublicationIsCurrent(
                 provider: provider,
                 publicationGuard: publicationGuard,
                 historyDays: historyDays,

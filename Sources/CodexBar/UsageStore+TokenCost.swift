@@ -159,10 +159,10 @@ extension UsageStore {
         }
     }
 
-    func tokenRefreshPublicationGuard(for provider: UsageProvider) -> TokenRefreshPublicationGuard {
+    func tokenRefreshPublicationGuard(for provider: UsageProvider) async -> TokenRefreshPublicationGuard {
         // Provider-specific by design: only Claude and Codex snapshots can contain CLIProxyAPI attribution.
         let cliProxyAPIAttribution: CLIProxyAPIAttributionPublicationGuard? = switch provider {
-        case .claude, .codex: self.cliProxyAPIAttributionPublicationGuard()
+        case .claude, .codex: await self.captureCLIProxyAPIAttributionPublicationGuard()
         default: nil
         }
         return TokenRefreshPublicationGuard(
@@ -178,6 +178,25 @@ extension UsageStore {
             telemetryRevision: self.costUsageFetcher.cliProxyAPIUsageTelemetryRevision(),
             inputArtifactFingerprint: self.costUsageFetcher.cliProxyAPIInputArtifactFingerprint(),
             isIsolated: self.costUsageFetcher.cliProxyAPIAttributionIsIsolated())
+    }
+
+    func captureCLIProxyAPIAttributionPublicationGuard() async -> CLIProxyAPIAttributionPublicationGuard {
+        let fetcher = self.costUsageFetcher
+        return await Task.detached(priority: .utility) {
+            CLIProxyAPIAttributionPublicationGuard(
+                configurationGeneration: fetcher.cliProxyAPIConfigurationGeneration(),
+                telemetryRevision: fetcher.cliProxyAPIUsageTelemetryRevision(),
+                inputArtifactFingerprint: fetcher.cliProxyAPIInputArtifactFingerprint(),
+                isIsolated: fetcher.cliProxyAPIAttributionIsIsolated())
+        }.value
+    }
+
+    func cliProxyAPIAttributionPublicationIsCurrentOffMain(
+        _ guardValue: CLIProxyAPIAttributionPublicationGuard,
+        for provider: UsageProvider) async -> Bool
+    {
+        guard provider == .codex || provider == .claude else { return true }
+        return await self.captureCLIProxyAPIAttributionPublicationGuard() == guardValue
     }
 
     func cliProxyAPIAttributionPublicationIsCurrent(
@@ -329,9 +348,9 @@ extension UsageStore {
         let costUsageSettingsRevision = self.settings.costUsageSettingsRevision
         let tokenSnapshotScopeSignature = self.tokenSnapshotScopeSignature(for: .codex)
         let tokenSnapshotPublicationRevision = self.tokenSnapshotPublicationRevision(for: .codex)
-        let cliProxyAPIAttributionGuard = self.cliProxyAPIAttributionPublicationGuard()
         return Task { @MainActor [weak self] in
             guard let self else { return }
+            let cliProxyAPIAttributionGuard = await self.captureCLIProxyAPIAttributionPublicationGuard()
             guard self.tokenSnapshotPublicationForCurrentProviderConfig(for: .codex) == nil else { return }
             let result: (
                 snapshot: CostUsageTokenSnapshot,
@@ -365,7 +384,9 @@ extension UsageStore {
                   self.settings.costUsageHistoryDays == historyDays,
                   self.tokenSnapshotScopeSignature(for: .codex) == tokenSnapshotScopeSignature,
                   self.tokenSnapshotPublicationRevision(for: .codex) == tokenSnapshotPublicationRevision,
-                  self.cliProxyAPIAttributionPublicationIsCurrent(cliProxyAPIAttributionGuard, for: .codex),
+                  await self.cliProxyAPIAttributionPublicationIsCurrentOffMain(
+                      cliProxyAPIAttributionGuard,
+                      for: .codex),
                   self.tokenSnapshotPublicationForCurrentProviderConfig(for: .codex) == nil
             else {
                 return
@@ -513,11 +534,13 @@ extension UsageStore {
         publicationGuard: TokenRefreshPublicationGuard,
         historyDays: Int,
         costScopeSignature: String,
-        fetchedCredentialScopeFingerprint: String? = nil) -> Bool
+        fetchedCredentialScopeFingerprint: String? = nil) async -> Bool
     {
-        let cliProxyAPIAttributionIsCurrent = publicationGuard.cliProxyAPIAttribution.map {
-            self.cliProxyAPIAttributionPublicationIsCurrent($0, for: provider)
-        } ?? true
+        let cliProxyAPIAttributionIsCurrent = if let cliProxyAPIAttribution = publicationGuard.cliProxyAPIAttribution {
+            await self.cliProxyAPIAttributionPublicationIsCurrentOffMain(cliProxyAPIAttribution, for: provider)
+        } else {
+            true
+        }
         guard self.providerPublicationRevisionIsCurrent(publicationGuard.provider, for: provider),
               self.tokenSnapshotPublicationRevision(for: provider) == publicationGuard.tokenSnapshot,
               self.settings.providerConfigRevision(for: provider) == publicationGuard.providerConfig,

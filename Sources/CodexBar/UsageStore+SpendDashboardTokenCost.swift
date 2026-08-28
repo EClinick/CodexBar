@@ -103,7 +103,6 @@ extension UsageStore {
         let costScopeSignature = self.spendDashboardTokenSnapshotScopeSignature(for: provider)
         let publicationRevision = self.providerPublicationRevision(for: provider)
         let providerConfigRevision = self.settings.providerConfigRevision(for: provider)
-        let cliProxyAPIAttributionGuard = self.cliProxyAPIAttributionPublicationGuard()
         let trigger = self.spendDashboardTokenRefreshTrigger(for: provider)
         self.lastSpendDashboardTokenFetchAt[provider.instanceID] = now
         self.lastSpendDashboardTokenFetchScope[provider.instanceID] = costScopeSignature
@@ -122,6 +121,7 @@ extension UsageStore {
             return
         }
 
+        let cliProxyAPIAttributionGuard = await self.captureCLIProxyAPIAttributionPublicationGuard()
         do {
             let snapshot = try await self.loadTokenUsageSnapshot(
                 provider: provider,
@@ -137,7 +137,7 @@ extension UsageStore {
                 initialSignature: costScopeSignature,
                 snapshot: snapshot,
                 includeSettingsRevision: false)
-            guard self.spendDashboardTokenRefreshPublicationIsCurrent(
+            guard await self.spendDashboardTokenRefreshPublicationIsCurrent(
                 provider: provider,
                 publicationRevision: publicationRevision,
                 providerConfigRevision: providerConfigRevision,
@@ -168,7 +168,7 @@ extension UsageStore {
             }
             self.publishSpendDashboardTokenSnapshot(snapshot, for: provider)
         } catch {
-            guard self.spendDashboardTokenRefreshPublicationIsCurrent(
+            guard await self.spendDashboardTokenRefreshPublicationIsCurrent(
                 provider: provider,
                 publicationRevision: publicationRevision,
                 providerConfigRevision: providerConfigRevision,
@@ -239,11 +239,13 @@ extension UsageStore {
         providerConfigRevision: UInt64,
         cliProxyAPIAttributionGuard: CLIProxyAPIAttributionPublicationGuard,
         costScopeSignature: String,
-        fetchedCredentialScopeFingerprint: String? = nil) -> Bool
+        fetchedCredentialScopeFingerprint: String? = nil) async -> Bool
     {
         guard self.providerPublicationRevisionIsCurrent(publicationRevision, for: provider),
               self.settings.providerConfigRevision(for: provider) == providerConfigRevision,
-              self.cliProxyAPIAttributionPublicationIsCurrent(cliProxyAPIAttributionGuard, for: provider),
+              await self.cliProxyAPIAttributionPublicationIsCurrentOffMain(
+                  cliProxyAPIAttributionGuard,
+                  for: provider),
               self.settings.costUsageEnabled,
               self.isEnabled(provider)
         else {
