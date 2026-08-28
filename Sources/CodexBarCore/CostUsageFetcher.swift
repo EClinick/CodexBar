@@ -437,27 +437,11 @@ public struct CostUsageFetcher: Sendable {
     {
         let roots = CostUsageScanner.codexSessionsRoots(options: options)
         let rootsFingerprint = CostUsageScanner.codexRootsFingerprint(options: options)
-        let cache = CostUsageStoreAccess.read(
+        let view = CostUsageStoreAccess.readView(
             cacheRoot: options.cacheRoot,
-            calendar: options.calendar)
-        guard cache.roots == rootsFingerprint else {
-            return CodexScanCatchUpStatus(pending: false, progressKey: "scope-mismatch")
-        }
-
-        let scoped = CostUsageScanner.codexCache(cache, scopedTo: roots)
-        let progressKey = self.codexScanProgressKey(cache: cache, scopedFiles: scoped.files)
-        let hasIncompleteFile = scoped.files.values.contains {
-            $0.codexScanComplete == false || $0.hasBufferedCodexForkRetryLines
-        }
-        let pending = cache.codexScanCatchUpPending == true || hasIncompleteFile
-        return CodexScanCatchUpStatus(
-            pending: pending,
-            progressKey: progressKey,
-            processedBytes: cache.codexScanProcessedBytes ?? 0,
-            totalBytes: cache.codexScanTotalBytes ?? 0,
-            completedFiles: cache.codexScanCompletedFiles ?? 0,
-            totalFiles: cache.codexScanTotalFiles ?? 0,
-            staleSnapshotUpdatedAt: pending ? cache.codexPreviousReport?.updatedAt : nil)
+            calendar: options.calendar,
+            purpose: .status)
+        return view.catchUpStatus(roots: roots, rootsFingerprint: rootsFingerprint)
     }
 
     private static func codexHistoryCoverageIsEstablished(
@@ -468,23 +452,6 @@ public struct CostUsageFetcher: Sendable {
     }
 
     private static let establishedEmptyCodexDailyReport = CostUsageDailyReport(data: [], summary: nil)
-
-    private static func codexCachedHistoryCoverageIsEstablished(
-        cache: CostUsageCache,
-        range: CostUsageScanner.CostUsageDayRange,
-        rootsFingerprint: [String: Int64]) -> Bool
-    {
-        guard cache.lastScanUnixMs > 0,
-              cache.timeZoneIdentifier == range.calendar.timeZone.identifier,
-              cache.roots == rootsFingerprint,
-              cache.codexScanCatchUpPending != true,
-              !cache.files.values.contains(where: {
-                  $0.codexScanComplete == false || $0.hasBufferedCodexForkRetryLines
-              }),
-              !CostUsageScanner.requestedWindowExpandsCache(range: range, cache: cache)
-        else { return false }
-        return true
-    }
 
     static func resolvedScannerOptions(
         _ override: CostUsageScanner.Options?,
@@ -787,11 +754,10 @@ public struct CostUsageFetcher: Sendable {
             var staleSnapshotUpdatedAt: Date?
             if provider == .codex {
                 let roots = CostUsageScanner.codexSessionsRoots(options: options.scanOptions)
-                let cache = CostUsageScanner.codexCache(
-                    CostUsageStoreAccess.read(
-                        cacheRoot: options.scanOptions.cacheRoot,
-                        calendar: options.scanOptions.calendar),
-                    scopedTo: roots)
+                let view = CostUsageStoreAccess.readView(
+                    cacheRoot: options.scanOptions.cacheRoot,
+                    calendar: options.scanOptions.calendar,
+                    purpose: .report).scoped(to: roots)
                 let range = CostUsageScanner.CostUsageDayRange(
                     since: since, until: now, calendar: options.scanOptions.calendar)
                 let supplemental = try Self.loadCodexSupplementalScan(
@@ -803,15 +769,19 @@ public struct CostUsageFetcher: Sendable {
                     checkCancellation: checkCancellation)
                 claudeProxyDaily = supplemental.claudeProxyDaily
                 daily = claudeProxyDaily.map { daily.merged(with: $0) } ?? daily
-                if let previous = CostUsageScanner.codexPreviousReport(
-                    cache: cache,
+                if let previous = view.previousReport(
                     range: range,
                     rootsFingerprint: CostUsageScanner.codexRootsFingerprint(options: options.scanOptions))
                 {
                     staleSnapshotUpdatedAt = previous.updatedAt
                 } else {
-                    projects = supplemental.projects
-                    sessions = supplemental.sessions
+                    projects = view.projects(
+                        range: range,
+                        cacheRoot: options.scanOptions.cacheRoot)
+                    sessions = view.sessions(
+                        range: range,
+                        cacheRoot: options.scanOptions.cacheRoot,
+                        roots: roots)
                 }
             }
             if options.includePiSessions,
@@ -1008,17 +978,13 @@ public struct CostUsageFetcher: Sendable {
                 calendar: options.calendar)
             let roots = CostUsageScanner.codexSessionsRoots(options: options)
             let rootsFingerprint = CostUsageScanner.codexRootsFingerprint(options: options)
-            let cache = CostUsageScanner.codexCache(
-                CostUsageStoreAccess.read(
-                    cacheRoot: options.cacheRoot,
-                    calendar: options.calendar),
-                scopedTo: roots)
+            let cache = CostUsageStoreAccess.readView(
+                cacheRoot: options.cacheRoot,
+                calendar: options.calendar,
+                purpose: .report).scoped(to: roots)
             guard cache.timeZoneIdentifier == options.calendar.timeZone.identifier,
                   cache.roots == rootsFingerprint,
-                  cache.codexScanCatchUpPending != true,
-                  !cache.files.values.contains(where: {
-                      $0.codexScanComplete == false || $0.hasBufferedCodexForkRetryLines
-                  }),
+                  !cache.hasPendingScan,
                   let cachedSince = cache.scanSinceKey,
                   let cachedUntil = cache.scanUntilKey
             else { return nil }
@@ -1093,12 +1059,11 @@ public struct CostUsageFetcher: Sendable {
                 let shouldMergePiUsage = scopedCodexHomePath?.isEmpty != false
                 let roots = CostUsageScanner.codexSessionsRoots(options: options)
                 let rootsFingerprint = CostUsageScanner.codexRootsFingerprint(options: options)
-                let loadedCache = CostUsageStoreAccess.read(
+                let loadedCache = CostUsageStoreAccess.readView(
                     cacheRoot: options.cacheRoot,
-                    calendar: options.calendar)
-                let cache = CostUsageScanner.codexCache(
-                    loadedCache,
-                    scopedTo: roots)
+                    calendar: options.calendar,
+                    purpose: .report)
+                let cache = loadedCache.scoped(to: roots)
                 var reports: [CostUsageDailyReport] = []
                 var projects: [CostUsageProjectBreakdown] = []
                 var sessions: [CostUsageSessionBreakdown] = []
@@ -1109,13 +1074,11 @@ public struct CostUsageFetcher: Sendable {
                 var piMerged = false
                 var claudeProxyMerged = false
                 var staleSnapshotUpdatedAt: Date?
-                let nativeHistoryCoverageIsEstablished = Self.codexCachedHistoryCoverageIsEstablished(
-                    cache: cache,
+                let nativeHistoryCoverageIsEstablished = cache.historyCoverageIsEstablished(
                     range: range,
                     rootsFingerprint: rootsFingerprint)
 
-                if let previous = CostUsageScanner.codexPreviousReport(
-                    cache: cache,
+                if let previous = cache.previousReport(
                     range: range,
                     rootsFingerprint: rootsFingerprint)
                 {
@@ -1127,12 +1090,11 @@ public struct CostUsageFetcher: Sendable {
                 } else if cache.timeZoneIdentifier == range.calendar.timeZone.identifier,
                           !cache.days.isEmpty,
                           cache.roots == rootsFingerprint,
-                          !CostUsageScanner.requestedWindowExpandsCache(range: range, cache: cache)
+                          !cache.windowExpandsCache(range)
                 {
-                    let daily = CostUsageScanner.buildCodexReportFromCache(
-                        cache: cache,
+                    let daily = cache.dailyReport(
                         range: range,
-                        modelsDevCacheRoot: options.cacheRoot)
+                        cacheRoot: options.cacheRoot)
                     if !daily.data.isEmpty {
                         reports.append(daily)
                         if cache.lastScanUnixMs > 0 {
@@ -1141,16 +1103,14 @@ public struct CostUsageFetcher: Sendable {
                             scanTimes.append(scanAt)
                         }
                         if includeProjectAndSessionBreakdowns {
-                            sessions = CostUsageScanner.buildCodexSessionBreakdownsFromCache(
-                                cache: cache,
+                            sessions = cache.sessions(
                                 range: range,
-                                modelsDevCacheRoot: options.cacheRoot,
-                                sessionRoots: roots)
-                            if cache.codexProjectMetadataVersion == CostUsageScanner.codexProjectMetadataVersion {
-                                projects.append(contentsOf: CostUsageScanner.buildCodexProjectBreakdownsFromCache(
-                                    cache: cache,
+                                cacheRoot: options.cacheRoot,
+                                roots: roots)
+                            if cache.projectMetadataVersion == CostUsageScanner.codexProjectMetadataVersion {
+                                projects.append(contentsOf: cache.projects(
                                     range: range,
-                                    modelsDevCacheRoot: options.cacheRoot))
+                                    cacheRoot: options.cacheRoot))
                             }
                         }
                     }
@@ -1618,8 +1578,6 @@ extension CostUsageFetcher {
     }
 
     private struct CodexSupplementalScan {
-        let projects: [CostUsageProjectBreakdown]
-        let sessions: [CostUsageSessionBreakdown]
         let claudeProxyDaily: CostUsageDailyReport?
     }
 
@@ -1705,29 +1663,10 @@ extension CostUsageFetcher {
         includeClaudeProxy: Bool,
         checkCancellation: @escaping CostUsageScanner.CancellationCheck) throws -> CodexSupplementalScan
     {
-        let roots = CostUsageScanner.codexSessionsRoots(options: options)
-        let cache = CostUsageScanner.codexCache(
-            CostUsageStoreAccess.read(
-                cacheRoot: options.cacheRoot,
-                calendar: range.calendar),
-            scopedTo: roots)
-        let projects = CostUsageScanner.buildCodexProjectBreakdownsFromCache(
-            cache: cache,
-            range: range,
-            modelsDevCacheRoot: options.cacheRoot)
-        let sessions = CostUsageScanner.buildCodexSessionBreakdownsFromCache(
-            cache: cache,
-            range: range,
-            modelsDevCacheRoot: options.cacheRoot,
-            sessionRoots: roots)
-
         guard includeClaudeProxy,
               self.hasCodexProxyEvidence(options: options)
         else {
-            return CodexSupplementalScan(
-                projects: projects,
-                sessions: sessions,
-                claudeProxyDaily: nil)
+            return CodexSupplementalScan(claudeProxyDaily: nil)
         }
         var proxyOptions = options
         proxyOptions.claudeLogProviderFilter = .excludeVertexAI
@@ -1739,10 +1678,7 @@ extension CostUsageFetcher {
             now: now,
             options: proxyOptions,
             checkCancellation: checkCancellation)
-        return CodexSupplementalScan(
-            projects: projects,
-            sessions: sessions,
-            claudeProxyDaily: proxyDaily.data.isEmpty ? nil : proxyDaily)
+        return CodexSupplementalScan(claudeProxyDaily: proxyDaily.data.isEmpty ? nil : proxyDaily)
     }
 
     static func hasCodexProxyEvidence(
@@ -1901,7 +1837,7 @@ extension CostUsageFetcher {
             ])
     }
 
-    private static func mergedProjectBreakdowns(
+    static func mergedProjectBreakdowns(
         _ projects: [CostUsageProjectBreakdown]) -> [CostUsageProjectBreakdown]
     {
         var dailyByPath: [ProjectMergeKey: [CostUsageDailyReport]] = [:]
@@ -2148,8 +2084,8 @@ extension CostUsageFetcher {
             if hasBufferedRetry {
                 progressHasher.combine(usage.forkedFromId)
                 progressHasher.combine(usage.forkBaselineDependencyKey)
-                progressHasher.combine(usage.codexBufferedSubagentLines?.isEmpty == false)
-                progressHasher.combine(usage.codexBufferedUnresolvedForkLines?.isEmpty == false)
+                progressHasher.combine(usage.hasBufferedCodexSubagentLines)
+                progressHasher.combine(usage.hasBufferedCodexUnresolvedForkLines)
             }
         }
 

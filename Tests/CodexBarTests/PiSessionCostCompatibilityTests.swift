@@ -16,6 +16,8 @@ private final class PiSessionParseCounter: @unchecked Sendable {
 
 struct PiSessionCostCompatibilityTests {
     @Test(arguments: [false, true], [
+        "18fb20b269764e46",
+        "f8577be489f4c13d",
         "21f10143afe00c55",
         "4ef786808187969b",
         "c6c46a376ba16304",
