@@ -959,6 +959,7 @@ extension CostUsageDailyReport {
         var costUSD: Double = 0
         var sawCost = false
         var unpricedRequestCount = IntegerAccumulator()
+        var pricedRequestCount = IntegerAccumulator()
         var unmeteredRequestCount = IntegerAccumulator()
         var estimatedRequestCount = IntegerAccumulator()
         var modelsUsed: Set<String> = []
@@ -990,6 +991,7 @@ extension CostUsageDailyReport {
                 self.sawCost = true
             }
             self.unpricedRequestCount.add(entry.unpricedRequestCount)
+            self.pricedRequestCount.add(entry.pricedRequestCount)
             self.unmeteredRequestCount.add(entry.unmeteredRequestCount)
             self.estimatedRequestCount.add(entry.estimatedRequestCount)
             if let modelsUsed = entry.modelsUsed {
@@ -1041,7 +1043,8 @@ extension CostUsageDailyReport {
                 modelBreakdowns: modelBreakdowns,
                 unpricedRequestCount: self.unpricedRequestCount.result,
                 unmeteredRequestCount: self.unmeteredRequestCount.result,
-                estimatedRequestCount: self.estimatedRequestCount.result)
+                estimatedRequestCount: self.estimatedRequestCount.result,
+                pricedRequestCount: self.pricedRequestCount.result)
         }
 
         private static func combinedResult(

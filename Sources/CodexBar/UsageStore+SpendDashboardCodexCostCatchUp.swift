@@ -78,14 +78,8 @@ extension UsageStore {
 
         self.cancelSpendDashboardCodexCostCatchUp()
         let token = UUID()
-        let context = SpendDashboardCodexCostCatchUpContext(
-            token: token,
-            accounts: accounts,
-            historyDays: historyDays,
-            scopeSignature: scopeSignature,
-            providerConfigRevision: self.settings.providerConfigRevision(for: .codex),
-            costUsageSettingsRevision: self.settings.costUsageSettingsRevision,
-            cliProxyAPIAttributionGuard: self.cliProxyAPIAttributionPublicationGuard())
+        let providerConfigRevision = self.settings.providerConfigRevision(for: .codex)
+        let costUsageSettingsRevision = self.settings.costUsageSettingsRevision
         self.spendDashboardCodexCostCatchUpToken = token
         self.spendDashboardCodexCostCatchUpScopeSignature = scopeSignature
         self.spendDashboardCodexCostCatchUpMode = mode
@@ -94,6 +88,14 @@ extension UsageStore {
         let priority: TaskPriority = mode == .accelerated ? .utility : .background
         self.spendDashboardCodexCostCatchUpTask = Task(priority: priority) { @MainActor [weak self] in
             guard let self else { return }
+            let context = await SpendDashboardCodexCostCatchUpContext(
+                token: token,
+                accounts: accounts,
+                historyDays: historyDays,
+                scopeSignature: scopeSignature,
+                providerConfigRevision: providerConfigRevision,
+                costUsageSettingsRevision: costUsageSettingsRevision,
+                cliProxyAPIAttributionGuard: self.captureCLIProxyAPIAttributionPublicationGuard())
             defer {
                 if self.spendDashboardCodexCostCatchUpToken == token {
                     self.spendDashboardCodexCostCatchUpTask = nil
@@ -148,7 +150,7 @@ extension UsageStore {
         context: SpendDashboardCodexCostCatchUpContext) async
     {
         var statuses = await self.loadSpendDashboardCodexCostCatchUpStatuses(context.accounts)
-        guard self.spendDashboardCodexCostCatchUpContextIsCurrent(context) else { return }
+        guard await self.spendDashboardCodexCostCatchUpContextIsCurrent(context) else { return }
         self.publishSpendDashboardCodexCostCatchUpActivity(
             statuses: statuses,
             context: context,
@@ -160,7 +162,7 @@ extension UsageStore {
             (Set<String>(), statuses.mapValues { Set([$0.progressKey]) })
         while Self.spendDashboardCodexCatchUpIsPending(statuses) {
             do {
-                guard self.spendDashboardCodexCostCatchUpContextIsCurrent(context) else { return }
+                guard await self.spendDashboardCodexCostCatchUpContextIsCurrent(context) else { return }
                 if self.spendDashboardCodexCostCatchUpStopRequested {
                     self.publishSpendDashboardCodexCostCatchUpActivity(
                         statuses: statuses,
@@ -207,7 +209,7 @@ extension UsageStore {
                 }
 
                 try Task.checkCancellation()
-                guard self.spendDashboardCodexCostCatchUpContextIsCurrent(context) else { return }
+                guard await self.spendDashboardCodexCostCatchUpContextIsCurrent(context) else { return }
                 if self.spendDashboardCodexCostCatchUpStopRequested {
                     self.publishSpendDashboardCodexCostCatchUpActivity(
                         statuses: statuses,
@@ -244,7 +246,7 @@ extension UsageStore {
                     stalledCacheIdentities.remove(account.cacheIdentity)
                 }
 
-                guard self.spendDashboardCodexCostCatchUpContextIsCurrent(context) else { return }
+                guard await self.spendDashboardCodexCostCatchUpContextIsCurrent(context) else { return }
                 let isPending = Self.spendDashboardCodexCatchUpIsPending(statuses)
                 self.publishSpendDashboardCodexCostCatchUpActivity(
                     statuses: statuses,
@@ -278,6 +280,19 @@ extension UsageStore {
     }
 
     private func spendDashboardCodexCostCatchUpContextIsCurrent(
+        _ context: SpendDashboardCodexCostCatchUpContext) async -> Bool
+    {
+        guard self.spendDashboardCodexCostCatchUpContextStateIsCurrent(context),
+              await self.cliProxyAPIAttributionPublicationIsCurrentOffMain(
+                  context.cliProxyAPIAttributionGuard,
+                  for: .codex)
+        else {
+            return false
+        }
+        return self.spendDashboardCodexCostCatchUpContextStateIsCurrent(context)
+    }
+
+    private func spendDashboardCodexCostCatchUpContextStateIsCurrent(
         _ context: SpendDashboardCodexCostCatchUpContext) -> Bool
     {
         !Task.isCancelled
@@ -285,9 +300,6 @@ extension UsageStore {
             && self.spendDashboardCodexCostCatchUpScopeSignature == context.scopeSignature
             && self.settings.providerConfigRevision(for: .codex) == context.providerConfigRevision
             && self.settings.costUsageSettingsRevision == context.costUsageSettingsRevision
-            && self.cliProxyAPIAttributionPublicationIsCurrent(
-                context.cliProxyAPIAttributionGuard,
-                for: .codex)
             && max(SpendDashboardSource.scanDays, self.settings.costUsageHistoryDays) == context.historyDays
             && self.settings.isCostUsageEffectivelyEnabled(for: .codex)
             && self.isEnabled(.codex)

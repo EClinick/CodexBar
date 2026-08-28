@@ -169,7 +169,8 @@ struct CostUsageDailyReportMergeTests {
                     modelBreakdowns: nil,
                     unpricedRequestCount: 2,
                     unmeteredRequestCount: 1,
-                    estimatedRequestCount: 3),
+                    estimatedRequestCount: 3,
+                    pricedRequestCount: 4),
             ],
             summary: nil)
         let proxy = CostUsageDailyReport(
@@ -181,7 +182,8 @@ struct CostUsageDailyReportMergeTests {
                     totalTokens: 60,
                     costUSD: 0.75,
                     modelsUsed: ["gpt-5.4"],
-                    modelBreakdowns: nil),
+                    modelBreakdowns: nil,
+                    pricedRequestCount: 3),
             ],
             summary: nil)
 
@@ -192,6 +194,7 @@ struct CostUsageDailyReportMergeTests {
         #expect(entry.unpricedRequestCount == 2)
         #expect(entry.unmeteredRequestCount == 1)
         #expect(entry.estimatedRequestCount == 3)
+        #expect(entry.pricedRequestCount == 7)
         #expect(merged.summary?.reasoningTokens == 12)
     }
 
@@ -523,7 +526,8 @@ struct CostUsageDailyReportMergeTests {
                             requestCount: Int.max,
                             inputTokens: Int.max,
                             outputTokens: Int.max),
-                    ]),
+                    ],
+                    pricedRequestCount: Int.max),
             ],
             summary: nil)
         let second = CostUsageDailyReport(
@@ -544,7 +548,8 @@ struct CostUsageDailyReportMergeTests {
                             requestCount: 1,
                             inputTokens: 1,
                             outputTokens: 1),
-                    ]),
+                    ],
+                    pricedRequestCount: 1),
             ],
             summary: nil)
 
@@ -555,6 +560,7 @@ struct CostUsageDailyReportMergeTests {
         #expect(entry.outputTokens == nil)
         #expect(entry.totalTokens == nil)
         #expect(entry.requestCount == nil)
+        #expect(entry.pricedRequestCount == nil)
         #expect(breakdown.inputTokens == nil)
         #expect(breakdown.outputTokens == nil)
         #expect(breakdown.totalTokens == nil)
