@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.56.1 — Unreleased
+
+### Fixed
+- Docs: clarify the Codex cost-history refresh floor and explain that Manual stops recurring refreshes, not startup or pending catch-up scans.
+- Codex: preserve calendar spacing in inline cost charts, keep unscanned and unpriced days unknown, honor the selected bucket time zone, and fit year-long histories within the menu (#3232). Thanks @findwangdi!
+- Claude: price the documented Kimi `k3[1m]` context alias in local usage reports, including freshly downloaded prices, without changing model names or mixing provider catalogs; refresh affected Pi costs while preserving native Codex caches (investigated alongside #2374). Thanks @joeVenner!
+- Localization: translate missing Catalan iCloud, spend, and Plugins sidebar labels, restore the Projects translation, and align command labels and instructions with their UI roles (#3245). Thanks @pmontp19!
+- Keychain: apply saved disabled-access preferences before startup credential migration, including shared-defaults fallback, and keep deferred migrations retryable (investigated alongside #3249). Thanks @jaychou0642-create!
+
+### Performance
+- Codex: build saved cost aggregates in one pass per file instead of rescanning history for every day/model, preserving costs and token totals (investigated alongside #3247). Thanks @robertoecf!
+
 ## 0.56.0 — 2026-08-28
 
 ### Added

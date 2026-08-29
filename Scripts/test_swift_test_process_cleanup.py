@@ -19,10 +19,8 @@ import ci_swift_test_by_suite as runner
 
 
 def running(pid: int) -> bool:
-    result = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, timeout=2
-    )
-    return bool(result.stdout.strip()) and not result.stdout.strip().startswith("Z")
+    info = runner.test_process(pid)
+    return info is not None and not info.zombie
 
 
 def wait_until(predicate, timeout=3):
@@ -161,7 +159,10 @@ class ProcessCleanupTests(unittest.TestCase):
                         with self.assertRaises(KeyboardInterrupt):
                             runner.run_command(command, timeout=8)
                     else:
-                        self.assertEqual(runner.run_command(command, timeout=2), expected)
+                        # Successful fixtures include interpreter startup and ownership polling;
+                        # exact deadline behavior is covered separately with a virtual clock.
+                        timeout = 5 if expected in (0, 23) else 2
+                        self.assertEqual(runner.run_command(command, timeout=timeout), expected)
                 elapsed = time.monotonic() - started
                 self.assertTrue(acknowledged, "fixture identities were not observed before drain")
                 child = int((child_root / "pid").read_text())
@@ -202,8 +203,7 @@ class ProcessCleanupTests(unittest.TestCase):
     def test_success_drains_lingering_child_without_touching_sentinel(self):
         self.exercise("success", 0)
 
-    def test_success_after_delayed_readiness_keeps_the_two_second_budget(self):
-        # One second of startup plus the former 1.2-second ancestry sleep exceeds the command budget.
+    def test_success_after_delayed_readiness_drains_observed_children(self):
         self.exercise("success", 0, ready_delay=1)
 
     def test_success_allows_and_drains_a_separate_session(self):
@@ -220,6 +220,32 @@ class ProcessCleanupTests(unittest.TestCase):
 
     def test_keyboard_interrupt_drains_children_and_propagates(self):
         self.exercise("timeout", None, interrupt=True)
+
+
+class FixtureReadinessTests(unittest.TestCase):
+    def test_delayed_startup_releases_observed_ancestry_within_two_seconds(self):
+        with tempfile.TemporaryDirectory(prefix="codexbar-fixture-readiness-") as directory:
+            root = Path(directory)
+            child = runner.TestProcess(20, 10, 20, (101, 0))
+            clock = [0.0]
+            observed_at = []
+            def spawn(*_args, **_kwargs):
+                self.assertAlmostEqual(clock[0], 1)
+                (root / "ready").write_text(json.dumps(dict(pid=child.pid, birth=child.birth)))
+            def sleep(seconds):
+                clock[0] += seconds
+                if not observed_at and release_observed_fixture(root, {child.pid: child}):
+                    observed_at.append(clock[0])
+            with patch.object(subprocess, "Popen", side_effect=spawn) as popen, \
+                    patch.object(signal, "signal"), \
+                    patch.object(time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(time, "sleep", side_effect=sleep):
+                fixture("success", directory, ready_delay=1)
+            popen.assert_called_once()
+            self.assertEqual(len(observed_at), 1, "fixture exited without observed child ownership")
+            self.assertAlmostEqual(observed_at[0], 1.05)
+            # The former 1.2-second ancestry sleep after one-second startup must fail this budget.
+            self.assertLess(clock[0], 2, "fixture added grace after its child identity was observed")
 
 
 class ProcessIdentityTests(unittest.TestCase):
@@ -497,6 +523,83 @@ class DarwinNativeSignalTests(unittest.TestCase):
         self.exercise(signal.SIGKILL)
 
 
+class ProcessInventoryTests(unittest.TestCase):
+    def test_linux_inventory_reads_numeric_proc_entries_without_spawning(self):
+        entries = [Path("/proc") / name for name in ("10", "20", "0", "self", "thread-self", "-1", "１２")]
+        with patch.object(runner.sys, "platform", "linux"), \
+                patch.object(runner.Path, "iterdir", return_value=iter(entries)), \
+                patch.object(runner.subprocess, "check_output", side_effect=AssertionError("must not spawn")):
+            self.assertEqual(runner.test_process_ids(), {10, 20})
+
+    def test_linux_inventory_failure_is_not_an_empty_snapshot(self):
+        with patch.object(runner.sys, "platform", "linux"), \
+                patch.object(runner.Path, "iterdir", side_effect=PermissionError(errno.EACCES, "denied")):
+            with self.assertRaises(PermissionError):
+                runner.test_process_snapshot([10])
+
+    def test_snapshot_keeps_required_pids_missing_from_the_initial_inventory(self):
+        processes = {pid: runner.TestProcess(pid, 1, pid, (100, 0)) for pid in (10, 20)}
+        with patch.object(runner, "test_process_ids", return_value={20}), \
+                patch.object(runner, "test_process", side_effect=processes.get):
+            self.assertEqual(runner.test_process_snapshot([10]), processes)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin native inventory")
+    def test_darwin_inventory_retries_a_full_buffer_before_returning_pids(self):
+        sizes = []
+        def enumerate_pids(kind, info, buffer, size):
+            self.assertEqual((kind, info), (1, 0))
+            sizes.append(size)
+            if buffer is None:
+                return ctypes.sizeof(ctypes.c_int)
+            buffer[0], buffer[1], buffer[2], buffer[3] = 10, 20, 0, -1
+            return size if len(sizes) == 2 else 4 * ctypes.sizeof(ctypes.c_int)
+        with patch.object(runner._libproc, "proc_listpids", side_effect=enumerate_pids):
+            self.assertEqual(runner.test_process_ids(), {10, 20})
+        self.assertEqual(len(sizes), 3)
+        self.assertEqual(sizes[2], sizes[1] * 2)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin native inventory")
+    def test_darwin_inventory_failures_preserve_errno_and_fail_closed(self):
+        for fail_probe in (False, True):
+            with self.subTest(fail_probe=fail_probe):
+                def enumerate_pids(_kind, _info, buffer, _size):
+                    if buffer is None and not fail_probe:
+                        return ctypes.sizeof(ctypes.c_int)
+                    ctypes.set_errno(errno.EPERM)
+                    return 0
+                with patch.object(runner._libproc, "proc_listpids", side_effect=enumerate_pids):
+                    with self.assertRaises(PermissionError):
+                        runner.test_process_ids()
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin native inventory")
+    def test_darwin_inventory_rejects_invalid_native_byte_counts(self):
+        for count in (-1, 0, 3, 1024):
+            with self.subTest(count=count):
+                ctypes.set_errno(errno.EPERM)
+                with patch.object(runner._libproc, "proc_listpids", side_effect=[4, count]):
+                    with self.assertRaises(OSError) as raised:
+                        runner.test_process_ids()
+                self.assertEqual(raised.exception.errno, errno.EIO)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin native inventory")
+    def test_darwin_inventory_growth_is_bounded_and_never_returns_partial_data(self):
+        def enumerate_pids(_kind, _info, buffer, size):
+            return 4 if buffer is None else size
+        with patch.object(runner._libproc, "proc_listpids", side_effect=enumerate_pids) as enumerate_mock:
+            with self.assertRaises(OSError) as raised:
+                runner.test_process_ids()
+        self.assertEqual(raised.exception.errno, errno.EAGAIN)
+        self.assertEqual(enumerate_mock.call_count, 5)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin native inventory")
+    def test_darwin_inventory_rejects_native_buffer_size_overflow_before_allocation(self):
+        with patch.object(runner._libproc, "proc_listpids", return_value=2**31 - 4) as enumerate_mock:
+            with self.assertRaises(OSError) as raised:
+                runner.test_process_ids()
+        self.assertEqual(raised.exception.errno, errno.EOVERFLOW)
+        enumerate_mock.assert_called_once()
+
+
 class ReviewRegressionTests(unittest.TestCase):
     def test_recycled_sid_without_replacement_leader_is_not_adopted(self):
         root = runner.TestProcess(10, 1, 10, (100, 0))
@@ -529,12 +632,21 @@ class ReviewRegressionTests(unittest.TestCase):
             raise PermissionError(errno.EACCES, "denied")
         ownership = runner.TestProcessOwnership(root)
         with patch.object(runner.sys, "platform", "linux"), \
-                patch.object(runner.subprocess, "check_output", return_value="10 20"), \
+                patch.object(runner, "test_process_ids", return_value={10, 20}), \
                 patch.object(runner.Path, "read_bytes", autospec=True, side_effect=read):
             self.assertEqual(set(ownership.refresh()), {10})
             ownership.known[20] = (101, 0)
             with self.assertRaises(PermissionError):
                 ownership.refresh()
+
+    def test_snapshot_does_not_spawn_ps(self):
+        with patch.object(runner.subprocess, "check_output", side_effect=subprocess.TimeoutExpired("ps", 2)):
+            snapshot = runner.test_process_snapshot([os.getpid()])
+        self.assertIn(os.getpid(), snapshot)
+
+    def test_running_fixture_probe_does_not_spawn_ps(self):
+        with patch.object(subprocess, "run", side_effect=subprocess.TimeoutExpired("ps", 2)):
+            self.assertTrue(running(os.getpid()))
 
     @unittest.skipUnless(sys.platform == "darwin", "Darwin native error regression")
     def test_known_unreadable_darwin_metadata_fails_snapshot_but_unrelated_peer_does_not(self):
@@ -542,7 +654,7 @@ class ReviewRegressionTests(unittest.TestCase):
             ctypes.set_errno(errno.EPERM)
             return 0
         with patch.object(runner._libproc, "proc_pidinfo", side_effect=denied), \
-                patch.object(runner.subprocess, "check_output", return_value="123"):
+                patch.object(runner, "test_process_ids", return_value={123}):
             self.assertEqual(runner.test_process_snapshot(), {})
             with self.assertRaises(PermissionError):
                 runner.TestProcessOwnership(runner.TestProcess(123, 1, 123, (100, 0))).refresh()
@@ -597,7 +709,7 @@ class ReviewRegressionTests(unittest.TestCase):
             return b"20 (child) S 10 20 20 " + b"0 " * 15 + b"101 0"
         process = Mock()
         with patch.object(runner.sys, "platform", "linux"), \
-                patch.object(runner.subprocess, "check_output", return_value="10 20"), \
+                patch.object(runner, "test_process_ids", return_value={10, 20}), \
                 patch.object(runner.Path, "read_bytes", autospec=True, side_effect=read), \
                 patch.object(ownership, "send") as send, \
                 patch.object(runner, "stop_unreaped_child") as stop:
