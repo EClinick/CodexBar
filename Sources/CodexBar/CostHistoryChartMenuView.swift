@@ -77,6 +77,7 @@ struct CostHistoryChartMenuView: View {
     private let windowLabel: String?
     private let projects: [CostUsageProjectBreakdown]
     private let sessions: [CostUsageSessionBreakdown]
+    private let hidePersonalInfo: Bool
     private let width: CGFloat
     @State private var metric: ChartMetric
     @State private var selectedDateKey: String?
@@ -92,6 +93,7 @@ struct CostHistoryChartMenuView: View {
         windowLabel: String? = nil,
         projects: [CostUsageProjectBreakdown] = [],
         sessions: [CostUsageSessionBreakdown] = [],
+        hidePersonalInfo: Bool,
         width: CGFloat)
     {
         self.provider = provider
@@ -104,6 +106,7 @@ struct CostHistoryChartMenuView: View {
         self.windowLabel = windowLabel
         self.projects = projects
         self.sessions = sessions
+        self.hidePersonalInfo = hidePersonalInfo
         self.width = width
         self._metric = State(initialValue: Self.defaultMetric(provider: provider, daily: daily))
     }
@@ -339,16 +342,19 @@ struct CostHistoryChartMenuView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .frame(height: Self.detailPrimaryLineHeight, alignment: .leading)
-                    ForEach(Array(self.projects.prefix(Self.maxVisibleProjectRows)), id: \.projectRowID) { project in
+                    ForEach(
+                        Array(self.projects.prefix(Self.maxVisibleProjectRows).enumerated()),
+                        id: \.element.projectRowID)
+                    { index, project in
                         let visibleSources = Self.visibleProjectSources(project)
                         VStack(alignment: .leading, spacing: Self.projectSourceSpacing) {
-                            self.projectParentRow(project)
+                            self.projectParentRow(project, ordinal: index + 1)
                             if !visibleSources.isEmpty {
                                 ForEach(
-                                    Array(visibleSources.prefix(Self.maxVisibleProjectSourceRows)),
-                                    id: \.sourceRowID)
-                                { source in
-                                    self.projectSourceRow(source)
+                                    Array(visibleSources.prefix(Self.maxVisibleProjectSourceRows).enumerated()),
+                                    id: \.element.sourceRowID)
+                                { sourceIndex, source in
+                                    self.projectSourceRow(source, ordinal: sourceIndex + 1)
                                 }
                                 let hiddenSourceCount = visibleSources.count - Self.maxVisibleProjectSourceRows
                                 if hiddenSourceCount > 0 {
@@ -834,10 +840,11 @@ struct CostHistoryChartMenuView: View {
         return "\(cost) · \(L("%@ tokens", UsageFormatter.tokenCountString(totalTokens)))"
     }
 
-    private func projectParentRow(_ project: CostUsageProjectBreakdown) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+    private func projectParentRow(_ project: CostUsageProjectBreakdown, ordinal: Int) -> some View {
+        let identity = Self.projectIdentity(project, ordinal: ordinal, hidePersonalInfo: self.hidePersonalInfo)
+        return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 8) {
-                Text(project.name)
+                Text(identity.name)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -849,7 +856,7 @@ struct CostHistoryChartMenuView: View {
                     .lineLimit(1)
                     .truncationMode(.head)
             }
-            if let path = project.path {
+            if let path = identity.path {
                 Text(path)
                     .font(.caption2)
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
@@ -860,10 +867,11 @@ struct CostHistoryChartMenuView: View {
         .frame(height: Self.projectRowHeight, alignment: .leading)
     }
 
-    private func projectSourceRow(_ source: CostUsageProjectSourceBreakdown) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+    private func projectSourceRow(_ source: CostUsageProjectSourceBreakdown, ordinal: Int) -> some View {
+        let identity = Self.sourceIdentity(source, ordinal: ordinal, hidePersonalInfo: self.hidePersonalInfo)
+        return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
-                Text(source.name)
+                Text(identity.name)
                     .font(.caption2)
                     .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
                     .lineLimit(1)
@@ -875,7 +883,7 @@ struct CostHistoryChartMenuView: View {
                     .lineLimit(1)
                     .truncationMode(.head)
             }
-            if let path = source.path {
+            if let path = identity.path {
                 Text(path)
                     .font(.caption2)
                     .foregroundStyle(Color(nsColor: .quaternaryLabelColor))
@@ -1043,7 +1051,32 @@ extension CostHistoryChartMenuView {
         }
     }
 
+    static func projectIdentity(
+        _ project: CostUsageProjectBreakdown,
+        ordinal: Int,
+        hidePersonalInfo: Bool) -> CostHistoryIdentity
+    {
+        CostHistoryIdentity(
+            name: project.name,
+            path: project.path,
+            placeholder: L("Project %d", ordinal),
+            hidePersonalInfo: hidePersonalInfo)
+    }
+
+    static func sourceIdentity(
+        _ source: CostUsageProjectSourceBreakdown,
+        ordinal: Int,
+        hidePersonalInfo: Bool) -> CostHistoryIdentity
+    {
+        CostHistoryIdentity(
+            name: source.name,
+            path: source.path,
+            placeholder: L("Source %d", ordinal),
+            hidePersonalInfo: hidePersonalInfo)
+    }
+
     struct RenderFingerprint: Equatable {
+        let hidePersonalInfo: Bool
         let currencyCode: String
         let costMultiplierBitPattern: UInt64
         let historyDays: Int
@@ -1105,12 +1138,14 @@ extension CostHistoryChartMenuView {
     static func renderFingerprint(
         from snapshot: CostUsageTokenSnapshot,
         provider: UsageProvider,
+        hidePersonalInfo: Bool = false,
         displayCurrencyCode: String? = nil,
         displayCostMultiplier: Double = 1.0) -> RenderFingerprint
     {
         let projects = provider == .codex ? snapshot.projects : []
         let sessions = provider == .codex ? snapshot.sessions : []
         return RenderFingerprint(
+            hidePersonalInfo: hidePersonalInfo,
             currencyCode: displayCurrencyCode ?? snapshot.currencyCode,
             costMultiplierBitPattern: displayCostMultiplier.bitPattern,
             historyDays: snapshot.historyDays,
@@ -1124,21 +1159,27 @@ extension CostHistoryChartMenuView {
                 }
                 .sorted { $0.date < $1.date }
                 .map(self.visibleDailyFingerprint),
-            projects: Array(projects.prefix(self.maxVisibleProjectRows)).map { project in
+            projects: Array(projects.prefix(self.maxVisibleProjectRows).enumerated()).map { index, project in
+                let identity = self.projectIdentity(project, ordinal: index + 1, hidePersonalInfo: hidePersonalInfo)
                 let visibleSources = self.visibleProjectSources(project)
                 return VisibleProjectFingerprint(
-                    name: project.name,
-                    path: project.path,
+                    name: identity.name,
+                    path: identity.path,
                     totalTokens: project.totalTokens,
                     totalCostBitPattern: project.totalCostUSD.map(\.bitPattern),
                     visibleSourceCount: visibleSources.count,
-                    sources: Array(visibleSources.prefix(self.maxVisibleProjectSourceRows)).map { source in
-                        VisibleSourceFingerprint(
-                            name: source.name,
-                            path: source.path,
-                            totalTokens: source.totalTokens,
-                            totalCostBitPattern: source.totalCostUSD.map(\.bitPattern))
-                    })
+                    sources: Array(visibleSources.prefix(self.maxVisibleProjectSourceRows).enumerated())
+                        .map { sourceIndex, source in
+                            let identity = self.sourceIdentity(
+                                source,
+                                ordinal: sourceIndex + 1,
+                                hidePersonalInfo: hidePersonalInfo)
+                            return VisibleSourceFingerprint(
+                                name: identity.name,
+                                path: identity.path,
+                                totalTokens: source.totalTokens,
+                                totalCostBitPattern: source.totalCostUSD.map(\.bitPattern))
+                        })
             },
             sessions: sessions.map { session in
                 VisibleSessionFingerprint(

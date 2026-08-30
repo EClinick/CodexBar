@@ -466,7 +466,8 @@ struct SpendDashboardPane: View {
             ForEach(self.controller.model.groups) { group in
                 SpendDashboardCurrencySection(
                     group: group,
-                    requestedDays: self.controller.model.requestedDays)
+                    requestedDays: self.controller.model.requestedDays,
+                    hidePersonalInfo: self.settings.hidePersonalInfo)
             }
         }
 
@@ -766,6 +767,7 @@ struct SpendDashboardEmptyState: Equatable {
 struct SpendDashboardCurrencySection: View {
     let group: SpendDashboardModel.CurrencyGroup
     let requestedDays: Int
+    var hidePersonalInfo: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -838,7 +840,7 @@ struct SpendDashboardCurrencySection: View {
             SpendModelPanel(group: self.group)
             SpendSessionPanel(group: self.group)
             if !self.group.projects.isEmpty {
-                SpendProjectPanel(group: self.group)
+                SpendProjectPanel(group: self.group, hidePersonalInfo: self.hidePersonalInfo)
             }
             SpendDailyChart(group: self.group)
             if !self.group.hourlyPoints.isEmpty {
@@ -974,6 +976,7 @@ private struct SpendModelPanel: View {
 
 private struct SpendProjectPanel: View {
     let group: SpendDashboardModel.CurrencyGroup
+    let hidePersonalInfo: Bool
     @State private var showsAllRows = false
 
     private static let collapsedRowCount = 8
@@ -995,7 +998,7 @@ private struct SpendProjectPanel: View {
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(row.projectName).lineLimit(1)
+                            Text(row.displayIdentity(hidePersonalInfo: self.hidePersonalInfo).name).lineLimit(1)
                             Text(row.providerName).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()

@@ -3,6 +3,11 @@
 ## 0.56.1 — Unreleased
 
 ### Fixed
+- Codex: add redacted weekly-reset diagnostic reasons for candidate admission, expiry, and account-scoped storage requests without changing reset publication rules (investigated alongside #3248). Thanks @kcharlan!
+- Docs: distinguish OpenCode-backed Codex OAuth quota from unsupported OpenCode session cost imports, preserving existing provider and account boundaries (investigated alongside #3273). Thanks @pedrommone!
+- Privacy: honor “Hide personal information” for project/source names and paths in cost history and project names in Usage & Spend, preserving costs, tokens, and stored data (#3262). Thanks @vinschger!
+- Docs: document existing z.ai credit quotas and explain how to configure independent provider widgets.
+- Antigravity: expose the existing local token-history reader through CLI cost, serve, and dashboard selection, preserving unknown dollar costs and distinguishing unavailable from empty history in text output (investigated alongside #3266). Thanks @chid!
 - Docs: clarify the Codex cost-history refresh floor and explain that Manual stops recurring refreshes, not startup or pending catch-up scans.
 - Codex: preserve calendar spacing in inline cost charts, keep unscanned and unpriced days unknown, honor the selected bucket time zone, and fit year-long histories within the menu (#3232). Thanks @findwangdi!
 - Claude: price the documented Kimi `k3[1m]` context alias in local usage reports, including freshly downloaded prices, without changing model names or mixing provider catalogs; refresh affected Pi costs while preserving native Codex caches (investigated alongside #2374). Thanks @joeVenner!
