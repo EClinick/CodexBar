@@ -144,6 +144,21 @@ public struct CostUsageFetcher: Sendable {
             scannerOptions: self.scannerOptions(calendar: calendar))
     }
 
+    package func loadCompletedCodexTokenSnapshotResult(
+        now: Date = Date(),
+        codexHomePath: String? = nil,
+        historyDays: Int = 30,
+        calendar: Calendar? = nil) async -> CachedCodexTokenSnapshotResult?
+    {
+        await Self.loadCachedCodexTokenSnapshotResult(
+            now: now,
+            codexHomePath: codexHomePath,
+            historyDays: historyDays,
+            allowScopedCodexHome: true,
+            requireCompleteHistory: true,
+            scannerOptions: self.scannerOptions(calendar: calendar))
+    }
+
     public func loadCachedCodexLocalProjectUsageSnapshot(
         now: Date = Date(),
         codexHomePath: String? = nil,
@@ -1034,6 +1049,7 @@ public struct CostUsageFetcher: Sendable {
         allowScopedCodexHome: Bool = false,
         includePiSessions: Bool = true,
         includeProjectAndSessionBreakdowns: Bool = true,
+        requireCompleteHistory: Bool = false,
         scannerOptions overrideScannerOptions: CostUsageScanner.Options? = nil) async
         -> CachedCodexTokenSnapshotResult?
     {
@@ -1046,6 +1062,7 @@ public struct CostUsageFetcher: Sendable {
         // alongside the scans themselves.
         let cachedSnapshot: CachedCodexTokenSnapshotResult?? = try? await CostUsageScanExecutor
             .run { checkCancellation in
+                try checkCancellation()
                 let clampedHistoryDays = max(1, min(365, historyDays))
                 let options = Self.resolvedScannerOptions(
                     overrideScannerOptions,
@@ -1081,6 +1098,8 @@ public struct CostUsageFetcher: Sendable {
                 let nativeHistoryCoverageIsEstablished = cache.historyCoverageIsEstablished(
                     range: range,
                     rootsFingerprint: rootsFingerprint)
+                // Final catch-up publication must not fall back to the report from before a new pending scan.
+                guard !requireCompleteHistory || nativeHistoryCoverageIsEstablished else { return nil }
 
                 if let previous = cache.previousReport(
                     range: range,
@@ -1144,37 +1163,42 @@ public struct CostUsageFetcher: Sendable {
                     if let scanAt = proxy.scanAt {
                         scanTimes.append(scanAt)
                     }
-                    if includeProjectAndSessionBreakdowns, let project = proxy.project {
-                        projects.append(project)
-                        sessions = []
+                    Self.appendCachedCodexProxyProject(
+                        proxy.project,
+                        includeProjectAndSessionBreakdowns: includeProjectAndSessionBreakdowns,
+                        projects: &projects,
+                        sessions: &sessions)
+                }
+
+                if includePiSessions, shouldMergePiUsage {
+                    let piResult = PiSessionCostScanner.loadCachedDailyReportResult(
+                        provider: .codex,
+                        since: since,
+                        until: until,
+                        now: now,
+                        cacheRoot: options.cacheRoot,
+                        calendar: options.calendar,
+                        allowEstablishedEmpty: requireCompleteHistory)
+                    // Missing or incompatible mirror history is not zero usage.
+                    guard !requireCompleteHistory || piResult != nil else { return nil }
+                    if let piResult {
+                        reports.append(piResult.report)
+                        piMerged = true
+                        if let piLastScanAt = piResult.lastScanAt {
+                            scanTimes.append(piLastScanAt)
+                        }
+                        if includeProjectAndSessionBreakdowns,
+                           let piProject = Self.unknownProjectBreakdown(from: piResult.report)
+                        {
+                            projects.append(piProject)
+                        }
+                        if includeProjectAndSessionBreakdowns, !piResult.report.data.isEmpty {
+                            sessions = []
+                        }
                     }
                 }
 
-                if includePiSessions,
-                   shouldMergePiUsage,
-                   let piResult = PiSessionCostScanner.loadCachedDailyReportResult(
-                       provider: .codex,
-                       since: since,
-                       until: until,
-                       now: now,
-                       cacheRoot: options.cacheRoot,
-                       calendar: options.calendar)
-                {
-                    reports.append(piResult.report)
-                    piMerged = true
-                    if let piLastScanAt = piResult.lastScanAt {
-                        scanTimes.append(piLastScanAt)
-                    }
-                    if includeProjectAndSessionBreakdowns,
-                       let piProject = Self.unknownProjectBreakdown(from: piResult.report)
-                    {
-                        projects.append(piProject)
-                    }
-                    if includeProjectAndSessionBreakdowns, !piResult.report.data.isEmpty {
-                        sessions = []
-                    }
-                }
-
+                try checkCancellation()
                 guard !reports.isEmpty else { return nil }
                 // `previous` is an exact report captured before the current bounded refresh became
                 // pending. Its rows remain established even though native catch-up is still active;
@@ -1200,6 +1224,18 @@ public struct CostUsageFetcher: Sendable {
                     staleSnapshotUpdatedAt: staleSnapshotUpdatedAt)
             }
         return cachedSnapshot.flatMap(\.self)
+    }
+
+    private static func appendCachedCodexProxyProject(
+        _ project: CostUsageProjectBreakdown?,
+        includeProjectAndSessionBreakdowns: Bool,
+        projects: inout [CostUsageProjectBreakdown],
+        sessions: inout [CostUsageSessionBreakdown])
+    {
+        if includeProjectAndSessionBreakdowns, let project {
+            projects.append(project)
+            sessions = []
+        }
     }
 
     private static func loadCachedCodexProxyReport(
