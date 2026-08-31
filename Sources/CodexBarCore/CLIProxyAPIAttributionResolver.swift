@@ -757,12 +757,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
               let text = try? String(contentsOf: url, encoding: .utf8)
         else { return false }
         let conflictingKeys = ["codex-api-key", "openai-compatibility"]
-        return text.split(whereSeparator: \.isNewline).contains { line in
-            guard line.first?.isWhitespace != true else { return false }
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.hasPrefix("#") else { return false }
-            return conflictingKeys.contains { trimmed.hasPrefix("\($0):") }
-        }
+        return conflictingKeys.contains { self.topLevelYAMLSequenceHasEntries($0, in: text) }
     }
 
     private static func loadObservations(
@@ -853,6 +848,33 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 }
 
 extension CLIProxyAPIAttributionResolver {
+    private static func topLevelYAMLSequenceHasEntries(_ key: String, in text: String) -> Bool {
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+        let prefix = "\(key):"
+        for (index, line) in lines.enumerated() {
+            guard line.first?.isWhitespace != true else { continue }
+            let structure = self.simpleYAMLScalar(line.trimmingCharacters(in: .whitespacesAndNewlines))
+            guard structure.hasPrefix(prefix) else { continue }
+
+            let inlineValue = structure.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+            if !inlineValue.isEmpty {
+                let compactValue = inlineValue.filter { !$0.isWhitespace }
+                return compactValue != "[]" && compactValue != "null" && compactValue != "~"
+            }
+
+            for nestedLine in lines.dropFirst(index + 1) {
+                let nested = nestedLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !nested.isEmpty, !nested.hasPrefix("#") else { continue }
+                guard nestedLine.first?.isWhitespace == true else { return false }
+                if self.simpleYAMLScalar(nested).hasPrefix("-") {
+                    return true
+                }
+            }
+            return false
+        }
+        return false
+    }
+
     private func closestUsageRecordMatch(
         observation: Observation,
         model: String,

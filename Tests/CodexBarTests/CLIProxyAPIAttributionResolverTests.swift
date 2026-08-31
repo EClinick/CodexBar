@@ -126,6 +126,68 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `empty configured API upstream lists do not suppress codex auth inventory`() throws {
+        for (index, configuration) in [
+            "codex-api-key: []\n",
+            "openai-compatibility: [] # no configured upstreams\n",
+            "codex-api-key:\n  # no configured upstreams\nopenai-compatibility:\n",
+        ].enumerated() {
+            let fileManager = FileManager.default
+            let root = fileManager.temporaryDirectory
+                .appendingPathComponent("cliproxy-empty-upstreams-\(index)-\(UUID().uuidString)", isDirectory: true)
+            let logs = root.appendingPathComponent("logs", isDirectory: true)
+            try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+            defer { try? fileManager.removeItem(at: root) }
+
+            let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+            try Data(Self.requestLog(sessionID: "session-1", timestamp: timestamp).utf8)
+                .write(to: logs.appendingPathComponent("request.log"))
+            try Data(#"{"type":"codex"}"#.utf8).write(to: root.appendingPathComponent("codex.json"))
+            try Data(configuration.utf8).write(to: root.appendingPathComponent("config.yaml"))
+
+            let resolver = try CLIProxyAPIAttributionResolver.load(home: root, fileManager: fileManager)
+            let attribution = resolver.attribution(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "session-1",
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: Self.tokens)
+
+            #expect(attribution.upstream?.provider == "codex")
+            #expect(attribution.evidence.contains(.cliProxyAuthInventory))
+        }
+    }
+
+    @Test
+    func `configured API upstream entry suppresses codex auth inventory`() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cliproxy-configured-upstream-\(UUID().uuidString)", isDirectory: true)
+        let logs = root.appendingPathComponent("logs", isDirectory: true)
+        try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+        try Data(Self.requestLog(sessionID: "session-1", timestamp: timestamp).utf8)
+            .write(to: logs.appendingPathComponent("request.log"))
+        try Data(#"{"type":"codex"}"#.utf8).write(to: root.appendingPathComponent("codex.json"))
+        try Data("openai-compatibility:\n  - name: configured-upstream\n".utf8)
+            .write(to: root.appendingPathComponent("config.yaml"))
+
+        let resolver = try CLIProxyAPIAttributionResolver.load(home: root, fileManager: fileManager)
+        let attribution = resolver.attribution(
+            model: "gpt-5.5",
+            modelProvider: .openAI,
+            sessionID: "session-1",
+            timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+            tokens: Self.tokens)
+
+        #expect(attribution.route == .cliProxyAPI)
+        #expect(attribution.upstream == nil)
+        #expect(!attribution.evidence.contains(.cliProxyAuthInventory))
+    }
+
+    @Test
     func `request telemetry identifies exact codex oauth upstream`() {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(
