@@ -96,6 +96,21 @@ struct CLIProxyAPIAliasRegressionTests {
     }
 
     @Test
+    func `codex oauth alias parser accepts bare dash mapping items`() {
+        let configuration = """
+        oauth-model-alias:
+          codex:
+            -
+              name: 'gpt-5.5'
+              alias: 'proxy-codex-alias'
+        """
+
+        #expect(CLIProxyAPIAttributionResolver.parseCodexOAuthModelAliases(configuration) == [
+            "proxy-codex-alias": "gpt-5.5",
+        ])
+    }
+
+    @Test
     func `weaker live route evidence preserves cached telemetry upstream`() {
         let cached = CostUsageAttribution(
             client: .claudeCode,

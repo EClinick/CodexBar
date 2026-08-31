@@ -687,7 +687,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 break
             }
 
-            let startsItem = trimmed.hasPrefix("- ")
+            let startsItem = trimmed == "-" || trimmed.hasPrefix("- ")
             if startsItem {
                 if let currentName, let currentAlias, !currentName.isEmpty, !currentAlias.isEmpty {
                     aliases[currentAlias] = currentName
