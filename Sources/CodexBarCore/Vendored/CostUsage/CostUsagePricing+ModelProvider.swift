@@ -25,6 +25,21 @@ extension CostUsagePricing {
             return .google
         }
 
+        if let providerID = self.claudeModelsDevResolvedProviderID(
+            model: model,
+            catalog: modelsDevCatalog,
+            cacheRoot: modelsDevCacheRoot)
+        {
+            // Provider-specific by design: resolved catalog ownership maps known first-party providers
+            // into attribution buckets.
+            return switch providerID.lowercased() {
+            case "anthropic": .anthropic
+            case "openai": .openAI
+            case "google": .google
+            default: .other
+            }
+        }
+
         if self.claudeCostUSD(
             model: model,
             inputTokens: 0,

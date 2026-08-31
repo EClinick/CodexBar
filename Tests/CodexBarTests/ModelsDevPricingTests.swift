@@ -74,6 +74,54 @@ struct ModelsDevPricingTests {
     }
 
     @Test
+    func `classifies catalog models by their resolved provider`() throws {
+        let catalog = try Self.catalog("""
+        {
+          "anthropic": {
+            "id": "anthropic",
+            "models": {
+              "claude-sonnet-4-6": {
+                "id": "claude-sonnet-4-6",
+                "cost": { "input": 3, "output": 15 }
+              }
+            }
+          },
+          "deepseek": {
+            "id": "deepseek",
+            "models": {
+              "deepseek-v4": {
+                "id": "deepseek-v4",
+                "cost": { "input": 0.14, "output": 0.28 }
+              }
+            }
+          },
+          "minimax": {
+            "id": "minimax",
+            "models": {
+              "minimax-m2.5": {
+                "id": "minimax-m2.5",
+                "cost": { "input": 0.2, "output": 0.4 }
+              }
+            }
+          }
+        }
+        """)
+
+        #expect(CostUsagePricing.modelProvider(
+            for: "anthropic/claude-sonnet-4-6",
+            modelsDevCatalog: catalog) == .anthropic)
+        #expect(CostUsagePricing.modelProvider(
+            for: "deepseek/deepseek-v4",
+            modelsDevCatalog: catalog) == .other)
+        #expect(CostUsagePricing.modelProvider(
+            for: "deepseek-v4",
+            modelsDevCatalog: catalog) == .other)
+        #expect(CostUsagePricing.modelProvider(
+            for: "minimax/minimax-m2.5",
+            modelsDevCatalog: catalog) == .other)
+    }
+
+    @Test
     func `converts models dev per million token prices to per token prices`() throws {
         let pricing = try #require(try Self.fixtureCatalog().pricing(
             providerID: "anthropic",

@@ -373,6 +373,7 @@ public struct CostUsageAttribution: Sendable, Codable, Equatable, Hashable {
         case openAI
         case anthropic
         case google
+        case other
         case unknown
     }
 

@@ -90,7 +90,7 @@ struct CostUsageFetcherUnknownModelPricingTests {
     }
 
     @Test
-    func `fetcher reprices a bare claude vendor model after an on demand catalog refresh`() async throws {
+    func `claude snapshot excludes a bare foreign provider model after catalog refresh`() async throws {
         let fixture = try UnknownModelPricingFixture()
         defer { fixture.environment.cleanup() }
         let assistant: [String: Any] = [
@@ -119,9 +119,46 @@ struct CostUsageFetcherUnknownModelPricingTests {
             modelsDevClient: ModelsDevClient(transport: CostUsageFetcherModelsDevTransport(
                 data: fixture.refreshedCatalog)))
 
-        let breakdown = try #require(snapshot.daily.first?.modelBreakdowns?.first)
-        #expect(breakdown.modelName == "deepseek-v4-flash")
-        #expect(abs((breakdown.costUSD ?? 0) - 0.0000168) < 0.0000001)
+        #expect(!(snapshot.daily
+                .flatMap { $0.modelBreakdowns ?? [] }
+                .contains { $0.modelName == "deepseek-v4-flash" }))
+    }
+
+    @Test
+    func `claude snapshot excludes a resolved foreign provider model`() async throws {
+        let fixture = try UnknownModelPricingFixture()
+        defer { fixture.environment.cleanup() }
+        let assistant: [String: Any] = [
+            "type": "assistant",
+            "timestamp": fixture.environment.isoString(for: fixture.day),
+            "message": [
+                "model": "deepseek/deepseek-v4-flash",
+                "usage": [
+                    "input_tokens": 100,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 10,
+                ],
+            ],
+        ]
+        _ = try fixture.environment.writeClaudeProjectFile(
+            relativePath: "project-a/foreign-provider-model.jsonl",
+            contents: fixture.environment.jsonl([assistant]))
+        var options = fixture.options
+        options.claudeAttributionFilter = .excludeCodexBackend
+
+        let snapshot = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .claude,
+            now: fixture.day,
+            refreshPricingInBackground: false,
+            includePiSessions: false,
+            scannerOptions: options,
+            modelsDevClient: ModelsDevClient(transport: CostUsageFetcherModelsDevTransport(
+                data: fixture.refreshedCatalog)))
+
+        #expect(!(snapshot.daily
+                .flatMap { $0.modelBreakdowns ?? [] }
+                .contains { $0.modelName == "deepseek/deepseek-v4-flash" }))
     }
 
     @Test

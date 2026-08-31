@@ -1006,6 +1006,17 @@ extension CostUsagePricing {
         guard matchedProviderIDs.count == 1 else { return nil }
         return matches.first
     }
+
+    static func claudeModelsDevResolvedProviderID(
+        model: String,
+        catalog: ModelsDevCatalog?,
+        cacheRoot: URL?) -> String?
+    {
+        self.claudeModelsDevLookup(
+            model: model,
+            catalog: catalog,
+            cacheRoot: cacheRoot)?.pricing.providerID
+    }
 }
 
 extension CostUsagePricing {

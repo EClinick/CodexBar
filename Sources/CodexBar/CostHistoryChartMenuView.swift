@@ -7,6 +7,7 @@ private func claudeCodeModelProviderText(_ provider: CostUsageAttribution.ModelP
     case .openAI: "OpenAI model via Claude Code"
     case .anthropic: "Anthropic model via Claude Code"
     case .google: "Google model via Claude Code"
+    case .other: "Other model provider via Claude Code"
     case .unknown: "Unknown model provider via Claude Code"
     }
 }

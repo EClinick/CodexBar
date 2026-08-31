@@ -131,13 +131,24 @@ extension CostUsageScanner {
                 outputTokens: tokens.output,
                 modelsDevCatalog: context.modelsDevCatalog,
                 modelsDevCacheRoot: context.modelsDevCacheRoot)
+        } else if pricingProvider == .other {
+            CostUsagePricing.claudeCostUSD(
+                model: pricingModel,
+                inputTokens: tokens.input,
+                cacheReadInputTokens: tokens.cacheRead,
+                cacheCreationInputTokens: tokens.cacheCreate,
+                cacheCreationInputTokens1h: tokens.cacheCreate1h,
+                outputTokens: tokens.output,
+                pricingDate: context.pricingDate,
+                modelsDevCatalog: context.modelsDevCatalog,
+                modelsDevCacheRoot: context.modelsDevCacheRoot)
         } else { nil }
         let normalizedModel = switch modelProvider {
         case .openAI:
             CostUsagePricing.normalizeCodexModel(model)
         case .anthropic:
             CostUsagePricing.normalizeClaudeModel(model)
-        case .google, .unknown:
+        case .google, .other, .unknown:
             model.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return ClaudeModelResolution(
@@ -1480,7 +1491,7 @@ extension CostUsageScanner {
                 modelsDevCatalog: modelsDevCatalog,
                 modelsDevCacheRoot: modelsDevCacheRoot)
         }
-        guard pricingProvider == .anthropic else { return nil }
+        guard pricingProvider == .anthropic || pricingProvider == .other else { return nil }
         return CostUsagePricing.claudeCostUSD(
             model: pricingModel,
             inputTokens: row.input,

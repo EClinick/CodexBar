@@ -64,6 +64,7 @@ func spendDashboardModelSourceText(
         case .openAI: "OpenAI model"
         case .anthropic: "Anthropic model"
         case .google: "Google model"
+        case .other: "Other model provider"
         case .unknown: "Unknown model provider"
         }
         return "\(providerName) · \(modelProvider) via Claude Code"
