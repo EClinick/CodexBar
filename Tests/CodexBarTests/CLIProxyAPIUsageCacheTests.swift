@@ -1084,7 +1084,7 @@ extension CLIProxyAPIUsageCacheTests {
     }
 
     @Test
-    func `failed credential rollback keeps replacement telemetry isolated`() throws {
+    func `failed credential rollback keeps staged telemetry isolated for retry`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("cliproxy-credential-rollback-failure-\(UUID().uuidString)", isDirectory: true)
@@ -1131,17 +1131,23 @@ extension CLIProxyAPIUsageCacheTests {
         #expect(try fileManager.contentsOfDirectory(at: costUsage, includingPropertiesForKeys: nil)
             .contains { $0.lastPathComponent.hasSuffix("replacement-backup") })
 
-        try CostUsageCacheLocations.withCLIProxyAPIInterprocessLock(
+        let recovered = CostUsageCacheLocations.recoverCLIProxyAPIArtifactsTransaction(
             stateRoot: root,
-            fileManager: fileManager) {}
+            fileManager: fileManager,
+            recoverRollbackConfiguration: { fingerprint, wasMissing in
+                #expect(fingerprint == CLIProxyAPIConnectionSettingsStore.credentialFingerprint(existing))
+                #expect(!wasMissing)
+                return false
+            })
 
+        #expect(!recovered)
         #expect(storedSettings.value == replacement)
         #expect(disconnected.value)
         #expect(!fileManager.fileExists(atPath: usageFile.path))
-        #expect(!fileManager.fileExists(
+        #expect(fileManager.fileExists(
             atPath: root.appendingPathComponent("cliproxyapi-artifacts-transaction-v1.json").path))
         #expect(try fileManager.contentsOfDirectory(at: costUsage, includingPropertiesForKeys: nil)
-            .allSatisfy { !$0.lastPathComponent.hasSuffix("replacement-backup") })
+            .contains { $0.lastPathComponent.hasSuffix("replacement-backup") })
     }
 
     @Test

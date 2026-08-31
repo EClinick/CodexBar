@@ -12,6 +12,7 @@ public struct CostUsageCacheClearResult: Equatable, Sendable {
     public let errorDescription: String?
 }
 
+// swiftlint:disable:next type_body_length
 public enum CostUsageCacheLocations {
     struct CLIProxyAPIArtifactsUpdate: Sendable {
         struct Move: Sendable {
@@ -46,6 +47,8 @@ public enum CostUsageCacheLocations {
         let disconnectedStateAfterRollback: Bool?
         let replacementCredentialFingerprint: String?
         let replacementCredentialsStored: Bool?
+        let rollbackCredentialFingerprint: String?
+        let rollbackCredentialWasMissing: Bool?
         let forceRollback: Bool?
         let rollbackCredentialsRestored: Bool?
         let removalIsolationPublished: Bool?
@@ -221,6 +224,8 @@ public enum CostUsageCacheLocations {
         disconnectedStateAfterRollback: Bool? = nil,
         replacementCredentialFingerprint: String? = nil,
         replacementCredentialsStored: Bool? = nil,
+        rollbackCredentialFingerprint: String? = nil,
+        rollbackCredentialWasMissing: Bool? = nil,
         removalIsolationPublished: Bool? = nil,
         removalCredentialsCleared: Bool? = nil,
         prepareState: () -> Bool = { true }) -> CLIProxyAPIArtifactsUpdate?
@@ -249,6 +254,8 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: disconnectedStateAfterRollback,
             replacementCredentialFingerprint: replacementCredentialFingerprint,
             replacementCredentialsStored: replacementCredentialsStored,
+            rollbackCredentialFingerprint: rollbackCredentialFingerprint,
+            rollbackCredentialWasMissing: rollbackCredentialWasMissing,
             forceRollback: nil,
             rollbackCredentialsRestored: nil,
             removalIsolationPublished: removalIsolationPublished,
@@ -336,6 +343,8 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
             replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
+            rollbackCredentialFingerprint: manifest.rollbackCredentialFingerprint,
+            rollbackCredentialWasMissing: manifest.rollbackCredentialWasMissing,
             forceRollback: true,
             rollbackCredentialsRestored: rollbackCredentialsRestored || manifest.rollbackCredentialsRestored == true,
             removalIsolationPublished: manifest.removalIsolationPublished,
@@ -366,6 +375,8 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
             replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
+            rollbackCredentialFingerprint: manifest.rollbackCredentialFingerprint,
+            rollbackCredentialWasMissing: manifest.rollbackCredentialWasMissing,
             forceRollback: true,
             rollbackCredentialsRestored: true,
             removalIsolationPublished: manifest.removalIsolationPublished,
@@ -398,6 +409,8 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
             replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: true,
+            rollbackCredentialFingerprint: manifest.rollbackCredentialFingerprint,
+            rollbackCredentialWasMissing: manifest.rollbackCredentialWasMissing,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
             removalIsolationPublished: manifest.removalIsolationPublished,
@@ -430,6 +443,8 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
             replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
+            rollbackCredentialFingerprint: manifest.rollbackCredentialFingerprint,
+            rollbackCredentialWasMissing: manifest.rollbackCredentialWasMissing,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
             removalIsolationPublished: manifest.removalIsolationPublished,
@@ -462,6 +477,8 @@ public enum CostUsageCacheLocations {
             disconnectedStateAfterRollback: manifest.disconnectedStateAfterRollback,
             replacementCredentialFingerprint: manifest.replacementCredentialFingerprint,
             replacementCredentialsStored: manifest.replacementCredentialsStored,
+            rollbackCredentialFingerprint: manifest.rollbackCredentialFingerprint,
+            rollbackCredentialWasMissing: manifest.rollbackCredentialWasMissing,
             forceRollback: manifest.forceRollback,
             rollbackCredentialsRestored: manifest.rollbackCredentialsRestored,
             removalIsolationPublished: true,
@@ -514,10 +531,41 @@ public enum CostUsageCacheLocations {
     }
 
     @discardableResult
+    private static func recoverCLIProxyAPIRollbackCredentials(
+        manifest: CLIProxyAPIArtifactsTransactionManifest,
+        update: CLIProxyAPIArtifactsUpdate,
+        stateRoot: URL?,
+        fileManager: FileManager,
+        recoverRollbackConfiguration: ((String?, Bool) -> Bool?)?) -> Bool
+    {
+        guard manifest.forceRollback == true, manifest.rollbackCredentialsRestored != true else { return true }
+        guard self.setCLIProxyAPIExplicitlyDisconnected(
+            true,
+            stateRoot: stateRoot,
+            fileManager: fileManager),
+            let rollbackCredentialWasMissing = manifest.rollbackCredentialWasMissing
+        else { return false }
+        let recoverRollbackConfiguration = recoverRollbackConfiguration ?? {
+            CLIProxyAPIConnectionSettingsStore.rollbackCredentialMatches(
+                fingerprint: $0,
+                wasMissing: $1)
+        }
+        guard let rollbackCredentialsRestored = recoverRollbackConfiguration(
+            manifest.rollbackCredentialFingerprint,
+            rollbackCredentialWasMissing),
+            rollbackCredentialsRestored
+        else { return false }
+        return self.markCLIProxyAPIArtifactsRollbackCredentialsRestored(
+            update,
+            fileManager: fileManager)
+    }
+
+    @discardableResult
     static func recoverCLIProxyAPIArtifactsTransaction(
         stateRoot: URL?,
         fileManager: FileManager = .default,
         recoverReplacementConfiguration: ((String) -> Bool?)? = nil,
+        recoverRollbackConfiguration: ((String?, Bool) -> Bool?)? = nil,
         recoverRemovalConfiguration: (() -> Bool)? = nil) -> Bool
     {
         let manifestURL = self.cliProxyAPIArtifactsTransactionURL(
@@ -534,14 +582,13 @@ public enum CostUsageCacheLocations {
                     stagedURL: URL(fileURLWithPath: $0.stagedPath))
             },
             manifestURL: manifestURL)
-        if manifest.forceRollback == true, manifest.rollbackCredentialsRestored != true {
-            guard self.setCLIProxyAPIExplicitlyDisconnected(
-                true,
-                stateRoot: stateRoot,
-                fileManager: fileManager)
-            else { return false }
-            return self.discardCLIProxyAPIArtifactsUpdate(update, fileManager: fileManager)
-        }
+        guard self.recoverCLIProxyAPIRollbackCredentials(
+            manifest: manifest,
+            update: update,
+            stateRoot: stateRoot,
+            fileManager: fileManager,
+            recoverRollbackConfiguration: recoverRollbackConfiguration)
+        else { return false }
         let didCommit = manifest.forceRollback != true &&
             self.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot, fileManager: fileManager) ==
             manifest.expectedGeneration

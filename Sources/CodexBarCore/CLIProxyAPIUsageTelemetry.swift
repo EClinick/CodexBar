@@ -634,7 +634,7 @@ public struct CLIProxyAPIConnectionSettings: Codable, Equatable, Sendable {
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https",
               let host = url.host?.lowercased(),
-              ["127.0.0.1", "::1", "localhost"].contains(host)
+              ["127.0.0.1", "::1"].contains(host)
         else { return nil }
         return url
     }
@@ -774,6 +774,32 @@ public enum CLIProxyAPIConnectionSettingsStore {
         }
     }
 
+    static func rollbackCredentialMatches(fingerprint: String?, wasMissing: Bool) -> Bool? {
+        switch KeychainCacheStore.load(key: self.key, as: CLIProxyAPIConnectionSettings.self) {
+        case let .found(settings):
+            guard !wasMissing, let fingerprint else { return false }
+            return self.credentialFingerprint(settings) == fingerprint
+        case .missing:
+            return wasMissing
+        case .temporarilyUnavailable, .invalid:
+            return nil
+        }
+    }
+
+    private static func rollbackCredentialProvenance(
+        _ storedSettings: StoredSettingsSnapshot) -> (fingerprint: String?, wasMissing: Bool)?
+    {
+        switch storedSettings {
+        case let .found(settings):
+            guard let fingerprint = self.credentialFingerprint(settings) else { return nil }
+            return (fingerprint, false)
+        case .missing:
+            return (nil, true)
+        case .unavailable:
+            return nil
+        }
+    }
+
     static func artifactDisposition(
         _ settings: CLIProxyAPIConnectionSettings,
         isDisconnected: Bool,
@@ -808,6 +834,9 @@ public enum CLIProxyAPIConnectionSettingsStore {
             {
                 let wasDisconnected = operations.isDisconnected()
                 let storedSettings = operations.loadStored()
+                guard let rollbackCredentialProvenance = self.rollbackCredentialProvenance(storedSettings) else {
+                    return false
+                }
                 guard let artifactDisposition = self.artifactDisposition(
                     settings,
                     isDisconnected: wasDisconnected,
@@ -837,6 +866,8 @@ public enum CLIProxyAPIConnectionSettingsStore {
                         disconnectedStateAfterRollback: wasDisconnected,
                         replacementCredentialFingerprint: replacementCredentialFingerprint,
                         replacementCredentialsStored: false,
+                        rollbackCredentialFingerprint: rollbackCredentialProvenance.fingerprint,
+                        rollbackCredentialWasMissing: rollbackCredentialProvenance.wasMissing,
                         prepareState: { operations.setDisconnectedState(true) })
                     else {
                         _ = operations.setDisconnectedState(wasDisconnected)
@@ -988,12 +1019,17 @@ public enum CLIProxyAPIConnectionSettingsStore {
                 generationUpdate,
                 fileManager: fileManager)
         }
+        guard let rollbackCredentialProvenance = self.rollbackCredentialProvenance(snapshot.storedSettings) else {
+            return .configurationRemovalFailed
+        }
         guard let artifactsUpdate = CostUsageCacheLocations.prepareCLIProxyAPIArtifactsUpdate(
             in: directories,
             stateRoot: stateRoot,
             expectedGeneration: generationUpdate.generation,
             fileManager: fileManager,
             disconnectedStateAfterRollback: snapshot.wasDisconnected,
+            rollbackCredentialFingerprint: rollbackCredentialProvenance.fingerprint,
+            rollbackCredentialWasMissing: rollbackCredentialProvenance.wasMissing,
             removalIsolationPublished: false,
             removalCredentialsCleared: false)
         else { return .configurationRemovalFailed }

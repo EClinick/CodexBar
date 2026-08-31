@@ -992,7 +992,7 @@ extension CLIProxyAPIAttributionResolverTests {
         #expect(CLIProxyAPIConnectionSettings(
             baseURL: "http://127.0.0.1:8317",
             managementKey: "secret").isConfigured)
-        #expect(CLIProxyAPIConnectionSettings(
+        #expect(!CLIProxyAPIConnectionSettings(
             baseURL: "http://localhost:8317",
             managementKey: "secret").isConfigured)
         #expect(!CLIProxyAPIConnectionSettings(
@@ -1004,6 +1004,31 @@ extension CLIProxyAPIAttributionResolverTests {
         #expect(CLIProxyAPIConnectionSettings(
             baseURL: "https://[::1]:8317",
             managementKey: "secret").isConfigured)
+    }
+
+    @Test
+    func `queue client rejects localhost before constructing an authenticated request`() async {
+        let requests = LockIsolated(0)
+        let client = CLIProxyAPIUsageQueueClient(
+            settings: .init(baseURL: "http://localhost:8317", managementKey: "management-secret"),
+            dataLoader: { _ in
+                requests.setValue(1)
+                throw CLIProxyAPIUsageQueueClient.ClientError.invalidResponse
+            })
+
+        do {
+            _ = try await client.pop(count: 1)
+            Issue.record("Expected the hostname-based management URL to be rejected.")
+        } catch let error as CLIProxyAPIUsageQueueClient.ClientError {
+            guard case .invalidBaseURL = error else {
+                Issue.record("Expected invalidBaseURL, received \(error).")
+                return
+            }
+        } catch {
+            Issue.record("Expected invalidBaseURL, received \(error).")
+        }
+
+        #expect(requests.value == 0)
     }
 
     private static let tokens = CLIProxyAPIAttributionResolver.TokenSignature(
