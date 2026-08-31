@@ -1311,7 +1311,8 @@ extension CostUsageScanner {
     {
         var result = ClaudeReportAggregation()
         let rowsWithProviders = Self.reconciledClaudeRows(cache: cache).map { row in
-            let modelProvider = if let cachedProvider = row.attribution?.modelProvider,
+            let modelProvider = if row.attribution?.route == .cliProxyAPI,
+                                   let cachedProvider = row.attribution?.modelProvider,
                                    cachedProvider != .unknown
             {
                 cachedProvider

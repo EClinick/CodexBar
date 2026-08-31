@@ -661,10 +661,11 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             let line = String(rawLine)
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+            let structure = self.simpleYAMLScalar(trimmed)
             let indent = line.prefix { $0 == " " }.count
 
             if rootIndent == nil {
-                if trimmed == "oauth-model-alias:" {
+                if structure == "oauth-model-alias:" {
                     rootIndent = indent
                 }
                 continue
@@ -675,7 +676,7 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 break
             }
             if codexIndent == nil {
-                if trimmed == "codex:" {
+                if structure == "codex:" {
                     codexIndent = indent
                 }
                 continue

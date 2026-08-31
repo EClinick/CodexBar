@@ -59,13 +59,13 @@ struct CLIProxyAPIAliasRegressionTests {
     }
 
     @Test
-    func `codex oauth alias parser ignores comments and other providers`() {
+    func `codex oauth alias parser ignores inline comments and other providers`() {
         let configuration = """
         # oauth-model-alias:
         #   codex:
         #     - name: "ignored"
-        oauth-model-alias:
-          codex:
+        oauth-model-alias: # configured routes
+          codex: # Codex OAuth aliases
             - name: 'gpt-5.5'
               alias: 'proxy-codex-alias' # local alias
           vertex:

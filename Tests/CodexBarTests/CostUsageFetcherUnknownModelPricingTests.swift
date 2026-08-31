@@ -174,6 +174,60 @@ struct CostUsageFetcherUnknownModelPricingTests {
     }
 
     @Test
+    func `claude cached ownership follows catalog ambiguity changes`() throws {
+        let fixture = try UnknownModelPricingFixture()
+        defer { fixture.environment.cleanup() }
+        let model = "shared-cached-model"
+        let assistant: [String: Any] = [
+            "type": "assistant",
+            "timestamp": fixture.environment.isoString(for: fixture.day),
+            "message": [
+                "model": model,
+                "usage": [
+                    "input_tokens": 100,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 10,
+                ],
+            ],
+        ]
+        _ = try fixture.environment.writeClaudeProjectFile(
+            relativePath: "project-a/cached-ambiguous-provider-model.jsonl",
+            contents: fixture.environment.jsonl([assistant]))
+        var options = fixture.options
+        options.claudeAttributionFilter = .excludeCodexBackend
+        options.refreshMinIntervalSeconds = 0
+        let openAICatalog = try Self.catalog(model: model, providerIDs: ["openai"])
+        #expect(ModelsDevCache.save(
+            catalog: openAICatalog,
+            fetchedAt: fixture.day,
+            cacheRoot: fixture.environment.cacheRoot))
+
+        let foreign = CostUsageScanner.loadDailyReport(
+            provider: .claude,
+            since: fixture.day,
+            until: fixture.day,
+            now: fixture.day,
+            options: options)
+        #expect(!foreign.data.contains { $0.modelBreakdowns?.contains { $0.modelName == model } == true })
+
+        let ambiguousCatalog = try Self.catalog(model: model, providerIDs: ["openai", "anthropic"])
+        #expect(ModelsDevCache.save(
+            catalog: ambiguousCatalog,
+            fetchedAt: fixture.day.addingTimeInterval(1),
+            cacheRoot: fixture.environment.cacheRoot))
+        options.refreshMinIntervalSeconds = 3600
+
+        let ambiguous = CostUsageScanner.loadDailyReport(
+            provider: .claude,
+            since: fixture.day,
+            until: fixture.day,
+            now: fixture.day.addingTimeInterval(1),
+            options: options)
+        #expect(ambiguous.data.contains { $0.modelBreakdowns?.contains { $0.modelName == model } == true })
+    }
+
+    @Test
     func `claude snapshot excludes a resolved foreign provider model`() async throws {
         let fixture = try UnknownModelPricingFixture()
         defer { fixture.environment.cleanup() }
@@ -245,6 +299,18 @@ struct CostUsageFetcherUnknownModelPricingTests {
 
         #expect(snapshot.daily.first?.totalTokens == 110)
         #expect(snapshot.daily.first?.modelBreakdowns?.map(\.modelName) == ["gpt-new"])
+    }
+
+    private static func catalog(model: String, providerIDs: [String]) throws -> ModelsDevCatalog {
+        let providers = providerIDs.map { providerID in
+            """
+            "\(providerID)": {
+              "id": "\(providerID)",
+              "models": { "\(model)": { "id": "\(model)", "cost": { "input": 2, "output": 8 } } }
+            }
+            """
+        }.joined(separator: ",")
+        return try JSONDecoder().decode(ModelsDevCatalog.self, from: Data("{\(providers)}".utf8))
     }
 
     @Test
