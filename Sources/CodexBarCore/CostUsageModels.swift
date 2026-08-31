@@ -192,10 +192,10 @@ public struct CostUsageTokenSnapshot: Sendable, Equatable {
         let tokens = entries.compactMap(\.totalTokens)
         let requests = entries.compactMap(\.requestCount)
         var mix = CostUsageTokenMix()
-        var coverage = CostUsageCoverageCounts()
+        var coverage = CostUsageCoverageAccumulator()
         for entry in entries {
             mix.merge(.from(entry: entry))
-            coverage.merge(entry.coverageCounts)
+            coverage.add(entry)
         }
         let coversFullHistory = days >= self.historyDays
         let windowMetered = coversFullHistory ? self.meteredCostUSD : nil
@@ -226,7 +226,7 @@ public struct CostUsageTokenSnapshot: Sendable, Equatable {
             totalRequests: totalRequests,
             entryCount: entries.count,
             tokenMix: mix,
-            coverage: coverage,
+            coverage: coverage.counts,
             provenance: CostProvenance.forWindow(
                 snapshot: self.costProvenance,
                 hasWindowCosts: !costs.isEmpty,
@@ -608,17 +608,21 @@ public struct CostUsageDailyReport: Sendable, Decodable {
         public let estimatedRequestCount: Int?
 
         public var coverageCounts: CostUsageCoverageCounts {
-            let unpriced = max(0, self.unpricedRequestCount ?? 0)
-            let unmetered = max(0, self.unmeteredRequestCount ?? 0)
-            let estimated = max(0, self.estimatedRequestCount ?? 0)
-            if let priced = self.pricedRequestCount {
+            self.coverageCounts(detail: .exact)
+        }
+
+        package func coverageCounts(detail: CostUsageCoverageDetail) -> CostUsageCoverageCounts {
+            let unpriced = detail == .exact ? max(0, self.unpricedRequestCount ?? 0) : 0
+            let unmetered = detail == .exact ? max(0, self.unmeteredRequestCount ?? 0) : 0
+            let estimated = detail == .exact ? max(0, self.estimatedRequestCount ?? 0) : 0
+            if detail == .exact, let priced = self.pricedRequestCount {
                 return CostUsageCoverageCounts(
                     priced: max(0, priced),
                     unpriced: unpriced,
                     unmetered: unmetered,
                     estimated: estimated)
             }
-            if let requests = self.requestCount, requests > 0 {
+            if detail != .rows, let requests = self.requestCount, requests > 0 {
                 let priced = if self.costUSD != nil {
                     max(0, requests - unpriced - unmetered - estimated)
                 } else {
@@ -957,12 +961,11 @@ extension CostUsageDailyReport {
         var totalTokens = IntegerAccumulator()
         var derivedTotalTokensWithoutExplicitTotal = IntegerAccumulator()
         var requestCount = IntegerAccumulator()
+        var coverage = CostUsageCoverageAccumulator()
+        var entryCount = 0
+        var hasExplicitCoverage = false
         var costUSD: Double = 0
         var sawCost = false
-        var unpricedRequestCount = IntegerAccumulator()
-        var pricedRequestCount = IntegerAccumulator()
-        var unmeteredRequestCount = IntegerAccumulator()
-        var estimatedRequestCount = IntegerAccumulator()
         var modelsUsed: Set<String> = []
         var breakdowns: [BreakdownKey: BreakdownAccumulator] = [:]
 
@@ -972,6 +975,13 @@ extension CostUsageDailyReport {
             self.cacheCreationTokens.add(entry.cacheCreationTokens)
             self.outputTokens.add(entry.outputTokens)
             self.reasoningTokens.add(entry.reasoningTokens)
+            self.requestCount.add(entry.requestCount)
+            // Classify each source before combining costs: a priced source cannot price another source's missing rows.
+            self.coverage.add(entry)
+            self.entryCount += 1
+            self.hasExplicitCoverage = self.hasExplicitCoverage
+                || entry.pricedRequestCount != nil || entry.unpricedRequestCount != nil
+                || entry.unmeteredRequestCount != nil || entry.estimatedRequestCount != nil
             if let totalTokens = entry.totalTokens {
                 self.totalTokens.add(totalTokens)
             } else {
@@ -986,15 +996,10 @@ extension CostUsageDailyReport {
                     self.derivedTotalTokensWithoutExplicitTotal.add(value)
                 }
             }
-            self.requestCount.add(entry.requestCount)
             if let costUSD = entry.costUSD {
                 self.costUSD += costUSD
                 self.sawCost = true
             }
-            self.unpricedRequestCount.add(entry.unpricedRequestCount)
-            self.pricedRequestCount.add(entry.pricedRequestCount)
-            self.unmeteredRequestCount.add(entry.unmeteredRequestCount)
-            self.estimatedRequestCount.add(entry.estimatedRequestCount)
             if let modelsUsed = entry.modelsUsed {
                 self.modelsUsed.formUnion(modelsUsed)
             }
@@ -1030,6 +1035,7 @@ extension CostUsageDailyReport {
                         })
             }()
             let modelsUsed = self.modelsUsed.isEmpty ? nil : self.modelsUsed.sorted()
+            let includeCoverage = self.entryCount > 1 || self.hasExplicitCoverage
             return Entry(
                 date: date,
                 inputTokens: self.inputTokens.result,
@@ -1042,10 +1048,10 @@ extension CostUsageDailyReport {
                 costUSD: self.sawCost ? self.costUSD : nil,
                 modelsUsed: modelsUsed,
                 modelBreakdowns: modelBreakdowns,
-                unpricedRequestCount: self.unpricedRequestCount.result,
-                unmeteredRequestCount: self.unmeteredRequestCount.result,
-                estimatedRequestCount: self.estimatedRequestCount.result,
-                pricedRequestCount: self.pricedRequestCount.result)
+                unpricedRequestCount: includeCoverage ? self.coverage.exact?.unpriced : nil,
+                unmeteredRequestCount: includeCoverage ? self.coverage.exact?.unmetered : nil,
+                estimatedRequestCount: includeCoverage ? self.coverage.exact?.estimated : nil,
+                pricedRequestCount: includeCoverage ? self.coverage.exact?.priced : nil)
         }
 
         private static func combinedResult(

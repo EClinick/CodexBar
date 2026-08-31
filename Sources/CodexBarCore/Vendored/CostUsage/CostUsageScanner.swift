@@ -1962,6 +1962,42 @@ enum CostUsageScanner {
         let costNanos: Int
         let costPriced: Bool?
         let attribution: CostUsageAttribution?
+
+        init(
+            dayKey: String,
+            model: String,
+            sessionId: String?,
+            messageId: String?,
+            requestId: String?,
+            timestampUnixMs: Int64?,
+            isSidechain: Bool,
+            pathRole: ClaudePathRole,
+            input: Int,
+            cacheRead: Int,
+            cacheCreate: Int,
+            cacheCreate1h: Int?,
+            output: Int,
+            costNanos: Int,
+            costPriced: Bool?,
+            attribution: CostUsageAttribution? = nil)
+        {
+            self.dayKey = dayKey
+            self.model = model
+            self.sessionId = sessionId
+            self.messageId = messageId
+            self.requestId = requestId
+            self.timestampUnixMs = timestampUnixMs
+            self.isSidechain = isSidechain
+            self.pathRole = pathRole
+            self.input = input
+            self.cacheRead = cacheRead
+            self.cacheCreate = cacheCreate
+            self.cacheCreate1h = cacheCreate1h
+            self.output = output
+            self.costNanos = costNanos
+            self.costPriced = costPriced
+            self.attribution = attribution
+        }
     }
 
     static func loadDailyReport(
@@ -5480,6 +5516,7 @@ enum CostUsageScanner {
     private static func saveCodexCache(
         _ cache: inout CostUsageCache,
         store: CostUsageStore,
+        receipt: CostUsageStore.CodexBaselineReceipt,
         range: CostUsageDayRange,
         previousReport: CostUsageCodexPreviousReport?)
     {
@@ -5491,7 +5528,8 @@ enum CostUsageScanner {
             calendar: range.calendar,
             requestedScanWindow: (sinceKey: range.scanSinceKey, untilKey: range.scanUntilKey),
             reportWindow: (sinceKey: range.sinceKey, untilKey: range.untilKey),
-            skipIdenticalContent: true)
+            skipIdenticalContent: true,
+            receipt: receipt)
         if saveResult.catchUpRequired {
             cache.codexScanCatchUpPending = true
             cache.codexPreviousReport = previousReport
@@ -5506,6 +5544,7 @@ enum CostUsageScanner {
         checkCancellation: CancellationCheck?) throws -> CostUsageDailyReport
     {
         let loadedCache = Self.loadCodexCache(options: options, range: range)
+        defer { loadedCache.release() }
         var cache = loadedCache.cache
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         let plan = Self.makeCodexRefreshPlan(cache: cache, range: range, now: now, nowMs: nowMs, options: options)
@@ -5934,6 +5973,7 @@ enum CostUsageScanner {
             Self.saveCodexCache(
                 &cache,
                 store: loadedCache.store,
+                receipt: loadedCache.receipt,
                 range: range,
                 previousReport: previousReport)
         }

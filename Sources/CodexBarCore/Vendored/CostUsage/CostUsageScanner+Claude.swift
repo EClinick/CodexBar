@@ -63,8 +63,7 @@ extension CostUsageScanner {
         let sessionID: String?
         let timestampUnixMs: Int64?
         let attributionResolver: CLIProxyAPIAttributionResolver?
-        let modelsDevCatalog: ModelsDevCatalog?
-        let modelsDevCacheRoot: URL?
+        let pricingResolver: CostUsagePricing.ClaudeResolver
     }
 
     private static func resolveClaudeModel(
@@ -72,10 +71,11 @@ extension CostUsageScanner {
         tokens: ClaudeRawTokens,
         context: ClaudeModelResolutionContext) -> ClaudeModelResolution
     {
+        let modelsDevCatalog = context.pricingResolver.prepareCatalog()
         let modelProvider = CostUsagePricing.modelProvider(
             for: model,
-            modelsDevCatalog: context.modelsDevCatalog,
-            modelsDevCacheRoot: context.modelsDevCacheRoot)
+            modelsDevCatalog: modelsDevCatalog,
+            modelsDevCacheRoot: nil)
         let resolvedAttribution = context.attributionResolver?.attribution(
             model: model,
             modelProvider: modelProvider,
@@ -91,37 +91,42 @@ extension CostUsageScanner {
                 route: .unknown,
                 modelProvider: modelProvider,
                 evidence: [.modelProvider])
-        let attribution = resolvedAttribution.route == .cliProxyAPI || modelProvider != .anthropic
-            ? resolvedAttribution
-            : nil
+        let attribution = resolvedAttribution.route == .cliProxyAPI ? resolvedAttribution : nil
         let upstreamModel = resolvedAttribution.route == .cliProxyAPI
             ? resolvedAttribution.upstream?.model?.trimmingCharacters(in: .whitespacesAndNewlines)
             : nil
         let pricingModel = upstreamModel.flatMap { $0.isEmpty ? nil : $0 } ?? model
         let pricingProvider = CostUsagePricing.modelProvider(
             for: pricingModel,
-            modelsDevCatalog: context.modelsDevCatalog,
-            modelsDevCacheRoot: context.modelsDevCacheRoot)
-        let cost: Double? = if pricingProvider == .openAI {
+            modelsDevCatalog: modelsDevCatalog,
+            modelsDevCacheRoot: nil)
+        let cost: Double? = if resolvedAttribution.route != .cliProxyAPI {
+            context.pricingResolver.costUSD(
+                model: model,
+                inputTokens: tokens.input,
+                cacheReadInputTokens: tokens.cacheRead,
+                cacheCreationInputTokens: tokens.cacheCreate,
+                cacheCreationInputTokens1h: tokens.cacheCreate1h,
+                outputTokens: tokens.output,
+                pricingDate: context.pricingDate)
+        } else if pricingProvider == .openAI {
             CostUsagePricing.claudeProxyCodexCostUSD(
                 model: pricingModel,
                 inputTokens: tokens.input,
                 cacheReadInputTokens: tokens.cacheRead,
                 cacheCreationInputTokens: tokens.cacheCreate,
                 outputTokens: tokens.output,
-                modelsDevCatalog: context.modelsDevCatalog,
-                modelsDevCacheRoot: context.modelsDevCacheRoot)
+                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCacheRoot: nil)
         } else if pricingProvider == .anthropic {
-            CostUsagePricing.claudeCostUSD(
+            context.pricingResolver.costUSD(
                 model: pricingModel,
                 inputTokens: tokens.input,
                 cacheReadInputTokens: tokens.cacheRead,
                 cacheCreationInputTokens: tokens.cacheCreate,
                 cacheCreationInputTokens1h: tokens.cacheCreate1h,
                 outputTokens: tokens.output,
-                pricingDate: context.pricingDate,
-                modelsDevCatalog: context.modelsDevCatalog,
-                modelsDevCacheRoot: context.modelsDevCacheRoot)
+                pricingDate: context.pricingDate)
         } else if pricingProvider == .google {
             CostUsagePricing.claudeProxyGoogleCostUSD(
                 model: pricingModel,
@@ -129,28 +134,19 @@ extension CostUsageScanner {
                 cacheReadInputTokens: tokens.cacheRead,
                 cacheCreationInputTokens: tokens.cacheCreate,
                 outputTokens: tokens.output,
-                modelsDevCatalog: context.modelsDevCatalog,
-                modelsDevCacheRoot: context.modelsDevCacheRoot)
+                modelsDevCatalog: modelsDevCatalog,
+                modelsDevCacheRoot: nil)
         } else if pricingProvider == .other {
-            CostUsagePricing.claudeCostUSD(
+            context.pricingResolver.costUSD(
                 model: pricingModel,
                 inputTokens: tokens.input,
                 cacheReadInputTokens: tokens.cacheRead,
                 cacheCreationInputTokens: tokens.cacheCreate,
                 cacheCreationInputTokens1h: tokens.cacheCreate1h,
                 outputTokens: tokens.output,
-                pricingDate: context.pricingDate,
-                modelsDevCatalog: context.modelsDevCatalog,
-                modelsDevCacheRoot: context.modelsDevCacheRoot)
+                pricingDate: context.pricingDate)
         } else { nil }
-        let normalizedModel = switch modelProvider {
-        case .openAI:
-            CostUsagePricing.normalizeCodexModel(model)
-        case .anthropic:
-            CostUsagePricing.normalizeClaudeModel(model)
-        case .google, .other, .unknown:
-            model.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        let normalizedModel = context.pricingResolver.normalize(model)
         return ClaudeModelResolution(
             normalizedModel: normalizedModel,
             cost: cost,
@@ -220,15 +216,16 @@ extension CostUsageScanner {
         modelsDevCatalog: ModelsDevCatalog? = nil,
         modelsDevCacheRoot: URL? = nil) -> ClaudeParseResult
     {
-        (
+        let pricingResolver = modelsDevCatalog.map { CostUsagePricing.ClaudeResolver(catalog: $0) }
+            ?? CostUsagePricing.ClaudeResolver(now: Date(), cacheRoot: modelsDevCacheRoot)
+        return (
             try? self.parseClaudeFileCancellable(
                 fileURL: fileURL,
                 range: range,
                 providerFilter: providerFilter,
                 startOffset: startOffset,
                 attributionResolver: attributionResolver,
-                modelsDevCatalog: modelsDevCatalog,
-                modelsDevCacheRoot: modelsDevCacheRoot,
+                pricingResolver: pricingResolver,
                 checkCancellation: nil)) ?? ClaudeParseResult(days: [:], rows: [], parsedBytes: startOffset)
     }
 
@@ -239,14 +236,13 @@ extension CostUsageScanner {
         providerFilter: ClaudeLogProviderFilter,
         startOffset: Int64 = 0,
         attributionResolver: CLIProxyAPIAttributionResolver? = nil,
-        modelsDevCatalog: ModelsDevCatalog? = nil,
-        modelsDevCacheRoot: URL? = nil,
+        pricingResolver: CostUsagePricing.ClaudeResolver,
         checkCancellation: CancellationCheck? = nil) throws -> ClaudeParseResult
     {
         func add(dayKey: String, model: String, tokens: ClaudeTokens, days: inout [String: [String: [Int]]]) {
             guard CostUsageDayRange.isInRange(dayKey: dayKey, since: range.scanSinceKey, until: range.scanUntilKey)
             else { return }
-            let normModel = CostUsagePricing.normalizeClaudeModel(model)
+            let normModel = pricingResolver.normalize(model)
             var dayModels = days[dayKey] ?? [:]
             var packed = dayModels[normModel] ?? [0, 0, 0, 0, 0, 0, 0, 0]
             packed[0] = (packed[safe: 0] ?? 0) + tokens.input
@@ -349,8 +345,7 @@ extension CostUsageScanner {
                                 sessionID: sessionId,
                                 timestampUnixMs: timestampUnixMs,
                                 attributionResolver: attributionResolver,
-                                modelsDevCatalog: modelsDevCatalog,
-                                modelsDevCacheRoot: modelsDevCacheRoot))
+                                pricingResolver: pricingResolver))
                         let costNanos = modelResolution.cost.map { Int(($0 * costScale).rounded()) } ?? 0
                         let tokens = ClaudeTokens(
                             input: input,
@@ -724,7 +719,7 @@ extension CostUsageScanner {
         }
     }
 
-    private static func isVertexAIUsageEntry(obj: [String: Any]) -> Bool {
+    static func isVertexAIUsageEntry(obj: [String: Any]) -> Bool {
         // Primary detection: Vertex AI message IDs and request IDs have "vrtx" prefix
         // e.g., "msg_vrtx_0154LUXjFVzQGUca3yK2RUeo", "req_vrtx_011CWjK86SWeFuXqZKUtgB1H"
         if let message = obj["message"] as? [String: Any],
@@ -748,30 +743,8 @@ extension CostUsageScanner {
             return true
         }
 
-        // Fallback: check for explicit Vertex AI metadata fields
-        var candidates: [[String: Any]] = [obj]
-        if let metadata = obj["metadata"] as? [String: Any] {
-            candidates.append(metadata)
-        }
-        if let request = obj["request"] as? [String: Any] {
-            candidates.append(request)
-        }
-        if let context = obj["context"] as? [String: Any] {
-            candidates.append(context)
-        }
-        if let client = obj["client"] as? [String: Any] {
-            candidates.append(client)
-        }
-        if let message = obj["message"] as? [String: Any] {
-            if let metadata = message["metadata"] as? [String: Any] {
-                candidates.append(metadata)
-            }
-            if let request = message["request"] as? [String: Any] {
-                candidates.append(request)
-            }
-        }
-
-        return candidates.contains { Self.containsVertexAIMetadata(in: $0) }
+        // The recursive walk already includes root and message metadata, requests, context, and client.
+        return Self.containsVertexAIMetadata(in: obj)
     }
 
     /// Detects Vertex AI model names by format.
@@ -786,13 +759,12 @@ extension CostUsageScanner {
 
     private static func containsVertexAIMetadata(in dict: [String: Any]) -> Bool {
         for (key, value) in dict {
-            let lowerKey = key.lowercased()
-            if lowerKey.contains("vertex") || lowerKey.contains("gcp") {
+            if self.containsClaudeVertexMarker(key, includeGCP: true) {
                 return true
             }
-            if Self.vertexProviderKeys.contains(lowerKey),
+            if self.vertexProviderKeys.contains(key.lowercased()),
                let text = value as? String,
-               Self.stringLooksVertex(text)
+               containsClaudeVertexMarker(text)
             {
                 return true
             }
@@ -822,8 +794,35 @@ extension CostUsageScanner {
         return false
     }
 
-    private static func stringLooksVertex(_ value: String) -> Bool {
-        value.lowercased().contains("vertex")
+    private static func containsClaudeVertexMarker(_ value: String, includeGCP: Bool = false) -> Bool {
+        let asciiMatch = value.utf8.withContiguousStorageIfAvailable { bytes -> Bool? in
+            // Validate the entire decoded string before matching: a later combining scalar can
+            // change Foundation's substring semantics even when the marker itself is ASCII.
+            guard bytes.allSatisfy({ $0 < 0x80 }) else { return nil }
+            for index in bytes.indices {
+                let first = bytes[index] | 0x20
+                if first == 0x76, index + 5 < bytes.count, // vertex
+                   bytes[index + 1] | 0x20 == 0x65,
+                   bytes[index + 2] | 0x20 == 0x72,
+                   bytes[index + 3] | 0x20 == 0x74,
+                   bytes[index + 4] | 0x20 == 0x65,
+                   bytes[index + 5] | 0x20 == 0x78
+                {
+                    return true
+                }
+                if includeGCP, first == 0x67, index + 2 < bytes.count, // gcp
+                   bytes[index + 1] | 0x20 == 0x63,
+                   bytes[index + 2] | 0x20 == 0x70
+                {
+                    return true
+                }
+            }
+            return false
+        }.flatMap(\.self)
+        if let asciiMatch { return asciiMatch }
+
+        let lower = value.lowercased()
+        return lower.contains("vertex") || (includeGCP && lower.contains("gcp"))
     }
 
     private static func claudeRootCandidates(for rootPath: String) -> [String] {
@@ -835,27 +834,6 @@ extension CostUsageScanner {
             return [rootPath, trimmed]
         }
         return [rootPath]
-    }
-
-    private final class ClaudeModelsDevCatalogResolver {
-        private let now: Date
-        private let cacheRoot: URL?
-        private var catalog: ModelsDevCatalog?
-
-        init(now: Date, cacheRoot: URL?) {
-            self.now = now
-            self.cacheRoot = cacheRoot
-        }
-
-        func resolve() -> ModelsDevCatalog {
-            if let catalog = self.catalog {
-                return catalog
-            }
-            let catalog = CostUsagePricing.modelsDevCatalog(now: self.now, cacheRoot: self.cacheRoot)
-                ?? ModelsDevCatalog(providers: [:])
-            self.catalog = catalog
-            return catalog
-        }
     }
 
     private struct ClaudeSourceFile {
@@ -878,8 +856,7 @@ extension CostUsageScanner {
         let forceFullScan: Bool
         let changedPaths: Set<String>
         let attributionResolver: CLIProxyAPIAttributionResolver?
-        let modelsDevCatalogResolver: ClaudeModelsDevCatalogResolver
-        let modelsDevCacheRoot: URL?
+        let pricingResolver: CostUsagePricing.ClaudeResolver
         let checkCancellation: CancellationCheck?
 
         init(
@@ -889,8 +866,7 @@ extension CostUsageScanner {
             forceFullScan: Bool,
             changedPaths: Set<String>,
             attributionResolver: CLIProxyAPIAttributionResolver?,
-            modelsDevCatalogResolver: ClaudeModelsDevCatalogResolver,
-            modelsDevCacheRoot: URL?,
+            pricingResolver: CostUsagePricing.ClaudeResolver,
             checkCancellation: CancellationCheck?)
         {
             self.cache = cache
@@ -899,8 +875,7 @@ extension CostUsageScanner {
             self.forceFullScan = forceFullScan
             self.changedPaths = changedPaths
             self.attributionResolver = attributionResolver
-            self.modelsDevCatalogResolver = modelsDevCatalogResolver
-            self.modelsDevCacheRoot = modelsDevCacheRoot
+            self.pricingResolver = pricingResolver
             self.checkCancellation = checkCancellation
         }
     }
@@ -923,6 +898,7 @@ extension CostUsageScanner {
             return
         }
 
+        state.pricingResolver.prepareCatalog()
         if let cached = state.cache.files[path], !state.forceFullScan {
             let startOffset = cached.parsedBytes ?? cached.size
             let canIncremental = size > cached.size && startOffset > 0 && startOffset <= size
@@ -937,8 +913,7 @@ extension CostUsageScanner {
                     providerFilter: state.providerFilter,
                     startOffset: startOffset,
                     attributionResolver: state.attributionResolver,
-                    modelsDevCatalog: state.modelsDevCatalogResolver.resolve(),
-                    modelsDevCacheRoot: state.modelsDevCacheRoot,
+                    pricingResolver: state.pricingResolver,
                     checkCancellation: state.checkCancellation)
                 let mergedRows = Self.mergeClaudeRows(existing: cached.claudeRows ?? [], delta: delta.rows)
                 state.cache.files[path] = Self.makeClaudeFileUsage(
@@ -958,8 +933,7 @@ extension CostUsageScanner {
             range: state.range,
             providerFilter: state.providerFilter,
             attributionResolver: state.attributionResolver,
-            modelsDevCatalog: state.modelsDevCatalogResolver.resolve(),
-            modelsDevCacheRoot: state.modelsDevCacheRoot,
+            pricingResolver: state.pricingResolver,
             checkCancellation: state.checkCancellation)
         let usage = Self.makeClaudeFileUsage(
             mtimeMs: mtimeMs,
@@ -1101,7 +1075,7 @@ extension CostUsageScanner {
             && !cacheArtifactChanged
             && !scanConfigurationChanged
         let shouldMutateCache = shouldRefresh && (!hasStableProcessBaseline || options.forceRescan || windowExpanded)
-        let modelsDevCatalogResolver = ClaudeModelsDevCatalogResolver(now: now, cacheRoot: options.cacheRoot)
+        let pricingResolver = CostUsagePricing.ClaudeResolver(now: now, cacheRoot: options.cacheRoot)
 
         if shouldMutateCache {
             try checkCancellation?()
@@ -1125,8 +1099,7 @@ extension CostUsageScanner {
                     || requiresRowBackfill,
                 changedPaths: changedPaths,
                 attributionResolver: attributionResolver,
-                modelsDevCatalogResolver: modelsDevCatalogResolver,
-                modelsDevCacheRoot: options.cacheRoot,
+                pricingResolver: pricingResolver,
                 checkCancellation: checkCancellation)
 
             for path in inventory.files.keys.sorted() {
@@ -1150,8 +1123,8 @@ extension CostUsageScanner {
                 Self.reconcileClaudeAttributions(
                     cache: &cache,
                     attributionResolver: attributionResolver,
-                    modelsDevCatalog: modelsDevCatalogResolver.resolve(),
-                    modelsDevCacheRoot: options.cacheRoot)
+                    modelsDevCatalog: pricingResolver.prepareCatalog(),
+                    modelsDevCacheRoot: nil)
             }
             Self.rebuildClaudeDays(cache: &cache)
             Self.pruneDays(cache: &cache, sinceKey: range.scanSinceKey, untilKey: range.scanUntilKey)
@@ -1194,8 +1167,7 @@ extension CostUsageScanner {
                 attributionFilter: options.claudeAttributionFilter,
                 attributionResolver: reportAttributionEnabled ? attributionResolver : nil,
                 allowCachedCLIProxyAPIAttribution: reportAttributionEnabled,
-                modelsDevCatalog: modelsDevCatalogResolver.resolve(),
-                modelsDevCacheRoot: options.cacheRoot)
+                pricingResolver: pricingResolver)
             try checkCancellation?()
             guard CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(
                 stateRoot: options.cacheRoot) == cliProxyAPIConfigurationGeneration
@@ -1306,11 +1278,13 @@ extension CostUsageScanner {
     private static func aggregateClaudeRows(
         cache: CostUsageCache,
         attributionContext: ClaudeAttributionAggregationContext,
-        modelsDevCatalog: ModelsDevCatalog?,
-        modelsDevCacheRoot: URL?) -> ClaudeReportAggregation
+        pricingResolver: CostUsagePricing.ClaudeResolver) -> ClaudeReportAggregation
     {
         var result = ClaudeReportAggregation()
-        let rowsWithProviders = Self.reconciledClaudeRows(cache: cache).map { row in
+        let rows = Self.reconciledClaudeRows(cache: cache)
+        guard !rows.isEmpty else { return result }
+        let modelsDevCatalog = pricingResolver.prepareCatalog()
+        let rowsWithProviders = rows.map { row in
             let modelProvider = if row.attribution?.route == .cliProxyAPI,
                                    let cachedProvider = row.attribution?.modelProvider,
                                    cachedProvider != .unknown
@@ -1320,7 +1294,7 @@ extension CostUsageScanner {
                 CostUsagePricing.modelProvider(
                     for: row.model,
                     modelsDevCatalog: modelsDevCatalog,
-                    modelsDevCacheRoot: modelsDevCacheRoot)
+                    modelsDevCacheRoot: nil)
             }
             return (row: row, modelProvider: modelProvider)
         }
@@ -1412,13 +1386,12 @@ extension CostUsageScanner {
             let pricingProvider = CostUsagePricing.modelProvider(
                 for: pricingModel,
                 modelsDevCatalog: modelsDevCatalog,
-                modelsDevCacheRoot: modelsDevCacheRoot)
+                modelsDevCacheRoot: nil)
             let currentCost = Self.currentClaudeRowCost(
                 row,
                 pricingModel: pricingModel,
                 pricingProvider: pricingProvider,
-                modelsDevCatalog: modelsDevCatalog,
-                modelsDevCacheRoot: modelsDevCacheRoot)
+                pricingResolver: pricingResolver)
             let resolvedCost = Self.resolvedClaudeRowCost(
                 wasPriced: wasPriced,
                 cachedCostNanos: row.costNanos,
@@ -1469,9 +1442,9 @@ extension CostUsageScanner {
         _ row: ClaudeUsageRow,
         pricingModel: String,
         pricingProvider: CostUsageAttribution.ModelProvider,
-        modelsDevCatalog: ModelsDevCatalog?,
-        modelsDevCacheRoot: URL?) -> Double?
+        pricingResolver: CostUsagePricing.ClaudeResolver) -> Double?
     {
+        let modelsDevCatalog = pricingResolver.prepareCatalog()
         if pricingProvider == .openAI {
             return CostUsagePricing.claudeProxyCodexCostUSD(
                 model: pricingModel,
@@ -1480,7 +1453,7 @@ extension CostUsageScanner {
                 cacheCreationInputTokens: row.cacheCreate,
                 outputTokens: row.output,
                 modelsDevCatalog: modelsDevCatalog,
-                modelsDevCacheRoot: modelsDevCacheRoot)
+                modelsDevCacheRoot: nil)
         }
         if pricingProvider == .google {
             return CostUsagePricing.claudeProxyGoogleCostUSD(
@@ -1490,19 +1463,18 @@ extension CostUsageScanner {
                 cacheCreationInputTokens: row.cacheCreate,
                 outputTokens: row.output,
                 modelsDevCatalog: modelsDevCatalog,
-                modelsDevCacheRoot: modelsDevCacheRoot)
+                modelsDevCacheRoot: nil)
         }
-        guard pricingProvider == .anthropic || pricingProvider == .other else { return nil }
-        return CostUsagePricing.claudeCostUSD(
+        guard pricingProvider == .anthropic || pricingProvider == .other || pricingProvider == .unknown
+        else { return nil }
+        return pricingResolver.costUSD(
             model: pricingModel,
             inputTokens: row.input,
             cacheReadInputTokens: row.cacheRead,
             cacheCreationInputTokens: row.cacheCreate,
             cacheCreationInputTokens1h: row.cacheCreate1h ?? 0,
             outputTokens: row.output,
-            pricingDate: row.timestampUnixMs.map { Date(timeIntervalSince1970: Double($0) / 1000) },
-            modelsDevCatalog: modelsDevCatalog,
-            modelsDevCacheRoot: modelsDevCacheRoot)
+            pricingDate: row.timestampUnixMs.map { Date(timeIntervalSince1970: Double($0) / 1000) })
     }
 
     static func buildClaudeReportFromCache(
@@ -1511,8 +1483,7 @@ extension CostUsageScanner {
         attributionFilter: ClaudeAttributionFilter = .all,
         attributionResolver: CLIProxyAPIAttributionResolver? = nil,
         allowCachedCLIProxyAPIAttribution: Bool = true,
-        modelsDevCatalog: ModelsDevCatalog? = nil,
-        modelsDevCacheRoot: URL? = nil) -> CostUsageDailyReport
+        pricingResolver: CostUsagePricing.ClaudeResolver) -> CostUsageDailyReport
     {
         var entries: [CostUsageDailyReport.Entry] = []
         var totalInput = 0
@@ -1528,8 +1499,7 @@ extension CostUsageScanner {
                 filter: attributionFilter,
                 resolver: attributionResolver,
                 allowCachedCLIProxyAPIAttribution: allowCachedCLIProxyAPIAttribution),
-            modelsDevCatalog: modelsDevCatalog,
-            modelsDevCacheRoot: modelsDevCacheRoot)
+            pricingResolver: pricingResolver)
         let dayModels = aggregation.dayModels
         let repricedCosts = aggregation.repricedCosts
 
@@ -1634,5 +1604,25 @@ extension CostUsageScanner {
                 totalCostUSD: costSeen ? totalCost : nil)
 
         return CostUsageDailyReport(data: entries, summary: summary)
+    }
+
+    static func buildClaudeReportFromCache(
+        cache: CostUsageCache,
+        range: CostUsageDayRange,
+        attributionFilter: ClaudeAttributionFilter = .all,
+        attributionResolver: CLIProxyAPIAttributionResolver? = nil,
+        allowCachedCLIProxyAPIAttribution: Bool = true,
+        modelsDevCatalog: ModelsDevCatalog? = nil,
+        modelsDevCacheRoot: URL? = nil) -> CostUsageDailyReport
+    {
+        let pricingResolver = modelsDevCatalog.map { CostUsagePricing.ClaudeResolver(catalog: $0) }
+            ?? CostUsagePricing.ClaudeResolver(now: Date(), cacheRoot: modelsDevCacheRoot)
+        return Self.buildClaudeReportFromCache(
+            cache: cache,
+            range: range,
+            attributionFilter: attributionFilter,
+            attributionResolver: attributionResolver,
+            allowCachedCLIProxyAPIAttribution: allowCachedCLIProxyAPIAttribution,
+            pricingResolver: pricingResolver)
     }
 }

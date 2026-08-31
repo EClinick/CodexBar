@@ -202,10 +202,67 @@ Claude scans of 20,000 messages (5,237,780 bytes) had median CPU time of 3.430 �
 wall time of 5.838 → 2.107 seconds, with identical emitted token/cost totals and daily output. This
 measures ingestion through the public fetcher, not idle-app CPU or the entire Codex scan pipeline.
 
-Timestamp and append improvements do not eliminate all scan costs. Full SQLite cache reconstruction
-still decodes usage rows and rebuilds checkpoints, including semantic save comparisons under the writer
-lock. Priority trace aggregation also remains. Removing those costs needs separate ownership and
-concurrency proof; changing provider refresh cadence or scan budgets does not address them.
+Native Codex scans carry an opaque receipt from load to save. `CostUsageStore` owns one decoded persisted
+baseline and compact file/count metadata, releasing it on save, superseding loads, mutations, failures,
+or scan exit (including cancellation and debounce). Abandoned receipts also release through the actor.
+No raw historical SQL snapshot or transaction stays alive across JSONL scanning. Filesystem/device,
+anchor, and pending catch-up reconciliation rerun for comparisons; decoded reuse never freezes them.
+
+Reuse requires the same connection generation and database inode, SQLite's open-file identity check,
+same-connection `data_version`, own `total_changes`, and schema/parser metadata. Observations bracket
+a successfully committed short read transaction. Save checks again under `BEGIN IMMEDIATE`, after
+unchanged-path retention; external changes request a rescan without overwriting current content.
+Retention that rewrites identical metadata requires a fresh locked semantic comparison. Existing callers
+without a receipt read a fresh baseline at save and cannot establish freshness back to an earlier load.
+
+`CostUsageStoreReadWorkTests` counts full load/save cycles: an uncontended unchanged receipt cycle reads
+one full snapshot and decodes each usage row once, with one freshness write and no aggregate grouping
+visits. Synthetic interleavings cover writer races, mutations, retention, replacement and receipt lifetime.
+Initial decoding, semantic equality, filesystem reconciliation, report generation and priority aggregation
+still cost work proportional to retained history. These counters do not measure installed-app idle CPU;
+refresh cadence, scan budgets, timestamp parsing and incremental-order validation are unchanged.
+
+Claude/Vertex metadata classification searches decoded ASCII strings with case-folded bytes, keeping
+the original Foundation lowercase/substring predicate for non-ASCII or noncontiguous strings. Check
+the whole string for ASCII before matching; combining characters after a marker can affect the old
+predicate. The recursive dictionary/array walk still visits the same content, but no longer repeats
+root/message metadata subtrees already visited through the root. `CostUsageClaudeVertexClassifierTests`
+compares with the frozen old predicate and checks complete filtered rows, daily tokens/costs, and reports,
+including decoded JSON escapes, Unicode boundaries, nested arrays, and false/numeric metadata flags.
+Claude-only source files are excluded from the Codex parser hash, so this optimization does not
+invalidate native Codex caches or change predecessor adoption.
+
+A second optimized synthetic check against main `354191af9` used three fresh-cache scans per provider
+with 32–128 KiB text bodies. Median CPU decreased by 3–18% across Claude/Vertex cases (the 3% case is
+small); a separate long-provider-string stress case decreased by 73–75%. The isolated decoded metadata
+predicate used about half the CPU on ordinary nested metadata. Every daily token component and cost
+matched, including the existing unset public request counts. Fixture generation was outside timing;
+wall time was recorded separately under host load. These results do not measure idle-app CPU.
+
+Claude and Vertex scans share one synchronous invocation-owned pricing resolver across full/append file
+parsing, row/day normalization, and report repricing. It lazily snapshots the catalog, including an empty
+sentinel for unavailable artifacts, at the existing changed-file and nonempty-report preparation points.
+An exact report memo hit and an empty inventory with no rows do not load it. The internal standalone
+parser now owns one snapshot per parse, optionally supplied explicitly; the cancellable parser takes
+that owner directly. It does not reread pricing artifacts between rows.
+
+Normalization and positive/negative catalog lookup memos use exact decoded UTF-8 keys, preserving
+Unicode spelling, dated raw versus stored identities, and non-idempotent normalization. Each memo
+retains at most 1,024 entries per invocation; after saturation, uncached inputs still resolve normally.
+This bounds entry growth, not model-string bytes or scan work. Every row still selects its own dated
+tariff and context tier and runs the existing monetary arithmetic. Historical pricing short-circuits
+before model lookup. Independent scalar Pi/Cursor/direct pricing retains its uncached resolution path.
+Both callers share one private tariff-selection helper whose nonescaping lazy lookup closure runs only
+after historical selection. The scalar calls the original normalizer and lookup directly; the scan
+resolver supplies memoized resolution. Both use the original monetary calculation.
+
+DEBUG Claude scan metrics count normalization cache misses and actual catalog-model lookups with
+positive/negative outcomes; the first lookup still normalizes internally. `repricedRows` continues to
+count all rows. Measure through the synchronous scoped recorder because the public dispatch queue
+does not inherit TaskLocal instrumentation. Resolver and scanner memo tests exercise cross-file reuse,
+snapshot replacement, saturation, exact spelling, and report-only repricing against synthetic fixtures.
+The shared pricing source changes the generated Codex parser hash, but Codex algorithms are unchanged;
+`6366caa15c925349` remains an explicitly tested compatible predecessor.
 
 ### Adaptive refresh fixtures
 
