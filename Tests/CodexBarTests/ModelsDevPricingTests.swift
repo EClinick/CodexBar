@@ -29,6 +29,21 @@ struct ModelsDevPricingTests {
     }
 
     @Test
+    func `ambiguous bare model ownership remains unknown`() throws {
+        let catalog = try Self.fixtureCatalog()
+
+        #expect(CostUsagePricing.modelProvider(
+            for: "shared-model",
+            modelsDevCatalog: catalog) == .unknown)
+        #expect(CostUsagePricing.modelProvider(
+            for: "openai/shared-model",
+            modelsDevCatalog: catalog) == .openAI)
+        #expect(CostUsagePricing.modelProvider(
+            for: "anthropic/shared-model",
+            modelsDevCatalog: catalog) == .anthropic)
+    }
+
+    @Test
     func `does not fall back across providers`() throws {
         let catalog = try Self.fixtureCatalog()
 

@@ -540,9 +540,7 @@ enum CostUsagePricing {
         modelsDevCatalog: ModelsDevCatalog? = nil,
         modelsDevCacheRoot: URL? = nil) -> Bool
     {
-        let normalized = self.normalizeCodexModel(model)
-        // Provider-specific by design: native OpenAI models first consult the bundled Codex pricing table.
-        if normalized != self.codexUnattributedModel, self.codex[normalized] != nil {
+        if self.isBundledOpenAIModel(model) {
             return true
         }
         return self.modelsDevLookup(
@@ -550,6 +548,12 @@ enum CostUsagePricing {
             model: model,
             catalog: modelsDevCatalog,
             cacheRoot: modelsDevCacheRoot) != nil
+    }
+
+    static func isBundledOpenAIModel(_ model: String) -> Bool {
+        let normalized = self.normalizeCodexModel(model)
+        // Provider-specific by design: native OpenAI models first consult the bundled Codex pricing table.
+        return normalized != self.codexUnattributedModel && self.codex[normalized] != nil
     }
 
     static func codexDisplayLabel(model: String) -> String? {

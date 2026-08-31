@@ -6,22 +6,12 @@ extension CostUsagePricing {
         modelsDevCatalog: ModelsDevCatalog? = nil,
         modelsDevCacheRoot: URL? = nil) -> CostUsageAttribution.ModelProvider
     {
-        if self.isOpenAIModel(
-            model,
-            modelsDevCatalog: modelsDevCatalog,
-            modelsDevCacheRoot: modelsDevCacheRoot)
-        {
+        if self.isBundledOpenAIModel(model) {
             return .openAI
         }
 
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.lowercased().hasPrefix("gemini-")
-            || modelsDevCatalog?.pricing(providerID: "google", modelID: trimmed) != nil
-            || ModelsDevPricingPipeline.lookup(
-                providerID: "google",
-                modelID: trimmed,
-                cacheRoot: modelsDevCacheRoot) != nil
-        {
+        if trimmed.lowercased().hasPrefix("gemini-") {
             return .google
         }
 

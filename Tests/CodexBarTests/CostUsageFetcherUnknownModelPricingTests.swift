@@ -125,6 +125,55 @@ struct CostUsageFetcherUnknownModelPricingTests {
     }
 
     @Test
+    func `claude snapshot retains a bare model with ambiguous catalog ownership`() async throws {
+        let fixture = try UnknownModelPricingFixture()
+        defer { fixture.environment.cleanup() }
+        let assistant: [String: Any] = [
+            "type": "assistant",
+            "timestamp": fixture.environment.isoString(for: fixture.day),
+            "message": [
+                "model": "shared-model",
+                "usage": [
+                    "input_tokens": 100,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 10,
+                ],
+            ],
+        ]
+        _ = try fixture.environment.writeClaudeProjectFile(
+            relativePath: "project-a/ambiguous-provider-model.jsonl",
+            contents: fixture.environment.jsonl([assistant]))
+        var options = fixture.options
+        options.claudeAttributionFilter = .excludeCodexBackend
+        let ambiguousCatalog = Data("""
+        {
+          "openai": {
+            "id": "openai",
+            "models": { "shared-model": { "id": "shared-model", "cost": { "input": 2, "output": 8 } } }
+          },
+          "anthropic": {
+            "id": "anthropic",
+            "models": { "shared-model": { "id": "shared-model", "cost": { "input": 3, "output": 15 } } }
+          }
+        }
+        """.utf8)
+
+        let snapshot = try await CostUsageFetcher.loadTokenSnapshot(
+            provider: .claude,
+            now: fixture.day,
+            refreshPricingInBackground: false,
+            includePiSessions: false,
+            scannerOptions: options,
+            modelsDevClient: ModelsDevClient(transport: CostUsageFetcherModelsDevTransport(
+                data: ambiguousCatalog)))
+
+        #expect(snapshot.daily
+            .flatMap { $0.modelBreakdowns ?? [] }
+            .contains { $0.modelName == "shared-model" })
+    }
+
+    @Test
     func `claude snapshot excludes a resolved foreign provider model`() async throws {
         let fixture = try UnknownModelPricingFixture()
         defer { fixture.environment.cleanup() }
