@@ -428,6 +428,14 @@ struct CLIProxyAPIUsageCollectorTests {
     }
 
     @Test
+    func `credential interaction requirement remains retryable without prompting`() async {
+        let result = await CLIProxyAPIUsageCollector.collect(
+            settingsResult: .interactionRequired)
+
+        #expect(result == .failed("CLIProxyAPI configuration is temporarily unavailable."))
+    }
+
+    @Test
     func `custom cache root disconnect prevents destructive pop`() async {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("cliproxy-custom-root-disconnect-\(UUID().uuidString)", isDirectory: true)

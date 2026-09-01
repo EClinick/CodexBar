@@ -187,7 +187,7 @@ func spendDashboardCLIProxyAPIConfigurationPresentation(
         (configuration.baseURL, true)
     case .missing, .invalid:
         (currentBaseURL, false)
-    case .temporarilyUnavailable:
+    case .interactionRequired, .temporarilyUnavailable:
         (currentBaseURL, hasSavedConfiguration)
     }
 }

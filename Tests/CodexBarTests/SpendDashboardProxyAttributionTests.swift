@@ -38,6 +38,17 @@ struct SpendDashboardProxyAttributionTests {
     }
 
     @Test
+    func `interaction-required proxy configuration preserves the presentation`() {
+        let presentation = spendDashboardCLIProxyAPIConfigurationPresentation(
+            loadResult: .interactionRequired,
+            currentBaseURL: "http://localhost:8317",
+            hasSavedConfiguration: true)
+
+        #expect(presentation.baseURL == "http://localhost:8317")
+        #expect(presentation.hasSavedConfiguration)
+    }
+
+    @Test
     func `found proxy configuration refreshes the presentation`() {
         let presentation = spendDashboardCLIProxyAPIConfigurationPresentation(
             loadResult: .found(CLIProxyAPIConnectionSettings(

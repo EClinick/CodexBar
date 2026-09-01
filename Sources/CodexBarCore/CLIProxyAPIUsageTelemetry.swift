@@ -737,7 +737,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
         switch result {
         case let .found(settings): .found(settings)
         case .missing: .missing
-        case .temporarilyUnavailable, .invalid: .unavailable
+        case .interactionRequired, .temporarilyUnavailable, .invalid: .unavailable
         }
     }
 
@@ -769,7 +769,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
             self.credentialFingerprint(settings) == fingerprint
         case .missing:
             false
-        case .temporarilyUnavailable, .invalid:
+        case .interactionRequired, .temporarilyUnavailable, .invalid:
             nil
         }
     }
@@ -781,7 +781,7 @@ public enum CLIProxyAPIConnectionSettingsStore {
             return self.credentialFingerprint(settings) == fingerprint
         case .missing:
             return wasMissing
-        case .temporarilyUnavailable, .invalid:
+        case .interactionRequired, .temporarilyUnavailable, .invalid:
             return nil
         }
     }
@@ -1236,7 +1236,7 @@ public enum CLIProxyAPIUsageCollector {
                 cacheRoot: cacheRoot,
                 settings: settings,
                 shouldContinue: shouldContinue)
-        case .temporarilyUnavailable:
+        case .interactionRequired, .temporarilyUnavailable:
             .failed("CLIProxyAPI configuration is temporarily unavailable.")
         case .missing, .invalid:
             .notConfigured
@@ -1275,7 +1275,7 @@ public enum CLIProxyAPIUsageCollector {
                 else { return false }
                 return switch currentSettingsResult() {
                 case let .found(currentSettings): currentSettings == settings
-                case .temporarilyUnavailable:
+                case .interactionRequired, .temporarilyUnavailable:
                     CostUsageCacheLocations.cliProxyAPIConfigurationGeneration(stateRoot: stateRoot) ==
                         configurationGeneration
                 case .missing, .invalid: false

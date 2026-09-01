@@ -4,6 +4,17 @@ import Testing
 
 struct CLIProxyAPIUsageCacheTests {
     @Test
+    func `credential interaction requirement preserves unknown stored settings`() {
+        let snapshot = CLIProxyAPIConnectionSettingsStore.storedSettingsSnapshot(
+            from: .interactionRequired)
+
+        guard case .unavailable = snapshot else {
+            Issue.record("Interaction-required credentials must remain unavailable, not missing.")
+            return
+        }
+    }
+
+    @Test
     func `cost cache clear advances the durable generation for other processes`() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
