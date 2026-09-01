@@ -16,6 +16,13 @@ extension UsageStore {
             && provider != .codex
     }
 
+    nonisolated static func spendDashboardTokenUsageNeedsCLIProxyAPIAttributionGuard(
+        _ provider: UsageProvider) -> Bool
+    {
+        // Provider-specific by design: only Claude and Codex snapshots can contain CLIProxyAPI attribution.
+        provider == .claude || provider == .codex
+    }
+
     func spendDashboardTokenSnapshotPublicationForCurrentConfig(
         for provider: UsageProvider) -> CurrentProviderConfigTokenPublication?
     {
@@ -121,7 +128,13 @@ extension UsageStore {
             return
         }
 
-        let cliProxyAPIAttributionGuard = await self.captureCLIProxyAPIAttributionPublicationGuard()
+        let cliProxyAPIAttributionGuard: CLIProxyAPIAttributionPublicationGuard? = if Self
+            .spendDashboardTokenUsageNeedsCLIProxyAPIAttributionGuard(provider)
+        {
+            await self.captureCLIProxyAPIAttributionPublicationGuard()
+        } else {
+            nil
+        }
         do {
             let snapshot = try await self.loadTokenUsageSnapshot(
                 provider: provider,
@@ -237,15 +250,18 @@ extension UsageStore {
         provider: UsageProvider,
         publicationRevision: ProviderPublicationRevision,
         providerConfigRevision: UInt64,
-        cliProxyAPIAttributionGuard: CLIProxyAPIAttributionPublicationGuard,
+        cliProxyAPIAttributionGuard: CLIProxyAPIAttributionPublicationGuard?,
         costScopeSignature: String,
         fetchedCredentialScopeFingerprint: String? = nil) async -> Bool
     {
+        let cliProxyAPIAttributionIsCurrent = if let cliProxyAPIAttributionGuard {
+            await self.cliProxyAPIAttributionPublicationIsCurrentOffMain(cliProxyAPIAttributionGuard, for: provider)
+        } else {
+            true
+        }
         guard self.providerPublicationRevisionIsCurrent(publicationRevision, for: provider),
               self.settings.providerConfigRevision(for: provider) == providerConfigRevision,
-              await self.cliProxyAPIAttributionPublicationIsCurrentOffMain(
-                  cliProxyAPIAttributionGuard,
-                  for: provider),
+              cliProxyAPIAttributionIsCurrent,
               self.settings.costUsageEnabled,
               self.isEnabled(provider)
         else {

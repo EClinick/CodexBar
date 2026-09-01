@@ -6,6 +6,14 @@ import Testing
 @MainActor
 struct SpendDashboardCodexProxySourceTests {
     @Test
+    func `unrelated dashboard providers skip proxy attribution guard capture`() {
+        #expect(!UsageStore.spendDashboardTokenUsageNeedsCLIProxyAPIAttributionGuard(.cursor))
+        #expect(!UsageStore.spendDashboardTokenUsageNeedsCLIProxyAPIAttributionGuard(.gemini))
+        #expect(UsageStore.spendDashboardTokenUsageNeedsCLIProxyAPIAttributionGuard(.claude))
+        #expect(UsageStore.spendDashboardTokenUsageNeedsCLIProxyAPIAttributionGuard(.codex))
+    }
+
+    @Test
     func `proxy usage loads once beside account scoped codex snapshots`() async {
         let now = Date(timeIntervalSince1970: 1_784_179_200)
         let accounts = ["first", "second"].map { id in
