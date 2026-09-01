@@ -661,11 +661,11 @@ struct CLIProxyAPIAttributionResolver: Sendable {
             let line = String(rawLine)
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
-            let structure = self.simpleYAMLScalar(trimmed)
+            let structureKey = self.simpleYAMLMappingKey(trimmed)
             let indent = line.prefix { $0 == " " }.count
 
             if rootIndent == nil {
-                if structure == "oauth-model-alias:" {
+                if structureKey == "oauth-model-alias" {
                     rootIndent = indent
                 }
                 continue
@@ -676,7 +676,8 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 break
             }
             if codexIndent == nil {
-                if structure == "codex:" {
+                // Provider-specific by design: this parser reads only CLIProxyAPI's Codex OAuth alias section.
+                if structureKey == "codex" {
                     codexIndent = indent
                 }
                 continue
@@ -851,6 +852,12 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 }
 
 extension CLIProxyAPIAttributionResolver {
+    private static func simpleYAMLMappingKey(_ raw: String) -> String? {
+        guard let separator = self.firstUnquotedColon(in: raw) else { return nil }
+        let key = self.simpleYAMLScalar(String(raw[..<separator]))
+        return key.isEmpty ? nil : key
+    }
+
     private static func simpleYAMLFlowMapping(_ raw: String) -> [String: String]? {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         guard trimmed.first == "{" else { return nil }
