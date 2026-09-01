@@ -111,6 +111,21 @@ struct CLIProxyAPIAliasRegressionTests {
     }
 
     @Test
+    func `codex oauth alias parser accepts flow mappings`() {
+        let configuration = """
+        oauth-model-alias:
+          codex:
+            - {name: 'gpt-5.5', alias: 'proxy-codex-alias'}
+            - {alias: "proxy,codex-second", name: "gpt-5.6"} # local alias
+        """
+
+        #expect(CLIProxyAPIAttributionResolver.parseCodexOAuthModelAliases(configuration) == [
+            "proxy-codex-alias": "gpt-5.5",
+            "proxy,codex-second": "gpt-5.6",
+        ])
+    }
+
+    @Test
     func `weaker live route evidence preserves cached telemetry upstream`() {
         let cached = CostUsageAttribution(
             client: .claudeCode,

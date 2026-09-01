@@ -700,7 +700,10 @@ struct CLIProxyAPIAttributionResolver: Sendable {
                 continue
             }
             let field = startsItem ? String(trimmed.dropFirst(2)) : trimmed
-            if field.hasPrefix("name:") {
+            if let flowMapping = self.simpleYAMLFlowMapping(field) {
+                currentName = flowMapping["name"]
+                currentAlias = flowMapping["alias"]
+            } else if field.hasPrefix("name:") {
                 currentName = self.simpleYAMLScalar(String(field.dropFirst("name:".count)))
             } else if field.hasPrefix("alias:") {
                 currentAlias = self.simpleYAMLScalar(String(field.dropFirst("alias:".count)))
@@ -848,6 +851,78 @@ struct CLIProxyAPIAttributionResolver: Sendable {
 }
 
 extension CLIProxyAPIAttributionResolver {
+    private static func simpleYAMLFlowMapping(_ raw: String) -> [String: String]? {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard trimmed.first == "{" else { return nil }
+
+        var fields: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaped = false
+        var reachedEnd = false
+        for character in trimmed.dropFirst() {
+            if let activeQuote = quote {
+                current.append(character)
+                if activeQuote == "\"", character == "\\", !escaped {
+                    escaped = true
+                    continue
+                }
+                if character == activeQuote, !escaped {
+                    quote = nil
+                }
+                escaped = false
+                continue
+            }
+            if character == "\"" || character == "'" {
+                quote = character
+                current.append(character)
+            } else if character == "," {
+                fields.append(current)
+                current = ""
+            } else if character == "}" {
+                fields.append(current)
+                reachedEnd = true
+                break
+            } else {
+                current.append(character)
+            }
+        }
+        guard reachedEnd, quote == nil else { return nil }
+
+        var mapping: [String: String] = [:]
+        for field in fields {
+            guard let separator = self.firstUnquotedColon(in: field) else { continue }
+            let key = self.simpleYAMLScalar(String(field[..<separator]))
+            let value = self.simpleYAMLScalar(String(field[field.index(after: separator)...]))
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            mapping[key] = value
+        }
+        return mapping
+    }
+
+    private static func firstUnquotedColon(in value: String) -> String.Index? {
+        var quote: Character?
+        var escaped = false
+        for index in value.indices {
+            let character = value[index]
+            if let activeQuote = quote {
+                if activeQuote == "\"", character == "\\", !escaped {
+                    escaped = true
+                    continue
+                }
+                if character == activeQuote, !escaped {
+                    quote = nil
+                }
+                escaped = false
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == ":" {
+                return index
+            }
+        }
+        return nil
+    }
+
     private static func topLevelYAMLSequenceHasEntries(_ key: String, in text: String) -> Bool {
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
         let prefix = "\(key):"
