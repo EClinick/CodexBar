@@ -173,7 +173,8 @@ extension UsageStore {
                 return collectorState
             }
             if collectorState.configurationAvailability == .available ||
-                (collectorState.configurationAvailability == .unknown && explicitlyDisconnected) ||
+                (collectorState.configurationAvailability == .unknown &&
+                    (explicitlyDisconnected || collectorState.configurationGeneration != nil)) ||
                 collectorState.configurationTransitionPending
             {
                 guard await publishAttributionIsolation(currentGeneration) else {
