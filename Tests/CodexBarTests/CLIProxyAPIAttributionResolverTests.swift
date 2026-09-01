@@ -188,6 +188,39 @@ struct CLIProxyAPIAttributionResolverTests {
     }
 
     @Test
+    func `quoted configured API upstream keys suppress codex auth inventory`() throws {
+        for (index, configuration) in [
+            "\"openai-compatibility\":\n  - name: configured-upstream\n",
+            "'codex-api-key':\n  - api-key: configured-upstream\n",
+        ].enumerated() {
+            let fileManager = FileManager.default
+            let root = fileManager.temporaryDirectory
+                .appendingPathComponent("cliproxy-quoted-upstream-\(index)-\(UUID().uuidString)", isDirectory: true)
+            let logs = root.appendingPathComponent("logs", isDirectory: true)
+            try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+            defer { try? fileManager.removeItem(at: root) }
+
+            let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
+            try Data(Self.requestLog(sessionID: "session-1", timestamp: timestamp).utf8)
+                .write(to: logs.appendingPathComponent("request.log"))
+            try Data(#"{"type":"codex"}"#.utf8).write(to: root.appendingPathComponent("codex.json"))
+            try Data(configuration.utf8).write(to: root.appendingPathComponent("config.yaml"))
+
+            let resolver = try CLIProxyAPIAttributionResolver.load(home: root, fileManager: fileManager)
+            let attribution = resolver.attribution(
+                model: "gpt-5.5",
+                modelProvider: .openAI,
+                sessionID: "session-1",
+                timestampUnixMs: Int64(timestamp.timeIntervalSince1970 * 1000),
+                tokens: Self.tokens)
+
+            #expect(attribution.route == .cliProxyAPI)
+            #expect(attribution.upstream == nil)
+            #expect(!attribution.evidence.contains(.cliProxyAuthInventory))
+        }
+    }
+
+    @Test
     func `request telemetry identifies exact codex oauth upstream`() {
         let timestamp = Date(timeIntervalSince1970: 1_784_179_200)
         let resolver = CLIProxyAPIAttributionResolver(

@@ -932,13 +932,14 @@ extension CLIProxyAPIAttributionResolver {
 
     private static func topLevelYAMLSequenceHasEntries(_ key: String, in text: String) -> Bool {
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
-        let prefix = "\(key):"
         for (index, line) in lines.enumerated() {
             guard line.first?.isWhitespace != true else { continue }
-            let structure = self.simpleYAMLScalar(line.trimmingCharacters(in: .whitespacesAndNewlines))
-            guard structure.hasPrefix(prefix) else { continue }
+            let structure = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard self.simpleYAMLMappingKey(structure) == key,
+                  let separator = self.firstUnquotedColon(in: structure)
+            else { continue }
 
-            let inlineValue = structure.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+            let inlineValue = self.simpleYAMLScalar(String(structure[structure.index(after: separator)...]))
             if !inlineValue.isEmpty {
                 let compactValue = inlineValue.filter { !$0.isWhitespace }
                 return compactValue != "[]" && compactValue != "null" && compactValue != "~"
